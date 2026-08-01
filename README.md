@@ -36,7 +36,8 @@ git commit -m "feat: khởi tạo dự án từ template"
 ```bash
 # Tạo virtual environment
 python3.11 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate # linux
+.\.venv\Scripts\Activate.ps1 # windows
 
 # Cài dependencies
 pip install -e ".[dev]"
