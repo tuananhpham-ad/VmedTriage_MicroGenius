@@ -155,22 +155,45 @@ def normalize(data: dict, tool: str) -> dict | None:
     return base
 
 
+def print_hook_result(tool: str, logged: bool) -> None:
+    """Print a tool-compatible hook result."""
+    if tool == "codex":
+        message = "[ai-log] logged" if logged else "[ai-log] skipped"
+        print(json.dumps({
+            "continue": True,
+            "stopReason": "",
+            "systemMessage": message,
+            "suppressOutput": False,
+        }))
+        return
+
+    # Output valid JSON (required by some tools like Gemini)
+    print(json.dumps({"status": "logged" if logged else "skipped"}))
+
+
 def main():
     # Read stdin as UTF-8 explicitly. On Windows, sys.stdin defaults to the
     # system code page (e.g. cp1252), which corrupts non-Latin1 prompts
     # (Vietnamese, CJK, emoji) into mojibake. The hook payload is always UTF-8.
     raw = sys.stdin.buffer.read().decode("utf-8", errors="replace").strip()
     if not raw:
+        tool = detect_tool({})
+        if tool == "codex":
+            print_hook_result(tool, logged=False)
         sys.exit(0)
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        tool = detect_tool({})
+        if tool == "codex":
+            print_hook_result(tool, logged=False)
         sys.exit(0)
 
     tool = detect_tool(data)
     entry = normalize(data, tool)
     if not entry:
+        print_hook_result(tool, logged=False)
         sys.exit(0)
 
     log_dir = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
@@ -180,9 +203,7 @@ def main():
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    # Output valid JSON (required by some tools like Gemini)
-    #print(json.dumps({"status": "logged"}))
-    return
+    print_hook_result(tool, logged=True)
 
 
 if __name__ == "__main__":
