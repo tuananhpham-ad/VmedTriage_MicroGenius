@@ -1,5 +1,6 @@
 # Install git pre-push hook for AI log submission (Windows PowerShell).
 # Run once after cloning: powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
+#
 
 $ErrorActionPreference = 'Stop'
 
