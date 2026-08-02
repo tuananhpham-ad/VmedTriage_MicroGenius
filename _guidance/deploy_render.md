@@ -11,6 +11,7 @@ Khuyến nghị dùng Render Blueprint từ file `render.yaml` ở root reposito
 | Service type | Web Service |
 | Runtime | Python |
 | Plan | Free cho demo public |
+| Branch | `tuananhpham` |
 | Build command | `pip install -r requirements.txt` |
 | Start command | `uvicorn src.main:app --host 0.0.0.0 --port $PORT` |
 | Health check path | `/health` |
@@ -30,7 +31,7 @@ https://github.com/AI20K-Build-Phase-Cohort-3/P-141.git
 2. Vào <https://dashboard.render.com/>.
 3. Chọn **New > Blueprint**.
 4. Kết nối GitHub và chọn repository `P-141`.
-5. Render sẽ đọc `render.yaml` và tạo service `vmedtriage`.
+5. Render sẽ đọc `render.yaml` và tạo service `vmedtriage` từ branch `tuananhpham`.
 6. Chọn **Apply** để Render build và deploy.
 
 Sau khi deploy xong, URL public có dạng:
