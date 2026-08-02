@@ -63,7 +63,11 @@ class EvalConfig:
 def parse_args() -> EvalConfig:
     parser = argparse.ArgumentParser(description="Run VMedTriage golden-case evaluation.")
     parser.add_argument("--cases", default="data/golden_cases_v1.jsonl", help="Path to .jsonl or .json cases.")
-    parser.add_argument("--output-dir", default="eval/results", help="Directory for versioned eval outputs.")
+    parser.add_argument(
+        "--output-dir",
+        default="eval/results/logging",
+        help="Directory for versioned eval outputs.",
+    )
     parser.add_argument(
         "--version",
         default=None,

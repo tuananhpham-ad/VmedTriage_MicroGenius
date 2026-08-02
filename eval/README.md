@@ -10,11 +10,12 @@ eval/
   scripts/
     run_eval.py
   results/
-    <version>/
-      metrics.json
-      predictions.jsonl
-      failures.jsonl
-      report.md
+    logging/
+      <version>/
+        metrics.json
+        predictions.jsonl
+        failures.jsonl
+        report.md
 ```
 
 Dataset mặc định hiện nằm ở:
@@ -40,7 +41,7 @@ YYYYMMDD_HHMMSS
 Ví dụ:
 
 ```text
-eval/results/20260803_014512/
+eval/results/logging/20260803_014512/
 ```
 
 Giới hạn số case khi debug:
@@ -52,7 +53,7 @@ python eval/scripts/run_eval.py --limit 10
 Output được ghi vào:
 
 ```text
-eval/results/<version>/
+eval/results/logging/<version>/
 ```
 
 ## Chạy evaluation qua API
