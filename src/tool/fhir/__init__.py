@@ -1,0 +1,1 @@
+"""FHIR MCP tool descriptors."""

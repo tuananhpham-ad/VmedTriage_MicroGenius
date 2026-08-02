@@ -1,0 +1,1 @@
+"""Terminology MCP tool descriptors."""
