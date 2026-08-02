@@ -346,3 +346,61 @@ MVP nên ưu tiên 6 luồng sau:
 
 Không nên để Gemma trực tiếp quyết định mức triage hoặc sinh hướng xử trí cuối cùng. Cách an toàn hơn là để Gemma làm semantic mapping, còn triage proposal dựa trên protocol và được HITL phê duyệt.
 
+---
+
+## 6. Framework Update - Demo UI
+
+Ngay 2026-08-02, framework bo sung Demo UI co ban de trinh dien luong hoi dap VMedTriage.
+
+Code UI nam trong:
+
+```text
+src/ui/
+    static_files.py
+    static/index.html
+    static/styles.css
+    static/app.js
+```
+
+FastAPI mount static UI tai `/`, trong khi API van nam tai `/api/v1`.
+
+Demo UI gom 3 vung chinh:
+
+1. Patient chat: gui mo ta trieu chung va nhan cau hoi bo sung hoac thong bao cho duyet.
+2. Case details: hien thi status, triage proposal, structured mapping, validation, red flags va queue item.
+3. Nurse review: approve, escalate hoac ask more de the hien cong HITL bat buoc.
+
+Nguyen tac an toan khong doi:
+
+- UI khong hien thi ket luan xu tri cuoi cung neu chua co nurse/doctor approval.
+- Red flag chi day case vao hang doi uu tien va canh bao nurse dashboard.
+- Structured mapping va proposal chi phuc vu review noi bo.
+
+---
+
+## 7. Framework Update - Render Public Deploy
+
+Ngay 2026-08-02, framework bo sung cau hinh Render Blueprint de deploy public demo.
+
+File moi:
+
+```text
+render.yaml
+_guidance/deploy_render.md
+```
+
+Render chay mot Python Web Service:
+
+```text
+buildCommand: pip install -r requirements.txt
+startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT
+healthCheckPath: /health
+```
+
+UI public nam tai `/`, API nam tai `/api/v1`.
+
+Luu y framework:
+
+- Deploy public hien dung in-memory case store, chi phu hop demo.
+- Khong nhap PHI that tren public demo.
+- Database, auth, audit store va persistent HITL queue can duoc bo sung truoc production y te.

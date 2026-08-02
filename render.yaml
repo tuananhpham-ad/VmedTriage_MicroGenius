@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: vmedtriage
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MODEL_NAME
+        value: gemma-3-4b
+      - key: LLM_TEMPERATURE
+        value: "0.0"

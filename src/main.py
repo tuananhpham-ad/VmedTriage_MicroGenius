@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
 from src.config import get_settings
+from src.ui.static_files import build_demo_static_app
 
 
 @asynccontextmanager
@@ -16,8 +17,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI20K Agent",
-    description="AI Agent built with LangGraph",
+    title="VMedTriage",
+    description="Controlled medical triage support pipeline with mandatory human approval",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -37,3 +38,6 @@ app.include_router(router, prefix="/api/v1")
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
+
+
+app.mount("/", build_demo_static_app(), name="demo-ui")
