@@ -28,6 +28,7 @@ from src.models.schemas import (
     ChatResponse,
     ConversationMessage,
     RedFlagFinding,
+    StructuredSymptomData,
     TriageCase,
     ValidationResult,
 )
@@ -38,6 +39,8 @@ from src.services.red_flag import RedFlagSafetyLayer
 from src.services.semantic_mapper import RuleBackedSemanticMapper
 from src.services.summary_generator import SummaryGenerator
 from src.services.triage_engine import ProtocolTriageEngine
+from src.tool.catalog.framework import CatalogToolResult
+from src.tool.catalog.orchestrator import ToolOrchestrator, tool_orchestrator
 
 
 @dataclass
@@ -58,6 +61,7 @@ class FullPipelineResult:
     response: ChatResponse
     triage_case: TriageCase
     steps: list[PipelineStepLog]
+    tool_results: list[CatalogToolResult] = field(default_factory=list)
 
 
 class FullTriagePipeline:
@@ -69,7 +73,11 @@ class FullTriagePipeline:
     - File này cố ý viết dài hơn, có step log và comment học thuật.
     """
 
-    def __init__(self, store: InMemoryCaseStore | None = None) -> None:
+    def __init__(
+        self,
+        store: InMemoryCaseStore | None = None,
+        orchestrator: ToolOrchestrator = tool_orchestrator,
+    ) -> None:
         self.store = store or InMemoryCaseStore()
         self.mapper = RuleBackedSemanticMapper()
         self.validator = ChecklistValidator()
@@ -77,6 +85,7 @@ class FullTriagePipeline:
         self.triage_engine = ProtocolTriageEngine()
         self.summary_generator = SummaryGenerator()
         self.nurse_queue = NurseQueueService()
+        self.orchestrator = orchestrator
 
     async def run(self, patient_message: str, case_id: str | None = None) -> FullPipelineResult:
         steps: list[PipelineStepLog] = []
@@ -112,7 +121,41 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 02 - Semantic mapping
+        # STEP 02 - Tool orchestration preflight
+        # Input:
+        #   - Raw patient message and the active case id.
+        # Output:
+        #   - Standardized CatalogToolResult values from intake, language,
+        #     symptom extraction, crisis safety, violence, and risk-factor tools.
+        # Action:
+        #   - Build a deterministic tool plan for a patient query.
+        #   - Execute every read-only tool through schema validation, policy, and audit.
+        #   - Keep side-effect tools locked until explicit human approval.
+        # Tech stack:
+        #   - ToolOrchestrator, CatalogToolRegistry, Pydantic, local/MCP adapters.
+        orchestration = await self.orchestrator.run_patient_query(
+            patient_message,
+            case_id=triage_case.case_id,
+        )
+        normalized_message = orchestration.data_for("patient_message_normalizer").get(
+            "normalized_message",
+            patient_message,
+        )
+        steps.append(
+            PipelineStepLog(
+                step="02_tool_orchestration_preflight",
+                input={"patient_message": patient_message, "case_id": triage_case.case_id},
+                output={
+                    "intent": orchestration.intent,
+                    "ok": orchestration.ok,
+                    "tools": [result.model_dump() for result in orchestration.results],
+                },
+                action="Route intake query through policy-guarded local/MCP tools.",
+                techstack=["ToolOrchestrator", "CatalogToolRegistry", "Pydantic", "MCP"],
+            )
+        )
+
+        # STEP 03 - Semantic mapping
         # Input:
         #   - Raw free-text patient_message.
         # Output:
@@ -125,10 +168,15 @@ class FullTriagePipeline:
         # Tech stack:
         #   - Python regex/rule matching.
         #   - Pydantic schema: StructuredSymptomData.
-        structured_data = await self.mapper.map_message(patient_message)
+        extracted = orchestration.data_for("symptom_extraction_tool").get("structured_symptoms")
+        structured_data = (
+            StructuredSymptomData.model_validate(extracted)
+            if extracted
+            else await self.mapper.map_message(normalized_message)
+        )
         steps.append(
             PipelineStepLog(
-                step="02_semantic_mapping",
+                step="03_semantic_mapping",
                 input={"patient_message": patient_message},
                 output=structured_data.model_dump(),
                 action="Normalize free text into structured symptom fields.",
@@ -136,7 +184,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 03 - Checklist validation
+        # STEP 04 - Checklist validation
         # Input:
         #   - StructuredSymptomData từ step 02.
         # Output:
@@ -153,7 +201,7 @@ class FullTriagePipeline:
         validation = self.validator.validate(structured_data)
         steps.append(
             PipelineStepLog(
-                step="03_checklist_validation",
+                step="04_checklist_validation",
                 input=structured_data.model_dump(),
                 output=validation.model_dump(),
                 action="Check missing fields, contradictions, and low confidence.",
@@ -161,7 +209,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 04 - Red-flag safety layer
+        # STEP 05 - Red-flag safety layer
         # Input:
         #   - Structured symptom fields.
         # Output:
@@ -175,9 +223,18 @@ class FullTriagePipeline:
         #   - Rule engine đơn giản trong RedFlagSafetyLayer.
         #   - Config: RED_FLAG_RULES.
         red_flags = self.red_flag_layer.detect(structured_data)
+        self_harm = orchestration.data_for("self_harm_risk_detector")
+        if self_harm.get("risk_level") == "high":
+            red_flags.append(
+                RedFlagFinding(
+                    code="high_self_harm_risk",
+                    label="High self-harm risk language detected",
+                    matched_fields=["patient_message"],
+                )
+            )
         steps.append(
             PipelineStepLog(
-                step="04_red_flag_detection",
+                step="05_red_flag_detection",
                 input={"fields": structured_data.fields},
                 output={"red_flags": [finding.model_dump() for finding in red_flags]},
                 action="Detect emergency red flags before any patient-facing advice.",
@@ -185,7 +242,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 05 - Protocol triage proposal
+        # STEP 06 - Protocol triage proposal
         # Input:
         #   - structured_data, validation, red_flags.
         # Output:
@@ -204,7 +261,7 @@ class FullTriagePipeline:
         proposal = self.triage_engine.propose(structured_data, validation, red_flags)
         steps.append(
             PipelineStepLog(
-                step="05_protocol_triage_proposal",
+                step="06_protocol_triage_proposal",
                 input={
                     "structured_data": structured_data.model_dump(),
                     "validation": validation.model_dump(),
@@ -216,7 +273,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 06 - Handoff summary
+        # STEP 07 - Handoff summary
         # Input:
         #   - structured_data, validation, red_flags, proposal.
         # Output:
@@ -235,7 +292,7 @@ class FullTriagePipeline:
         )
         steps.append(
             PipelineStepLog(
-                step="06_handoff_summary",
+                step="07_handoff_summary",
                 input={
                     "structured_data": structured_data.model_dump(),
                     "validation": validation.model_dump(),
@@ -247,7 +304,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 07 - Nurse queue item
+        # STEP 08 - Nurse queue item
         # Input:
         #   - case_id, structured_data, validation, summary, proposal.
         # Output:
@@ -268,7 +325,7 @@ class FullTriagePipeline:
         )
         steps.append(
             PipelineStepLog(
-                step="07_nurse_queue",
+                step="08_nurse_queue",
                 input={
                     "case_id": triage_case.case_id,
                     "proposal": proposal.model_dump(),
@@ -280,7 +337,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 08 - Persist case state
+        # STEP 09 - Persist case state
         # Input:
         #   - All artifacts generated above.
         # Output:
@@ -310,7 +367,7 @@ class FullTriagePipeline:
         saved_case = self.store.save(triage_case)
         steps.append(
             PipelineStepLog(
-                step="08_persist_case_state",
+                step="09_persist_case_state",
                 input={"case_id": triage_case.case_id},
                 output={
                     "case_id": saved_case.case_id,
@@ -322,7 +379,7 @@ class FullTriagePipeline:
             )
         )
 
-        # STEP 09 - Build patient-safe response
+        # STEP 10 - Build patient-safe response
         # Input:
         #   - Saved case state.
         # Output:
@@ -349,7 +406,7 @@ class FullTriagePipeline:
         )
         steps.append(
             PipelineStepLog(
-                step="09_patient_safe_response",
+                step="10_patient_safe_response",
                 input={"case_id": saved_case.case_id, "status": saved_case.status},
                 output=response.model_dump(),
                 action="Return patient-safe API response; clinical approval remains mandatory.",
@@ -357,7 +414,12 @@ class FullTriagePipeline:
             )
         )
 
-        return FullPipelineResult(response=response, triage_case=saved_case, steps=steps)
+        return FullPipelineResult(
+            response=response,
+            triage_case=saved_case,
+            steps=steps,
+            tool_results=orchestration.results,
+        )
 
     def _load_or_create_case(self, case_id: str | None) -> TriageCase:
         if case_id:
