@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 from uuid import uuid4
 
@@ -58,6 +59,57 @@ RISK_WORDS = {
     "hypertension": ("tăng huyết áp", "hypertension"),
     "heart_disease": ("bệnh tim", "heart disease"),
 }
+
+VIETNAMESE_LANGUAGE_TOKENS = {
+    "ban",
+    "bi",
+    "bung",
+    "cam",
+    "chay",
+    "chao",
+    "co",
+    "dau",
+    "ho",
+    "khong",
+    "kho",
+    "mau",
+    "met",
+    "muon",
+    "nguc",
+    "non",
+    "sang",
+    "sot",
+    "thay",
+    "tho",
+    "toi",
+    "tu",
+    "va",
+    "xin",
+}
+ENGLISH_LANGUAGE_TOKENS = {
+    "am",
+    "and",
+    "bleeding",
+    "breath",
+    "chest",
+    "cough",
+    "feel",
+    "fever",
+    "have",
+    "headache",
+    "help",
+    "is",
+    "my",
+    "nausea",
+    "pain",
+    "shortness",
+    "since",
+    "the",
+    "with",
+}
+VIETNAMESE_MARKS = frozenset(
+    "ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"
+)
 
 
 def _state(context: ToolExecutionContext) -> CatalogStateStore:
@@ -145,6 +197,38 @@ def _extract_entities(text: str, vocabulary: tuple[str, ...]) -> list[str]:
     return sorted({item for item in vocabulary if _contains_any(text, (item,))})
 
 
+def _detect_language(text: str) -> tuple[str, float]:
+    normalized = text.casefold()
+    tokens = re.findall(r"[a-zA-ZÀ-ỹ]+", normalized)
+    folded_tokens = [_ascii_fold(token) for token in tokens]
+    vi_score = sum(token in VIETNAMESE_LANGUAGE_TOKENS for token in folded_tokens)
+    en_score = sum(token in ENGLISH_LANGUAGE_TOKENS for token in folded_tokens)
+    mark_count = sum(char in VIETNAMESE_MARKS for char in normalized)
+    vi_score += min(mark_count, 2)
+
+    if vi_score == 0 and en_score == 0:
+        return "unknown", 0.0
+
+    stronger = max(vi_score, en_score)
+    weaker = min(vi_score, en_score)
+    if weaker and weaker / stronger >= 0.5:
+        evidence = min(vi_score + en_score, 6)
+        return "mixed", round(min(0.95, 0.6 + evidence * 0.05), 3)
+
+    language = "vi" if vi_score > en_score else "en"
+    margin = abs(vi_score - en_score) / stronger
+    evidence = min(stronger, 5)
+    return language, round(min(0.99, 0.55 + margin * 0.25 + evidence * 0.04), 3)
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
 async def run_tool(name: str, arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
     """Local implementations for all 82 catalog tools."""
 
@@ -156,10 +240,8 @@ async def run_tool(name: str, arguments: dict[str, Any], context: ToolExecutionC
         normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
         return {"normalized_message": normalized}
     if name == "language_detector":
-        vi_marks = sum(char in "ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ" for char in text.casefold())
-        english = len(re.findall(r"\b(the|and|with|pain|since|feel|have)\b", text.casefold()))
-        language = "mixed" if vi_marks and english else ("vi" if vi_marks or not english else "en")
-        return {"language": language, "confidence": 0.95 if vi_marks or english else 0.6}
+        language, confidence = _detect_language(text)
+        return {"language": language, "confidence": confidence}
     if name == "medical_translation_tool":
         target = str(arguments.get("target_language", "en"))
         translations = {"đau ngực": "chest pain", "khó thở": "shortness of breath", "chảy máu": "bleeding"}
@@ -297,12 +379,40 @@ async def run_tool(name: str, arguments: dict[str, Any], context: ToolExecutionC
         calculator = str(arguments.get("calculator_name", "bmi")).casefold()
         values = arguments.get("values", {})
         if calculator == "bmi":
-            height_m = float(values.get("height_m", 0))
-            score = round(float(values.get("weight_kg", 0)) / height_m**2, 2) if height_m > 0 else None
-            interpretation = "underweight" if score and score < 18.5 else ("normal" if score and score < 25 else ("overweight_or_obesity" if score else "insufficient_input"))
+            height_m = _finite_number(values.get("height_m"))
+            weight_kg = _finite_number(values.get("weight_kg"))
+            if height_m is None or weight_kg is None:
+                score, interpretation = None, "insufficient_input"
+            elif not 0.5 <= height_m <= 2.5 or not 1 <= weight_kg <= 500:
+                score, interpretation = None, "invalid_input"
+            else:
+                score = round(weight_kg / height_m**2, 2)
+                interpretation = (
+                    "underweight"
+                    if score < 18.5
+                    else "normal"
+                    if score < 25
+                    else "overweight_or_obesity"
+                )
         elif calculator == "qsofa":
-            score = sum((values.get("respiratory_rate", 0) >= 22, values.get("systolic_bp", 999) <= 100, bool(values.get("altered_mentation"))))
-            interpretation = "high_risk" if score >= 2 else "lower_risk"
+            required = {"respiratory_rate", "systolic_bp", "altered_mentation"}
+            if not required.issubset(values):
+                score, interpretation = None, "insufficient_input"
+            else:
+                respiratory_rate = _finite_number(values.get("respiratory_rate"))
+                systolic_bp = _finite_number(values.get("systolic_bp"))
+                altered_mentation = values.get("altered_mentation")
+                if (
+                    respiratory_rate is None
+                    or systolic_bp is None
+                    or not 0 <= respiratory_rate <= 100
+                    or not 20 <= systolic_bp <= 300
+                    or not isinstance(altered_mentation, bool)
+                ):
+                    score, interpretation = None, "invalid_input"
+                else:
+                    score = sum((respiratory_rate >= 22, systolic_bp <= 100, altered_mentation))
+                    interpretation = "high_risk" if score >= 2 else "lower_risk"
         else:
             score, interpretation = None, "unsupported_calculator"
         return {"score": score, "interpretation": interpretation}

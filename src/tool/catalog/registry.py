@@ -36,6 +36,20 @@ SIDE_EFFECT_TOOL_IDS = {
     74,
 }
 CLINICAL_TOOL_IDS = set(range(22, 41)) | {55, 60, 61, 71, 72, 73}
+STATE_ACCESS_TOOL_IDS = {
+    4,
+    5,
+    6,
+    7,
+    *range(41, 55),
+    56,
+    57,
+    58,
+    *range(64, 71),
+    74,
+    75,
+    82,
+}
 
 
 class CatalogToolDefinition(BaseModel):
@@ -121,11 +135,16 @@ class CatalogToolRegistry:
             )
 
         try:
-            data, latency_ms = await invoke_handler(
-                lambda payload, ctx: run_tool(name, payload, ctx),
-                arguments,
-                execution,
-            )
+            def handler(payload, handler_context):
+                return run_tool(name, payload, handler_context)
+
+            if definition.id in STATE_ACCESS_TOOL_IDS:
+                # Stateful handlers contain no suspension points. The process-local
+                # lock makes their multi-step reads/writes atomic across requests.
+                with execution.state.lock:
+                    data, latency_ms = await invoke_handler(handler, arguments, execution)
+            else:
+                data, latency_ms = await invoke_handler(handler, arguments, execution)
             missing_outputs = [key for key in definition.output if key not in data]
             if missing_outputs:
                 return self._error(
@@ -176,19 +195,20 @@ class CatalogToolRegistry:
     ) -> None:
         if definition.name in {"tool_call_audit_logger", "triage_audit_log_write"}:
             return
-        context.state.audit_events.append(
-            {
-                "event_type": "catalog_tool_call",
-                "tool_id": definition.id,
-                "tool_name": definition.name,
-                "case_id": context.case_id,
-                "actor_role": context.actor_role,
-                "ok": result.ok,
-                "argument_keys": sorted(arguments),
-                "error": result.error,
-                "latency_ms": result.metadata.latency_ms,
-            }
-        )
+        with context.state.lock:
+            context.state.audit_events.append(
+                {
+                    "event_type": "catalog_tool_call",
+                    "tool_id": definition.id,
+                    "tool_name": definition.name,
+                    "case_id": context.case_id,
+                    "actor_role": context.actor_role,
+                    "ok": result.ok,
+                    "argument_keys": sorted(arguments),
+                    "error": result.error,
+                    "latency_ms": result.metadata.latency_ms,
+                }
+            )
 
 
 catalog_tool_registry = CatalogToolRegistry()

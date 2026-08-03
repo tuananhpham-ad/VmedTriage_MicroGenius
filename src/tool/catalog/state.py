@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any
 
 
@@ -9,6 +10,7 @@ from typing import Any
 class CatalogStateStore:
     """Replaceable in-memory backend used by local/demo tool implementations."""
 
+    lock: RLock = field(default_factory=RLock, repr=False, compare=False)
     conversations: dict[str, list[dict[str, Any]]] = field(default_factory=lambda: defaultdict(list))
     patient_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     consents: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
