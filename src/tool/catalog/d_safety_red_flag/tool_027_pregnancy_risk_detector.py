@@ -1,0 +1,12 @@
+"""Tool stub: detect pregnancy-specific risk."""
+
+TOOL_SPEC = {
+    "id": 27,
+    "name": "pregnancy_risk_detector",
+    "description": "Apply pregnancy-specific triage risk checks.",
+    "input": {"pregnancy_status": "Known or suspected pregnancy state.", "structured_symptoms": "Structured symptoms."},
+    "output": {"pregnancy_risks": "Matched pregnancy-related risk findings."},
+    "action": "Escalate pregnancy-sensitive presentations for human review.",
+}
+
+# TODO: Implement MCP/local adapter.
