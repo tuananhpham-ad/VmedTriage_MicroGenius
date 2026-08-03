@@ -1,11 +1,59 @@
 # Tool Catalog
 
-README này mô tả các tool stub trong `src/tool/catalog/<folder_con>/tool_<id>_<name>.py`.
-Các file hiện chỉ là catalog để implement dần, chưa tự động đăng ký vào MCP registry hiện tại.
+## Trạng thái triển khai
+
+Toàn bộ 82 tool trong catalog đã có entry point `execute(arguments, context)` và chạy qua
+`CatalogToolRegistry`. Implementation dùng local adapter để development/test có thể chạy độc lập.
+Các thao tác với hệ thống ngoài (FHIR, SMS, email, paging) được ghi vào local state/outbox; giá trị
+`sent=false` hoặc `delivered=false` thể hiện provider bên ngoài chưa xác nhận gửi thành công.
+
+Các thành phần framework:
+
+- `framework.py`: execution context và output model chuẩn.
+- `registry.py`: tự discover 82 tool, kiểm tra policy, validate output và audit call.
+- `implementations.py`: implementation local theo 12 nhóm A-L.
+- `state.py`: state backend in-memory có thể thay bằng database/repository.
+- `orchestrator.py`: lập kế hoạch và điều hướng user query tới chuỗi tool phù hợp.
+
+Ví dụ gọi một tool read-only:
+
+```python
+from src.tool.catalog.registry import catalog_tool_registry
+
+result = await catalog_tool_registry.call(
+    "snomed_concept_lookup",
+    {"term": "đau ngực", "language": "vi"},
+)
+```
+
+Tool có side effect bắt buộc truyền approval trong execution context:
+
+```python
+from src.tool.catalog.framework import ToolExecutionContext
+
+context = ToolExecutionContext(
+    case_id="case-123",
+    actor_id="nurse-01",
+    actor_role="nurse",
+    approved=True,
+)
+result = await catalog_tool_registry.call(
+    "fhir_task_create",
+    {"patient_id": "patient-01", "task_payload": {"status": "requested"}},
+    context=context,
+)
+```
+
+Pipeline intake hiện gọi `ToolOrchestrator.run_patient_query()` trước semantic validation. Plan mặc
+định gồm normalize, language detection, symptom extraction, self-harm detection, violence detection
+và risk-factor extraction. Tất cả call đều tạo audit event.
+
+Mỗi file `src/tool/catalog/<folder_con>/tool_<id>_<name>.py` chứa metadata và một entry point
+thực thi độc lập. Registry tự động đăng ký các module này khi ứng dụng khởi động.
 
 ## Output Format Chuẩn
 
-Khi implement thật, mỗi MCP/local tool nên trả về format thống nhất:
+Mỗi MCP/local tool trả về format thống nhất:
 
 ```json
 {

@@ -9,4 +9,8 @@ TOOL_SPEC = {
     "action": "Decide whether the case can proceed or needs follow-up questions.",
 }
 
-# TODO: Implement MCP/local adapter.
+async def execute(arguments, context=None):
+    """Execute this tool through the shared catalog runtime."""
+    from src.tool.catalog.framework import catalog_tool
+
+    return await catalog_tool(TOOL_SPEC)(arguments, context)
