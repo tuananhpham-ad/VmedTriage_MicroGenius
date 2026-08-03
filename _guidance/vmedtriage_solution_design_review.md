@@ -37,7 +37,7 @@ Gemma 3 4B nên được đặt ở vai trò **Semantic Mapper**, không nên đ
 
 VMedTriage được thiết kế theo kiến trúc **Single-Agent Hybrid** với cơ chế **Human-in-the-Loop (HITL)** bắt buộc nhằm đảm bảo an toàn trong môi trường y tế.
 
-Hệ thống sử dụng **Gemma 3 4B** để hiểu ngôn ngữ tự nhiên của bệnh nhân và chuyển đổi mô tả triệu chứng thành dữ liệu có cấu trúc theo checklist chuẩn. Sau khi dữ liệu được chuẩn hóa, hệ thống kiểm tra tính đầy đủ, phát hiện red-flag, tra protocol triage, đề xuất mức độ ưu tiên, tạo phiếu tóm tắt và chuyển cho điều dưỡng/bác sĩ xác nhận trước khi gửi kết quả cho bệnh nhân.
+Kiến trúc mục tiêu sử dụng **Gemma 3 4B** để hiểu ngôn ngữ tự nhiên của bệnh nhân và chuyển đổi mô tả triệu chứng thành dữ liệu có cấu trúc theo checklist chuẩn. Runtime MVP hiện dùng rule-backed semantic mapper làm deterministic fallback; adapter Gemma thật chưa được nối. Sau khi dữ liệu được chuẩn hóa, hệ thống kiểm tra tính đầy đủ, phát hiện red-flag, tra protocol triage, đề xuất mức độ ưu tiên, tạo phiếu tóm tắt và chuyển cho điều dưỡng/bác sĩ xác nhận trước khi gửi kết quả cho bệnh nhân.
 
 Trong toàn bộ quy trình, AI chỉ đóng vai trò **Clinical Decision Support**. Hệ thống không chẩn đoán bệnh, không kê đơn, không thay thế bác sĩ/điều dưỡng và không tự động đưa ra hướng xử trí cuối cùng.
 
@@ -48,6 +48,10 @@ Patient
     |
     v
 Conversation Agent
+    |
+    v
+Tool Orchestration Preflight
+(Normalize / Language / Safety / Risk Extraction)
     |
     v
 Gemma 3 4B Semantic Mapper
@@ -274,6 +278,10 @@ AI không được:
 Patient Message
         |
         v
+Tool Orchestrator Preflight
+(Normalize / Language / Crisis Safety / Risk Factors)
+        |
+        v
 Gemma 3 4B Semantic Mapper
         |
         v
@@ -303,7 +311,7 @@ Approved Patient Response
 
 ### 3.6. Điểm mới của giải pháp
 
-Thay vì sử dụng rule-based mapping hoặc keyword matching, VMedTriage sử dụng **Gemma 3 4B** để thực hiện Semantic Mapping. Điều này giúp hệ thống hiểu nhiều cách diễn đạt khác nhau của bệnh nhân, bao gồm câu nói tự nhiên, từ đồng nghĩa, lỗi chính tả phổ biến và mô tả không đầy đủ, rồi chuyển đổi về cùng một cấu trúc dữ liệu chuẩn theo checklist.
+Trong thiết kế mục tiêu, VMedTriage sử dụng **Gemma 3 4B** để thực hiện Semantic Mapping thay cho rule-based mapping thuần túy. Điều này giúp hệ thống hiểu nhiều cách diễn đạt khác nhau của bệnh nhân, bao gồm câu nói tự nhiên, từ đồng nghĩa, lỗi chính tả phổ biến và mô tả không đầy đủ, rồi chuyển đổi về cùng một cấu trúc dữ liệu chuẩn theo checklist. Bản MVP vẫn giữ rule-backed mapper để chạy offline, kiểm thử deterministic và fallback khi LLM chưa được cấu hình.
 
 Điểm mới này làm tăng độ linh hoạt ở bước thu thập triệu chứng, nhưng vẫn giữ an toàn bằng cách đặt Gemma trong phạm vi mapping và extraction. Các bước ra quyết định được kiểm soát bởi validator, red-flag safety layer, protocol-grounded triage engine và cổng phê duyệt của điều dưỡng/bác sĩ.
 
@@ -313,23 +321,23 @@ Thay vì sử dụng rule-based mapping hoặc keyword matching, VMedTriage sử
 
 | Yêu cầu đề bài | Mức đáp ứng | Ghi chú |
 |---|---:|---|
-| App deploy | Cần bổ sung trong implementation | Solution Design chưa nói deploy, nhưng có thể triển khai bằng FastAPI + frontend + Docker. |
+| App deploy | Đạt ở mức public demo | Đã có FastAPI UI, Docker và Render Blueprint; in-memory state chưa phù hợp production. |
 | 2 role: bệnh nhân, điều dưỡng | Đạt | Cần mô tả rõ quyền của từng role trong UI/API. |
 | Agent hỏi đáp triage có cấu trúc | Đạt | Conversation Agent + Checklist Validator đáp ứng. |
 | Phân 3-4 mức ưu tiên | Đạt | Emergency, Urgent, Routine, Self-care. |
 | Hướng xử trí đề xuất | Đạt có điều kiện | Chỉ được gửi sau khi điều dưỡng/bác sĩ duyệt. |
-| Red-flag escalation | Đạt sau khi thêm Safety Layer | Đây là phần bắt buộc, cần đưa vào diagram. |
+| Red-flag escalation | Đạt ở mức MVP | Có rule safety và bổ sung self-harm high-risk từ orchestration preflight. |
 | Disclaimer rõ | Cần bổ sung ở UI/response layer | Nên có disclaimer trong màn hình bệnh nhân. |
 | HITL bắt buộc | Đạt | Nurse Dashboard là approval gate. |
 | Không chẩn đoán thay bác sĩ | Đạt | Cần duy trì trong prompt, schema và UI text. |
-| Grounded trên protocol triage | Đạt sau khi thêm Protocol Engine | Cần có database/tool chứa guideline. |
+| Grounded trên protocol triage | Đạt ở mức local MVP | Protocol engine dùng cấu hình local; cần guideline store được quản trị và version hóa trước production. |
 | Chống bịa | Cần kiểm soát bằng schema + protocol lookup | Không cho LLM tự tạo guideline. |
-| Bảo mật PII/PHI | Cần bổ sung thành module hoặc non-functional requirement | Nên có access control, encryption, audit log. |
-| Queue realtime cho điều dưỡng | Phần nâng cao | Nên thiết kế dashboard có trạng thái queue. |
+| Bảo mật PII/PHI | Đạt ở mức framework MVP | Đã có PHI redactor, access-control checker, consent/policy tool và audit contract; encryption, authentication và persistent audit store vẫn cần trước production. |
+| Queue realtime cho điều dưỡng | Đạt ở mức demo | Có queue/dashboard in-memory; chưa có durable queue hoặc realtime broker. |
 | Memory phiên & phiếu bàn giao | Đạt | Session state + Summary Generator. |
-| Giải thích lý do có trích guideline | Đạt sau khi thêm evidence | Triage Engine cần trả về guideline reference. |
+| Giải thích lý do có trích guideline | Đạt một phần | Proposal có protocol id và reason; cần citation/version đầy đủ từ guideline store thật. |
 | Xử lý thiếu/mâu thuẫn | Đạt | Validator + follow-up questions. |
-| Audit log & thống kê accuracy | Đạt sau khi thêm Audit Log | Cần lưu so sánh AI proposal vs nurse final decision. |
+| Audit log & thống kê accuracy | Đạt ở mức local MVP | Registry tự ghi audit cho tool call; đã có metrics, quality, grounding, safety-event và drift tool. Cần persistent store và dashboard trước production. |
 
 ---
 
@@ -405,3 +413,127 @@ Luu y framework:
 - Deploy public hien dung in-memory case store, chi phu hop demo.
 - Khong nhap PHI that tren public demo.
 - Database, auth, audit store va persistent HITL queue can duoc bo sung truoc production y te.
+
+---
+
+## 8. Framework Update - Executable Tool Catalog and Orchestrator
+
+Ngày 2026-08-03, framework được mở rộng từ 6 MCP descriptor thành catalog thực thi gồm **82 tool**, chia
+thành 12 nhóm A-L trong `src/tool/catalog/`:
+
+1. Intake & Conversation.
+2. Semantic Mapping.
+3. Validation & Follow-up.
+4. Safety / Red Flag.
+5. Clinical Knowledge / RAG.
+6. Triage Decision Support.
+7. EHR / FHIR.
+8. Nurse Workflow / HITL.
+9. Audit / Compliance / Governance.
+10. Notification.
+11. Analytics / Evaluation.
+12. Orchestrator Internal.
+
+### 8.1. Kiến trúc tool framework
+
+```text
+User Query / Agent State
+          |
+          v
+ToolOrchestrator
+(build deterministic plan)
+          |
+          v
+CatalogToolRegistry
+(discovery + policy + output validation + audit)
+          |
+          v
+Local Catalog Adapter
+(development/demo)
+          |
+          v
+CatalogToolResult
+
+Agent / MCP API
+          |
+          v
+MCPToolRegistry -> StreamableHTTPMCPClient -> Configured MCP Server
+          |
+          v
+MCPToolCallResult
+```
+
+Local catalog registry và external MCP registry là hai execution path riêng. Việc tách này ngăn một MCP
+server chưa cấu hình bị thay bằng kết quả local nhưng vẫn báo như external call thành công.
+
+Các module framework chính:
+
+| File | Trách nhiệm |
+|---|---|
+| `src/tool/catalog/framework.py` | Khai báo `ToolExecutionContext`, metadata và output contract chuẩn. |
+| `src/tool/catalog/registry.py` | Discover 82 tool, áp policy, validate output và ghi audit. |
+| `src/tool/catalog/implementations.py` | Implementation local cho toàn bộ nhóm A-L. |
+| `src/tool/catalog/state.py` | In-memory state cho conversation, FHIR demo, queue, audit, outbox và metrics. |
+| `src/tool/catalog/orchestrator.py` | Lập kế hoạch và điều hướng patient query tới chuỗi tool. |
+
+Mỗi file `tool_<id>_<name>.py` giữ metadata `TOOL_SPEC` và entry point thống nhất:
+
+```python
+result = await execute(arguments, context)
+```
+
+Output chuẩn:
+
+```json
+{
+  "tool_id": 1,
+  "tool_name": "patient_message_normalizer",
+  "ok": true,
+  "data": {},
+  "error": null,
+  "metadata": {
+    "source": "local",
+    "confidence": 1.0,
+    "requires_human_review": false,
+    "patient_visible": false,
+    "latency_ms": 0.1,
+    "trace_id": null
+  }
+}
+```
+
+### 8.2. Policy và side effect
+
+- Tool read-only có thể chạy trong orchestration preflight.
+- Tool Clinical Decision Support luôn tạo kết quả nội bộ và có cờ yêu cầu human review.
+- Tool side-effect như ghi FHIR, assign case, gửi thông báo hoặc đặt lịch cần
+  `ToolExecutionContext(approved=True)`.
+- Mọi tool call qua registry được ghi audit với tool id, argument keys, actor, case, latency và trạng thái.
+- Output cho bệnh nhân vẫn phải qua safety filter và cổng HITL; tool result không tự động trở thành patient response.
+
+### 8.3. Pipeline sau cập nhật
+
+Pipeline production và `src/full_pipeline.py` chạy preflight gồm:
+
+```text
+patient_message_normalizer
+    -> language_detector
+    -> symptom_extraction_tool
+    -> self_harm_risk_detector
+    -> abuse_or_violence_detector
+    -> risk_factor_extraction_tool
+```
+
+Sau preflight, pipeline tiếp tục theo thứ tự validator, red-flag safety, protocol engine, summary, nurse
+queue, persistence và patient-safe response. Ngôn ngữ có nguy cơ tự hại mức cao được chuyển thành red flag
+để bắt buộc escalation và human review.
+
+### 8.4. Giới hạn hiện tại
+
+- Local implementation là deterministic MVP, không phải hệ thống clinical terminology đã chứng nhận.
+- FHIR, SMS, email, push và paging dùng in-memory state/outbox; `sent=false` hoặc `delivered=false` nghĩa là
+  provider ngoài chưa xác nhận gửi.
+- Dữ liệu mất khi process restart.
+- MCP endpoint cũ vẫn yêu cầu URL server được cấu hình; không âm thầm giả lập external call thành công.
+- Trước production y tế cần authentication, RBAC gắn với identity thật, encryption, persistent database,
+  secret management, terminology license, provider credentials và clinical validation.

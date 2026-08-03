@@ -343,7 +343,66 @@ Không hard-code port production. Render cần dùng `$PORT`:
 uvicorn src.main:app --host 0.0.0.0 --port $PORT
 ```
 
-## 12. Ghi chú an toàn demo
+## 12. Chạy readable pipeline và tool catalog
+
+Chạy pipeline đầy đủ với trace từng bước:
+
+```powershell
+python -m src.full_pipeline
+```
+
+Trace hiện gồm 10 bước, trong đó `02_tool_orchestration_preflight` gọi sáu tool intake/safety trước
+validator và protocol engine.
+
+Kiểm tra registry discover đủ 82 tool:
+
+```powershell
+python -c "from src.tool.catalog.registry import catalog_tool_registry as r; print(len(r.list_tools()))"
+```
+
+Ví dụ gọi tool read-only trong Python async:
+
+```python
+from src.tool.catalog.registry import catalog_tool_registry
+
+result = await catalog_tool_registry.call(
+    "snomed_concept_lookup",
+    {"term": "đau ngực", "language": "vi"},
+)
+print(result.model_dump())
+```
+
+Tool side-effect bị chặn nếu chưa có phê duyệt. Khi gọi từ luồng nurse/HITL, truyền execution context:
+
+```python
+from src.tool.catalog.framework import ToolExecutionContext
+
+context = ToolExecutionContext(
+    case_id="case-123",
+    actor_id="nurse-01",
+    actor_role="nurse",
+    approved=True,
+)
+result = await catalog_tool_registry.call(
+    "fhir_task_create",
+    {
+        "patient_id": "patient-01",
+        "task_payload": {"status": "requested"},
+    },
+    context=context,
+)
+```
+
+Lưu ý phân biệt hai registry:
+
+- `src.tool.catalog.registry`: 82 local-first tool dùng bởi orchestrator và pipeline.
+- `src.tool.registry`: các MCP endpoint ngoài; tool đã có external descriptor vẫn trả lỗi cấu hình nếu URL
+  MCP tương ứng chưa được khai báo.
+
+FHIR/notification local adapter chỉ ghi state hoặc outbox. Hãy kiểm tra `sent`, `delivered` và `source`
+trong output; không coi một message queued là đã được provider gửi thành công.
+
+## 13. Ghi chú an toàn demo
 
 - Không nhập PHI/PII thật vào demo public.
 - Demo hiện dùng in-memory case store, dữ liệu có thể mất khi restart.

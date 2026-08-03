@@ -87,3 +87,32 @@ Tôi đau ngực từ sáng, đi vài bước là hụt hơi.
 - Demo public không được nhập PHI thật.
 - AI không gửi hướng xử trí cuối cùng cho bệnh nhân nếu chưa có HITL approval.
 - MCP/FHIR/CDS integrations cần auth, audit logging và phân quyền trước khi dùng trong môi trường y tế thật.
+
+## 6. Tool catalog và external provider trên Render
+
+Catalog 82 tool được load trực tiếp từ `src/tool/catalog/` khi process khởi động và không cần thêm build
+step. Intake orchestrator dùng local adapter nên patient triage demo vẫn hoạt động khi chưa cấu hình MCP.
+
+Hai loại runtime cần được phân biệt:
+
+| Runtime | Mục đích | Persistence |
+|---|---|---|
+| Local catalog adapter | Demo, test và deterministic fallback | In-memory, mất khi restart/redeploy |
+| External MCP/provider | Terminology, guideline, FHIR, CDS, notification, audit thật | Do server/provider ngoài quản lý |
+
+Các tool FHIR write, SMS, email, push, paging và appointment local chỉ ghi vào state/outbox. Output
+`sent=false` hoặc `delivered=false` không phải lỗi: nó xác nhận chưa có provider ngoài báo delivery thành
+công. Không dùng local outbox làm notification backend production.
+
+Khi bật external MCP trên Render:
+
+1. Khai báo URL bằng Render Environment, không ghi secret trong repository.
+2. Bảo đảm endpoint dùng HTTPS và có authentication phù hợp; URL hiện tại chỉ là cấu hình transport.
+3. Cấu hình timeout, retry và idempotency tại MCP server/provider.
+4. Gửi PHI tối thiểu cần thiết và chạy redaction/policy trước external call.
+5. Lưu audit vào persistent append-only store thay vì in-memory list.
+6. Kiểm thử trạng thái provider accepted/delivered/failed và fallback sang manual review.
+
+Render Free không phù hợp cho webhook delivery, durable queue hoặc dữ liệu lâm sàng vì service có thể sleep
+và filesystem/process state không bền vững. Trước production cần database, queue, secrets manager,
+authentication/RBAC, encryption, backup, retention policy và clinical validation.
