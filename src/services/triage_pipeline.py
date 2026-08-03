@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.models.protocols import SemanticMapper
-from src.models.schemas import ActorRole, CaseStatus, ConversationMessage, TriageCase
+from src.models.schemas import ActorRole, CaseStatus, ConversationMessage, RedFlagFinding, TriageCase
 from src.services.case_store import InMemoryCaseStore, case_store
 from src.services.checklist_validator import ChecklistValidator
 from src.services.nurse_queue import NurseQueueService
@@ -9,6 +9,7 @@ from src.services.red_flag import RedFlagSafetyLayer
 from src.services.semantic_mapper import RuleBackedSemanticMapper
 from src.services.summary_generator import SummaryGenerator
 from src.services.triage_engine import ProtocolTriageEngine
+from src.tool.catalog.orchestrator import ToolOrchestrator, tool_orchestrator
 
 
 class TriagePipeline:
@@ -16,6 +17,7 @@ class TriagePipeline:
         self,
         mapper: SemanticMapper | None = None,
         store: InMemoryCaseStore = case_store,
+        orchestrator: ToolOrchestrator = tool_orchestrator,
     ) -> None:
         self.mapper = mapper or RuleBackedSemanticMapper()
         self.validator = ChecklistValidator()
@@ -24,6 +26,7 @@ class TriagePipeline:
         self.summary_generator = SummaryGenerator()
         self.nurse_queue = NurseQueueService()
         self.store = store
+        self.orchestrator = orchestrator
 
     async def handle_patient_message(self, message: str, case_id: str | None = None) -> TriageCase:
         triage_case = self._load_or_create_case(case_id)
@@ -31,9 +34,24 @@ class TriagePipeline:
             ConversationMessage(role=ActorRole.PATIENT, content=message)
         )
 
-        structured_data = await self.mapper.map_message(message)
+        intake_run = await self.orchestrator.run_patient_query(message, case_id=triage_case.case_id)
+        normalized_message = intake_run.data_for("patient_message_normalizer").get(
+            "normalized_message",
+            message,
+        )
+
+        structured_data = await self.mapper.map_message(normalized_message)
         validation = self.validator.validate(structured_data)
         red_flags = self.red_flag_layer.detect(structured_data)
+        self_harm = intake_run.data_for("self_harm_risk_detector")
+        if self_harm.get("risk_level") == "high":
+            red_flags.append(
+                RedFlagFinding(
+                    code="high_self_harm_risk",
+                    label="High self-harm risk language detected",
+                    matched_fields=["patient_message"],
+                )
+            )
         proposal = self.triage_engine.propose(structured_data, validation, red_flags)
         summary = self.summary_generator.build(structured_data, validation, red_flags, proposal)
         queue_item = self.nurse_queue.build_item(
