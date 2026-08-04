@@ -3,79 +3,399 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VMedTriage Demo</title>
+    <meta name="theme-color" content="#0a6f66" />
+    <meta
+      name="description"
+      content="VMedTriage hỗ trợ thu thập triệu chứng và phân luồng ban đầu với xác nhận bắt buộc từ nhân viên y tế."
+    />
+    <title>VMedTriage | Hỗ trợ phân luồng y tế</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <h1>VMedTriage</h1>
-          <p>Patient intake · Protocol triage · Nurse review</p>
+    <a class="skip-link" href="#mainContent">Đi tới nội dung chính</a>
+
+    <div class="app-shell">
+      <header class="app-header">
+        <button class="brand" id="homeButton" type="button" aria-label="Về màn hình chọn vai trò">
+          <span class="brand-mark" aria-hidden="true">V</span>
+          <span>
+            <strong>VMedTriage</strong>
+            <small>Hỗ trợ phân luồng y tế</small>
+          </span>
+        </button>
+
+        <div class="header-actions">
+          <div class="connection-status" id="systemStatus" role="status" aria-live="polite">
+            <span class="status-indicator" aria-hidden="true"></span>
+            <span>Đang kết nối</span>
+          </div>
+          <button class="text-button" id="switchRoleButton" type="button" hidden>Đăng xuất</button>
         </div>
-        <div class="status-pill" id="systemStatus">Ready</div>
       </header>
 
-      <section class="workspace">
-        <section class="panel chat-panel" aria-label="Patient chat">
-          <div class="panel-header">
-            <h2>Bệnh nhân</h2>
-            <button class="ghost-button" id="newCaseButton" type="button">Case mới</button>
+      <main id="mainContent" tabindex="-1">
+        <section class="view access-view" id="accessView" aria-labelledby="accessTitle">
+          <div class="access-copy">
+            <p class="context-label">Truy cập bản demo</p>
+            <h1 id="accessTitle">Chọn không gian phù hợp với bạn</h1>
+            <p>
+              Bệnh nhân khai báo triệu chứng theo hướng dẫn. Nhân viên y tế xem hàng đợi và xác nhận kết quả trước khi gửi.
+            </p>
           </div>
-          <div class="messages" id="messages"></div>
-          <form class="composer" id="chatForm">
-            <textarea id="messageInput" rows="3" placeholder="Tôi đau ngực từ sáng, đi vài bước là hụt hơi."></textarea>
-            <button type="submit">Gửi</button>
-          </form>
+
+          <div class="role-choices" id="roleChoices" aria-label="Chọn vai trò">
+            <button class="role-choice role-choice-patient" type="button" data-role="patient">
+              <span class="role-number" aria-hidden="true">01</span>
+              <span class="role-content">
+                <strong>Tôi là bệnh nhân</strong>
+                <span>Bắt đầu khai báo triệu chứng và theo dõi trạng thái xử lý.</span>
+                <span class="role-action">Vào khu vực bệnh nhân</span>
+              </span>
+            </button>
+
+            <button class="role-choice role-choice-nurse" type="button" data-role="nurse">
+              <span class="role-number" aria-hidden="true">02</span>
+              <span class="role-content">
+                <strong>Tôi là nhân viên y tế</strong>
+                <span>Xem các ca chờ duyệt, red flag và phiếu tóm tắt.</span>
+                <span class="role-action">Mở hàng đợi điều dưỡng</span>
+              </span>
+            </button>
+          </div>
+
+          <section class="auth-panel" id="authPanel" aria-labelledby="authTitle" hidden>
+            <div class="auth-heading">
+              <p class="context-label" id="authRoleLabel">Khu vực bệnh nhân</p>
+              <h2 id="authTitle">Đăng nhập để tiếp tục</h2>
+              <p id="authHelp">Dùng tài khoản của bạn để truy cập đúng không gian làm việc.</p>
+            </div>
+
+            <div class="auth-tabs" role="group" aria-label="Chọn hình thức xác thực">
+              <button class="auth-tab is-active" type="button" data-auth-mode="login" aria-pressed="true">Đăng nhập</button>
+              <button class="auth-tab" type="button" data-auth-mode="register" aria-pressed="false">Tạo tài khoản</button>
+            </div>
+
+            <form class="auth-form" id="authForm" novalidate>
+              <label class="auth-field" id="fullNameField" for="authFullName" hidden>
+                <span>Họ và tên</span>
+                <input id="authFullName" name="full_name" type="text" minlength="2" maxlength="120" autocomplete="name" />
+              </label>
+              <label class="auth-field" for="authEmail">
+                <span>Email</span>
+                <input id="authEmail" name="email" type="email" maxlength="320" autocomplete="email" required />
+              </label>
+              <label class="auth-field" for="authPassword">
+                <span>Mật khẩu</span>
+                <input id="authPassword" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required />
+                <small id="passwordHelp">Tối thiểu 8 ký tự khi tạo tài khoản.</small>
+              </label>
+              <label class="auth-field" id="nurseCodeField" for="nurseRegistrationCode" hidden>
+                <span>Mã đăng ký điều dưỡng</span>
+                <input id="nurseRegistrationCode" name="nurse_registration_code" type="password" maxlength="256" autocomplete="off" />
+                <small>Mã riêng do quản trị viên cung cấp.</small>
+              </label>
+
+              <p class="field-error auth-error" id="authError" role="alert"></p>
+              <div class="auth-actions">
+                <button class="primary-button" id="authSubmitButton" type="submit">Đăng nhập</button>
+                <button class="secondary-button" id="authBackButton" type="button">Chọn vai trò khác</button>
+              </div>
+            </form>
+          </section>
+
+          <div class="demo-notice" role="note">
+            <strong>Chế độ demo</strong>
+            <span>Tài khoản được xác thực theo vai trò. Vẫn không nhập thông tin sức khỏe hoặc thông tin cá nhân thật.</span>
+          </div>
         </section>
 
-        <section class="panel details-panel" aria-label="Triage details">
-          <div class="panel-header">
-            <h2>Case</h2>
-            <span class="case-id" id="caseId">No case</span>
-          </div>
+        <section class="view disclaimer-view" id="disclaimerView" aria-labelledby="disclaimerTitle" hidden>
+          <div class="disclaimer-panel">
+            <p class="context-label">Trước khi bắt đầu</p>
+            <h1 id="disclaimerTitle">Thông tin an toàn quan trọng</h1>
+            <p class="disclaimer-lead">
+              VMedTriage hỗ trợ thu thập thông tin ban đầu. Hệ thống không chẩn đoán và không thay thế bác sĩ.
+            </p>
 
-          <div class="metric-grid">
+            <div class="safety-rules">
+              <div>
+                <span class="rule-index" aria-hidden="true">1</span>
+                <p>Mọi hướng dẫn xử trí phải được nhân viên y tế xác nhận trước khi gửi cho bạn.</p>
+              </div>
+              <div>
+                <span class="rule-index" aria-hidden="true">2</span>
+                <p>Nếu khó thở nặng, đau ngực dữ dội, bất tỉnh hoặc có dấu hiệu nguy hiểm, hãy gọi 115 ngay.</p>
+              </div>
+              <div>
+                <span class="rule-index" aria-hidden="true">3</span>
+                <p>Không nhập họ tên, số căn cước, địa chỉ hoặc hồ sơ y tế thật trong bản demo.</p>
+              </div>
+            </div>
+
+            <div class="disclaimer-actions">
+              <button class="primary-button" id="acceptDisclaimerButton" type="button">Tôi đã hiểu, bắt đầu</button>
+              <button class="secondary-button" id="backToRolesButton" type="button">Quay lại</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view patient-view" id="patientView" aria-labelledby="patientTitle" hidden>
+          <div class="emergency-banner" id="emergencyBanner" role="alert" hidden>
             <div>
-              <span>Status</span>
-              <strong id="caseStatus">-</strong>
+              <p class="emergency-kicker">Cảnh báo khẩn cấp</p>
+              <h2>Hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay.</h2>
+              <p>
+                Thông tin bạn cung cấp có dấu hiệu cần được đánh giá khẩn cấp. Ca đã được chuyển tới hàng đợi ưu tiên.
+              </p>
             </div>
+            <button class="emergency-button" id="acknowledgeEmergencyButton" type="button">Tôi đã đọc</button>
+          </div>
+
+          <div class="patient-layout">
+            <aside class="patient-sidebar" aria-labelledby="patientTitle">
+              <p class="context-label">Khu vực bệnh nhân</p>
+              <h1 id="patientTitle">Khai báo triệu chứng</h1>
+              <p>Trả lời từng câu hỏi bằng thông tin ngắn gọn và chính xác nhất bạn có thể.</p>
+
+              <div class="case-state" id="patientCaseState">
+                <span class="case-state-label">Trạng thái phiên</span>
+                <strong id="patientStateValue">Chưa bắt đầu</strong>
+                <span id="patientStateHelp">Chọn một nhóm triệu chứng hoặc nhập mô tả để bắt đầu.</span>
+              </div>
+
+              <div class="patient-safety-note">
+                <strong>Không phải chẩn đoán</strong>
+                <p>Kết quả cuối cùng chỉ hiển thị sau khi nhân viên y tế duyệt.</p>
+              </div>
+            </aside>
+
+            <section class="conversation-panel" aria-labelledby="conversationTitle">
+              <header class="panel-heading">
+                <div>
+                  <p class="panel-overline">Phiên tư vấn</p>
+                  <h2 id="conversationTitle">Trao đổi với trợ lý y tế</h2>
+                </div>
+                <div class="case-reference">
+                  <span>Mã ca</span>
+                  <strong id="patientCaseId">Chưa có</strong>
+                </div>
+              </header>
+
+              <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions">
+                <div class="welcome-message" id="welcomeMessage">
+                  <strong>Bạn đang gặp triệu chứng gì?</strong>
+                  <p>Chọn một nhóm bên dưới hoặc mô tả bằng lời của bạn.</p>
+                </div>
+              </div>
+
+              <div class="symptom-choices" id="symptomChoices" aria-label="Nhóm triệu chứng phổ biến">
+                <button type="button" data-symptom="Tôi bị sốt.">Sốt</button>
+                <button type="button" data-symptom="Tôi bị đau bụng.">Đau bụng</button>
+                <button type="button" data-symptom="Tôi bị đau ngực.">Đau ngực</button>
+                <button type="button" data-symptom="Tôi cảm thấy khó thở.">Khó thở</button>
+                <button type="button" data-symptom="Tôi bị đau đầu.">Đau đầu</button>
+              </div>
+
+              <form class="composer" id="chatForm" novalidate>
+                <label for="messageInput">Mô tả triệu chứng hoặc trả lời câu hỏi</label>
+                <div class="composer-row">
+                  <textarea
+                    id="messageInput"
+                    rows="3"
+                    maxlength="5000"
+                    placeholder="Ví dụ: Tôi đau ngực từ sáng, đi vài bước là hụt hơi."
+                    aria-describedby="messageHelp messageError"
+                  ></textarea>
+                  <button class="primary-button send-button" id="sendButton" type="submit">Gửi</button>
+                </div>
+                <div class="form-meta">
+                  <span id="messageHelp">Không nhập thông tin nhận dạng cá nhân.</span>
+                  <span class="field-error" id="messageError" role="alert"></span>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <section class="patient-outcome" id="patientOutcome" aria-live="polite" hidden>
             <div>
-              <span>Priority</span>
-              <strong id="casePriority">-</strong>
+              <p class="outcome-label" id="patientOutcomeLabel">Đang chờ duyệt</p>
+              <h2 id="patientOutcomeTitle">Thông tin đã được chuyển tới nhân viên y tế</h2>
+              <p id="patientOutcomeBody">Bạn có thể kiểm tra lại kết quả trong ít phút.</p>
             </div>
-          </div>
-
-          <div class="tabs">
-            <button class="tab active" data-tab="summary" type="button">Summary</button>
-            <button class="tab" data-tab="mapping" type="button">Mapping</button>
-            <button class="tab" data-tab="queue" type="button">Queue</button>
-          </div>
-
-          <pre class="json-view" id="detailsView">{}</pre>
+            <div class="outcome-actions">
+              <button class="secondary-button" id="checkResultButton" type="button">Kiểm tra kết quả</button>
+              <button class="text-button" id="newCaseButton" type="button">Bắt đầu ca mới</button>
+            </div>
+          </section>
         </section>
 
-        <section class="panel review-panel" aria-label="Nurse review">
-          <div class="panel-header">
-            <h2>Điều dưỡng</h2>
-            <button class="ghost-button" id="refreshQueueButton" type="button">Refresh</button>
-          </div>
-
-          <div class="review-controls">
-            <label for="approvedResponse">Phản hồi đã duyệt</label>
-            <textarea id="approvedResponse" rows="5">Nhân viên y tế đã xem thông tin của bạn và sẽ liên hệ theo mức ưu tiên phù hợp.</textarea>
-            <div class="button-row">
-              <button id="approveButton" type="button">Approve</button>
-              <button id="escalateButton" type="button">Escalate</button>
-              <button class="ghost-button" id="askMoreButton" type="button">Ask more</button>
+        <section class="view nurse-view" id="nurseView" aria-labelledby="nurseTitle" hidden>
+          <header class="nurse-page-heading">
+            <div>
+              <p class="context-label">Không gian điều dưỡng</p>
+              <h1 id="nurseTitle">Hàng đợi duyệt ca</h1>
+              <p>Ưu tiên red flag, kiểm tra thông tin thiếu và xác nhận nội dung trước khi gửi.</p>
             </div>
+            <div class="queue-summary" aria-label="Tóm tắt hàng đợi">
+              <span>Đang chờ</span>
+              <strong id="pendingCaseCount">0</strong>
+            </div>
+          </header>
+
+          <div class="nurse-layout">
+            <aside class="queue-panel" aria-labelledby="queueTitle">
+              <header class="queue-header">
+                <div>
+                  <h2 id="queueTitle">Danh sách ca</h2>
+                  <p id="queueUpdatedAt">Chưa tải dữ liệu</p>
+                </div>
+                <button class="secondary-button compact-button" id="refreshQueueButton" type="button">Làm mới</button>
+              </header>
+
+              <label class="filter-field" for="queueFilter">
+                <span>Lọc theo trạng thái</span>
+                <select id="queueFilter">
+                  <option value="pending">Đang chờ duyệt</option>
+                  <option value="all">Tất cả ca</option>
+                  <option value="emergency">Chỉ ca cấp cứu</option>
+                  <option value="completed">Đã xử lý</option>
+                </select>
+              </label>
+
+              <div class="queue-message" id="queueMessage" role="status" aria-live="polite">
+                <strong>Đang tải hàng đợi</strong>
+                <span>Vui lòng chờ trong giây lát.</span>
+              </div>
+              <div class="queue-list" id="queueList" role="listbox" aria-label="Các ca triage"></div>
+            </aside>
+
+            <section class="case-workspace" aria-labelledby="caseWorkspaceTitle">
+              <div class="case-empty" id="caseEmptyState">
+                <span class="empty-index" aria-hidden="true">01</span>
+                <h2 id="caseWorkspaceTitle">Chọn một ca để bắt đầu duyệt</h2>
+                <p>Phiếu tóm tắt, red flag và hành động HITL sẽ xuất hiện tại đây.</p>
+              </div>
+
+              <div class="case-detail" id="caseDetail" hidden>
+                <header class="case-detail-header">
+                  <div>
+                    <p class="panel-overline">Phiếu tóm tắt</p>
+                    <h2 id="selectedCaseId">Ca chưa chọn</h2>
+                  </div>
+                  <div class="case-badges">
+                    <span class="status-badge" id="selectedCaseStatus">Chưa xác định</span>
+                    <span class="priority-badge" id="selectedCasePriority">Chưa phân loại</span>
+                  </div>
+                </header>
+
+                <div class="case-alert" id="caseAlert" role="alert" hidden></div>
+
+                <div class="clinical-layout">
+                  <section class="summary-section" aria-labelledby="summaryTitle">
+                    <h3 id="summaryTitle">Thông tin lâm sàng đã thu thập</h3>
+                    <dl class="summary-grid">
+                      <div>
+                        <dt>Triệu chứng chính</dt>
+                        <dd id="summaryComplaint">Chưa có</dd>
+                      </div>
+                      <div>
+                        <dt>Khởi phát</dt>
+                        <dd id="summaryOnset">Thiếu thông tin</dd>
+                      </div>
+                      <div>
+                        <dt>Mức độ</dt>
+                        <dd id="summarySeverity">Thiếu thông tin</dd>
+                      </div>
+                      <div>
+                        <dt>Độ tin cậy mapping</dt>
+                        <dd id="summaryConfidence">Chưa có</dd>
+                      </div>
+                    </dl>
+
+                    <div class="summary-block">
+                      <h4>Triệu chứng đi kèm</h4>
+                      <div class="tag-list" id="associatedSymptoms"></div>
+                    </div>
+
+                    <div class="summary-block missing-block" id="missingBlock">
+                      <h4>Thông tin còn thiếu</h4>
+                      <div class="tag-list" id="missingInformation"></div>
+                    </div>
+                  </section>
+
+                  <aside class="decision-section" aria-labelledby="decisionTitle">
+                    <h3 id="decisionTitle">Đề xuất nội bộ</h3>
+                    <div class="decision-priority">
+                      <span>Mức ưu tiên AI đề xuất</span>
+                      <strong id="proposalPriority">Chưa có</strong>
+                    </div>
+                    <p id="proposalReason">Chưa có lý do phân loại.</p>
+
+                    <div class="red-flag-section" id="redFlagSection" hidden>
+                      <h4>Red flag được phát hiện</h4>
+                      <div id="redFlagList"></div>
+                    </div>
+                  </aside>
+                </div>
+
+                <details class="conversation-history">
+                  <summary>Xem lịch sử trao đổi</summary>
+                  <div id="conversationHistory"></div>
+                </details>
+
+                <form class="review-form" id="reviewForm">
+                  <div class="review-form-heading">
+                    <div>
+                      <h3>Xác nhận của nhân viên y tế</h3>
+                      <p>Nội dung bên dưới có thể được gửi cho bệnh nhân sau khi lưu thành công.</p>
+                    </div>
+                    <span class="hitl-label">Bắt buộc HITL</span>
+                  </div>
+
+                  <div class="review-fields">
+                    <label for="editedPriority">
+                      <span>Mức ưu tiên sau duyệt</span>
+                      <select id="editedPriority">
+                        <option value="Emergency">Cấp cứu</option>
+                        <option value="Urgent">Khám sớm</option>
+                        <option value="Routine">Khám thông thường</option>
+                        <option value="Self-care">Tự theo dõi</option>
+                        <option value="Manual review">Cần đánh giá thủ công</option>
+                      </select>
+                    </label>
+
+                    <label for="approvedResponse">
+                      <span>Nội dung gửi cho bệnh nhân</span>
+                      <textarea id="approvedResponse" rows="4" required></textarea>
+                    </label>
+
+                    <label for="nurseNotes">
+                      <span>Ghi chú nội bộ</span>
+                      <textarea id="nurseNotes" rows="2" placeholder="Không bắt buộc"></textarea>
+                    </label>
+                  </div>
+
+                  <p class="field-error review-error" id="reviewError" role="alert"></p>
+
+                  <div class="review-actions">
+                    <button class="primary-button" id="approveButton" type="button">Duyệt và gửi</button>
+                    <button class="secondary-button" id="askMoreButton" type="button">Yêu cầu bổ sung</button>
+                    <button class="danger-button" id="escalateButton" type="button">Chuyển cấp cứu</button>
+                  </div>
+                </form>
+              </div>
+            </section>
           </div>
-
-          <div class="queue-list" id="queueList"></div>
         </section>
-      </section>
-    </main>
+      </main>
 
-    <script src="/app.js"></script>
+      <footer class="app-footer">
+        <span>VMedTriage là công cụ hỗ trợ, không thay thế chẩn đoán hoặc quyết định của nhân viên y tế.</span>
+        <span>Không sử dụng dữ liệu thật trong bản demo.</span>
+      </footer>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script src="/app.js" defer></script>
   </body>
 </html>

@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
+    # Authentication
+    jwt_secret_key: str = Field(default="development-only-change-before-production", min_length=32)
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
+    nurse_registration_code: str = ""
+
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 
