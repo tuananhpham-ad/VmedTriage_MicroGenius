@@ -74,8 +74,7 @@ Checklist cố định, không hỏi ngoài phạm vi; red-flag escalate ngay kh
 | 2 | `measured_temperature_c` | = "Trên 39°C" | Sốt cao dù chưa kèm dấu hiệu red-flag khác, vẫn cần khám sớm hơn theo dõi tại nhà |
 | 3 | `underlying_condition` | = "Có" HOẶC "Không rõ" | Có bệnh nền (hoặc không chắc chắn) → tăng nguy cơ diễn tiến nặng dù triệu chứng bề mặt nhẹ |
 | 4 | `patient_age_group` | = "1–3 tháng tuổi" | Trẻ sơ sinh có sốt luôn cần đánh giá y tế sớm, không bao giờ để ở mức Tự theo dõi |
-| 5 | `seizure_history` (nếu có hỏi) | = "Đã từng" | Tiền sử co giật do sốt → nguy cơ tái phát, cần theo dõi y tế chặt hơn dù hiện tại chưa co giật |
-| 6 | `recent_outbreak_exposure` (nếu có hỏi) | = "Có" | Yếu tố dịch tễ nghi sốt xuất huyết/bệnh truyền nhiễm, cần khám để loại trừ dù chưa có warning sign rõ |
+| 5 | `seizure_history` | = "Trước đây đã từng bị co giật khi sốt cao" | Tiền sử co giật do sốt → nguy cơ tái phát, cần theo dõi y tế chặt hơn dù hiện tại chưa co giật |
 
 ### Điều kiện mức "Tự theo dõi"
 
