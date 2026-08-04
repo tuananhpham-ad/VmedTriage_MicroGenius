@@ -73,8 +73,9 @@ graph TB
     Settings --> MCPRegistry
 
     LLMAdapter[LLM Adapter<br/>services/llm.py - ChatOpenAI] -. extension point .-> Pipeline
-    WeaviateCloud[(Weaviate Cloud<br/>target database + vector store)] -. future persistence .-> CaseStore
-    WeaviateCloud -. future semantic search .-> LocalToolCatalog
+    Pipeline -->|best-effort persist| IngestPipeline[Ingesting Pipeline<br/>src/pipeline/ingesting_pipeline.py]
+    IngestPipeline --> WeaviateCloud[(Weaviate Cloud<br/>database + vector store)]
+    QueryPipeline[Querying Pipeline<br/>src/pipeline/querying_pipeline.py] -->|query cases / knowledge| WeaviateCloud
 ```
 
 ## Components
@@ -158,11 +159,16 @@ graph LR
 - **Current active storage:**
   - `InMemoryCaseStore`: process-local store for `TriageCase` objects used by the API and review flow.
   - `CatalogStateStore`: process-local state for tool conversations, mock FHIR resources, queue data, assignments, audit events, outbox, appointments, metrics, feedback and traces.
+- **Weaviate Cloud pipeline layer:** `src/pipeline/`.
+  - `ingesting_pipeline.py`: pushes triage cases and clinical knowledge into Weaviate Cloud.
+  - `querying_pipeline.py`: searches case and knowledge collections with `bm25`, plus semantic mode when collections are vectorized.
+  - `repository.py`: central Weaviate Cloud adapter.
 - **Target persistent storage:** Weaviate Cloud.
   - Store triage cases, nurse queue state, review decisions, audit events and tool traces as persistent objects.
   - Store clinical knowledge/protocol documents as vectorized objects for semantic search/RAG.
   - Required future configuration: Weaviate cluster URL, API key and collection/schema definitions.
-  - Current code has `database_url` and `chroma_persist_dir` settings, but no repository layer writes to SQLite/PostgreSQL/Chroma yet; these should be replaced or superseded by a Weaviate-backed repository when persistence is implemented.
+  - Current code still keeps the in-memory store for fast API reads, and now attempts best-effort case ingestion into Weaviate after local save.
+  - `database_url` and `chroma_persist_dir` remain legacy settings; no repository layer writes to SQLite/PostgreSQL/Chroma.
 
 ### 7. External Integrations
 

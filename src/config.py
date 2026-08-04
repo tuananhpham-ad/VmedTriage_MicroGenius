@@ -28,7 +28,14 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
-    # Vector Store
+    # Weaviate Cloud / Vector Store
+    weaviate_url: str = ""
+    weaviate_api_key: str = ""
+    weaviate_cases_collection: str = "TriageCase"
+    weaviate_knowledge_collection: str = "ClinicalKnowledge"
+    weaviate_query_limit: int = Field(default=5, ge=1, le=100)
+
+    # Legacy vector store fallback
     chroma_persist_dir: str = "./data/chroma"
 
     # VMedTriage workflow
