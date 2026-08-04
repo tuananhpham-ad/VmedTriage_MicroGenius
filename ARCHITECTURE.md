@@ -73,9 +73,12 @@ graph TB
     Settings --> MCPRegistry
 
     LLMAdapter[LLM Adapter<br/>services/llm.py - ChatOpenAI] -. extension point .-> Pipeline
-    Pipeline -->|best-effort persist| IngestPipeline[Ingesting Pipeline<br/>src/pipeline/ingesting_pipeline.py]
-    IngestPipeline --> WeaviateCloud[(Weaviate Cloud<br/>database + vector store)]
-    QueryPipeline[Querying Pipeline<br/>src/pipeline/querying_pipeline.py] -->|query cases / knowledge| WeaviateCloud
+    FullPipeline[Full Pipeline Runner<br/>src/pipeline/full_pipeline.py<br/>sample upload + sample query] --> DBUpdatePhase
+    FullPipeline --> AnswerPhase
+
+    Pipeline -->|best-effort case update| DBUpdatePhase[Database Update Phase<br/>src/pipeline/database_update_phase.py]
+    DBUpdatePhase -->|user uploads documents<br/>or new cases are created| WeaviateCloud[(Weaviate Cloud<br/>database + vector store)]
+    AnswerPhase[User Answer Phase<br/>src/pipeline/user_answer_phase.py] -->|query cases / knowledge| WeaviateCloud
 ```
 
 ## Components
@@ -160,9 +163,10 @@ graph LR
   - `InMemoryCaseStore`: process-local store for `TriageCase` objects used by the API and review flow.
   - `CatalogStateStore`: process-local state for tool conversations, mock FHIR resources, queue data, assignments, audit events, outbox, appointments, metrics, feedback and traces.
 - **Weaviate Cloud pipeline layer:** `src/pipeline/`.
-  - `ingesting_pipeline.py`: pushes triage cases and clinical knowledge into Weaviate Cloud.
-  - `querying_pipeline.py`: searches case and knowledge collections with `bm25`, plus semantic mode when collections are vectorized.
-  - `repository.py`: central Weaviate Cloud adapter.
+  - `full_pipeline.py`: runs the full sample flow: upload sample documents, update Weaviate Cloud, then query a sample question.
+  - `database_update_phase.py`: updates Weaviate Cloud when users upload documents, and can also store newly created triage cases.
+  - `user_answer_phase.py`: queries case and knowledge collections, then builds a user-facing answer.
+  - `weaviate_cloud.py`: central Weaviate Cloud adapter.
 - **Target persistent storage:** Weaviate Cloud.
   - Store triage cases, nurse queue state, review decisions, audit events and tool traces as persistent objects.
   - Store clinical knowledge/protocol documents as vectorized objects for semantic search/RAG.

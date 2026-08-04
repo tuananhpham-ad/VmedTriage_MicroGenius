@@ -345,16 +345,28 @@ uvicorn src.main:app --host 0.0.0.0 --port $PORT
 
 ## 12. Chay Weaviate pipelines
 
+Chay full pipeline voi sample upload + sample query:
+
+```powershell
+python -m src.pipeline.full_pipeline
+```
+
+Neu chua cau hinh Weaviate Cloud, chay dry-run de xem sample payload:
+
+```powershell
+python -m src.pipeline.full_pipeline --dry-run
+```
+
 Chay ingest pipeline:
 
 ```powershell
-python -m src.pipeline.ingesting_pipeline
+python -m src.pipeline.database_update_phase
 ```
 
 Chay querying pipeline:
 
 ```powershell
-python -m src.pipeline.querying_pipeline
+python -m src.pipeline.user_answer_phase
 ```
 
 Can co `WEAVIATE_URL` va `WEAVIATE_API_KEY` trong `.env` truoc khi chay.

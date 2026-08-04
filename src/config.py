@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -21,8 +22,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # LLM
+    llm_provider: Literal["auto", "openai", "deepseek", "gemini"] = "auto"
+    llm_provider_order: str = "openai,deepseek,gemini"
     openai_api_key: str = ""
-    model_name: str = "gemma-3-4b"
+    openai_model_name: str = "gpt-4o-mini"
+    deepseek_api_key: str = ""
+    deepseek_model_name: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    gemini_api_key: str = ""
+    gemini_model_name: str = "gemini-1.5-flash"
+    model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 
     # Database
@@ -166,4 +175,11 @@ MCP_TOOL_SERVER_CONFIGS: dict[str, dict[str, str]] = {
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if not settings.weaviate_url:
+        settings.weaviate_url = os.getenv("WVC_URL", "")
+    if not settings.weaviate_api_key:
+        settings.weaviate_api_key = os.getenv("WVC_API_KEY", "")
+    if not settings.gemini_api_key:
+        settings.gemini_api_key = os.getenv("GOOGLE_API_KEY", "")
+    return settings

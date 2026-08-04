@@ -9,7 +9,7 @@ from src.services.red_flag import RedFlagSafetyLayer
 from src.services.semantic_mapper import RuleBackedSemanticMapper
 from src.services.summary_generator import SummaryGenerator
 from src.services.triage_engine import ProtocolTriageEngine
-from src.pipeline.ingesting_pipeline import IngestingPipeline
+from src.pipeline.database_update_phase import DatabaseUpdatePhase
 from src.tool.catalog.orchestrator import ToolOrchestrator, tool_orchestrator
 
 
@@ -26,7 +26,7 @@ class TriagePipeline:
         self.triage_engine = ProtocolTriageEngine()
         self.summary_generator = SummaryGenerator()
         self.nurse_queue = NurseQueueService()
-        self.ingest_pipeline = IngestingPipeline()
+        self.database_update_phase = DatabaseUpdatePhase()
         self.store = store
         self.orchestrator = orchestrator
 
@@ -102,7 +102,7 @@ class TriagePipeline:
 
     async def _persist_to_weaviate(self, triage_case: TriageCase) -> None:
         try:
-            await self.ingest_pipeline.ingest_triage_case(triage_case)
+            await self.database_update_phase.store_triage_case(triage_case)
         except Exception:
             # Weaviate persistence is best-effort here; the local triage flow still succeeds.
             return

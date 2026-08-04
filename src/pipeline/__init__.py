@@ -1,12 +1,12 @@
-from src.pipeline.ingesting_pipeline import IngestingPipeline, IngestionResult
-from src.pipeline.querying_pipeline import QueryingPipeline, QueryResult, SearchHit
-from src.pipeline.repository import WeaviateCloudRepository
+from src.pipeline.database_update_phase import DatabaseUpdatePhase, DatabaseUpdateResult
+from src.pipeline.user_answer_phase import SearchHit, UserAnswerPhase, UserAnswerResult
+from src.pipeline.weaviate_cloud import WeaviateCloudRepository
 
 __all__ = [
-    "IngestingPipeline",
-    "IngestionResult",
-    "QueryingPipeline",
-    "QueryResult",
+    "DatabaseUpdatePhase",
+    "DatabaseUpdateResult",
     "SearchHit",
+    "UserAnswerPhase",
+    "UserAnswerResult",
     "WeaviateCloudRepository",
 ]
