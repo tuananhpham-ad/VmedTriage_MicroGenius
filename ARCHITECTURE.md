@@ -4,7 +4,7 @@
 
 VMedTriage là một hệ thống hỗ trợ phân luồng y tế có kiểm soát: bệnh nhân nhập triệu chứng qua demo web UI, FastAPI nhận request, LangGraph agent chạy pipeline triage, sau đó tạo phản hồi an toàn cho bệnh nhân và case/handoff summary cho điều dưỡng duyệt. Kiến trúc hiện tại ưu tiên an toàn: mọi kết quả triage đều yêu cầu human-in-the-loop, các side-effect tools bị chặn nếu chưa có phê duyệt rõ ràng.
 
-Runtime hiện tại là một backend Python đơn khối có UI tĩnh được mount trực tiếp bởi FastAPI. Database, vector store và LLM adapter đã có cấu hình/điểm mở rộng, nhưng luồng triage đang chạy bằng rule-backed services và in-memory stores để phục vụ MVP/demo.
+Runtime hiện tại là một backend Python đơn khối có UI tĩnh được mount trực tiếp bởi FastAPI. Luồng triage đang chạy bằng rule-backed services và in-memory stores cho MVP/demo; data layer mục tiêu là Weaviate Cloud để lưu persistent triage cases, tool state và dữ liệu vector/semantic search.
 
 ## System Overview Diagram
 
@@ -51,53 +51,10 @@ graph TB
     Agent --> TriageNode
     TriageNode --> Pipeline[TriagePipeline<br/>src/services/triage_pipeline.py]
 
-    subgraph PipelineServices[Clinical Triage Services]
-        ToolOrchestrator[ToolOrchestrator<br/>deterministic intake plan]
-        SemanticMapper[RuleBackedSemanticMapper<br/>symptom mapping]
-        ChecklistValidator[ChecklistValidator<br/>required fields + confidence]
-        RedFlagLayer[RedFlagSafetyLayer<br/>emergency rules]
-        TriageEngine[ProtocolTriageEngine<br/>priority proposal]
-        SummaryGenerator[SummaryGenerator<br/>handoff summary]
-        NurseQueueService[NurseQueueService<br/>queue item builder]
-    end
+    Pipeline --> ClinicalServices[Clinical Triage Services<br/>ToolOrchestrator, SemanticMapper,<br/>ChecklistValidator, RedFlagSafetyLayer,<br/>ProtocolTriageEngine, SummaryGenerator,<br/>NurseQueueService]
 
-    Pipeline --> ToolOrchestrator
-    Pipeline --> SemanticMapper
-    Pipeline --> ChecklistValidator
-    Pipeline --> RedFlagLayer
-    Pipeline --> TriageEngine
-    Pipeline --> SummaryGenerator
-    Pipeline --> NurseQueueService
-
-    ToolOrchestrator --> CatalogRegistry[CatalogToolRegistry<br/>discovers 82 local tools]
-
-    subgraph LocalToolCatalog[Local Tool Catalog - src/tool/catalog]
-        IntakeTools[Intake + Conversation<br/>normalizer, language, memory, consent]
-        MappingTools[Semantic Mapping + Terminology<br/>symptoms, SNOMED, ICD-10, LOINC, RxNorm]
-        ValidationTools[Validation + Follow-up<br/>checklists, contradictions, questions]
-        SafetyTools[Safety + Red Flags<br/>red flags, self-harm, violence, special populations]
-        KnowledgeTools[Clinical Knowledge<br/>local protocols, guideline/pathway search]
-        DecisionTools[Triage Decision Support<br/>protocol engine, CDS cards, routing]
-        FHIRTools[EHR / FHIR Adapters<br/>patient, observation, condition, medication, task]
-        HITLTools[Nurse HITL<br/>queue, assign, review, handoff]
-        AuditTools[Audit + Compliance<br/>PHI redaction, policy, access, logs]
-        NotifyTools[Notifications<br/>SMS, email, push, paging, appointments]
-        AnalyticsTools[Analytics + Evaluation<br/>metrics, quality, grounding, drift]
-        OrchestratorTools[Orchestrator Internals<br/>registry, policy, args, validation, trace]
-    end
-
-    CatalogRegistry --> IntakeTools
-    CatalogRegistry --> MappingTools
-    CatalogRegistry --> ValidationTools
-    CatalogRegistry --> SafetyTools
-    CatalogRegistry --> KnowledgeTools
-    CatalogRegistry --> DecisionTools
-    CatalogRegistry --> FHIRTools
-    CatalogRegistry --> HITLTools
-    CatalogRegistry --> AuditTools
-    CatalogRegistry --> NotifyTools
-    CatalogRegistry --> AnalyticsTools
-    CatalogRegistry --> OrchestratorTools
+    ClinicalServices --> CatalogRegistry[CatalogToolRegistry<br/>discovers and executes 82 local tools]
+    CatalogRegistry --> LocalToolCatalog[Local Tool Catalog<br/>src/tool/catalog<br/>82 tools: intake, mapping, validation,<br/>safety, knowledge, FHIR, HITL,<br/>audit, notification, analytics, orchestration]
 
     ToolsAPI --> MCPRegistry[MCPToolRegistry<br/>src/tool/registry.py]
     MCPRegistry -->|configured server URL| ExternalMCP[External MCP Servers<br/>guideline, terminology, FHIR, CDS, notification, audit]
@@ -111,13 +68,13 @@ graph TB
 
     CatalogRegistry --> CatalogState[(CatalogStateStore<br/>conversations, FHIR mock data,<br/>queue, audit, outbox, metrics, traces)]
 
-    Settings[Settings / .env<br/>CORS, model, DB URL, Chroma dir, MCP URLs] --> FastAPIApp
-    Settings --> PipelineServices
+    Settings[Settings / .env<br/>CORS, model, Weaviate credentials,<br/>MCP URLs] --> FastAPIApp
+    Settings --> ClinicalServices
     Settings --> MCPRegistry
 
     LLMAdapter[LLM Adapter<br/>services/llm.py - ChatOpenAI] -. extension point .-> Pipeline
-    PlannedDB[(Configured DB URL<br/>SQLite/PostgreSQL - not active)] -. future persistence .-> CaseStore
-    PlannedVector[(Configured Chroma dir<br/>not active)] -. future RAG .-> KnowledgeTools
+    WeaviateCloud[(Weaviate Cloud<br/>target database + vector store)] -. future persistence .-> CaseStore
+    WeaviateCloud -. future semantic search .-> LocalToolCatalog
 ```
 
 ## Components
@@ -201,9 +158,11 @@ graph LR
 - **Current active storage:**
   - `InMemoryCaseStore`: process-local store for `TriageCase` objects used by the API and review flow.
   - `CatalogStateStore`: process-local state for tool conversations, mock FHIR resources, queue data, assignments, audit events, outbox, appointments, metrics, feedback and traces.
-- **Configured but not active in current code path:**
-  - `database_url`: defaults to `sqlite:///./data/app.db`, but SQLAlchemy/Alembic are commented out in `requirements.txt` and no repository layer writes to DB yet.
-  - `chroma_persist_dir`: defaults to `./data/chroma`, but Chroma/RAG is not wired into runtime yet.
+- **Target persistent storage:** Weaviate Cloud.
+  - Store triage cases, nurse queue state, review decisions, audit events and tool traces as persistent objects.
+  - Store clinical knowledge/protocol documents as vectorized objects for semantic search/RAG.
+  - Required future configuration: Weaviate cluster URL, API key and collection/schema definitions.
+  - Current code has `database_url` and `chroma_persist_dir` settings, but no repository layer writes to SQLite/PostgreSQL/Chroma yet; these should be replaced or superseded by a Weaviate-backed repository when persistence is implemented.
 
 ### 7. External Integrations
 
@@ -281,6 +240,6 @@ graph LR
 | Tool orchestration | Deterministic `ToolOrchestrator` + local catalog | Avoids unsafe autonomous tool use; still provides extensible tool coverage. |
 | Triage logic | Rule-backed semantic mapper + protocol engine | Testable MVP behavior without depending on LLM availability. |
 | Human approval | Mandatory HITL before patient-visible clinical action | Reduces risk for medical triage decisions. |
-| Storage | In-memory case and catalog state | Fast for demo/testing; should be replaced by persistent storage for production. |
+| Storage | In-memory now; Weaviate Cloud target | Fast for demo/testing today; production persistence should move cases, queue/audit state and vectorized knowledge into Weaviate Cloud. |
 | External tools | Optional MCP server URLs with local catalog fallback | Allows integration with FHIR/CDS/notification/audit systems without blocking MVP. |
 | LLM | Adapter exists but is not active in current pipeline | Keeps path open for LLM-based mapping/summarization while current behavior remains deterministic. |
