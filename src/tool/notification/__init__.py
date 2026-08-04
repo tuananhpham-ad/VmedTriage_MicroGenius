@@ -1,0 +1,1 @@
+"""Notification MCP tool descriptors."""

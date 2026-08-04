@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VMedTriage Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>VMedTriage</h1>
+          <p>Patient intake · Protocol triage · Nurse review</p>
+        </div>
+        <div class="status-pill" id="systemStatus">Ready</div>
+      </header>
+
+      <section class="workspace">
+        <section class="panel chat-panel" aria-label="Patient chat">
+          <div class="panel-header">
+            <h2>Bệnh nhân</h2>
+            <button class="ghost-button" id="newCaseButton" type="button">Case mới</button>
+          </div>
+          <div class="messages" id="messages"></div>
+          <form class="composer" id="chatForm">
+            <textarea id="messageInput" rows="3" placeholder="Tôi đau ngực từ sáng, đi vài bước là hụt hơi."></textarea>
+            <button type="submit">Gửi</button>
+          </form>
+        </section>
+
+        <section class="panel details-panel" aria-label="Triage details">
+          <div class="panel-header">
+            <h2>Case</h2>
+            <span class="case-id" id="caseId">No case</span>
+          </div>
+
+          <div class="metric-grid">
+            <div>
+              <span>Status</span>
+              <strong id="caseStatus">-</strong>
+            </div>
+            <div>
+              <span>Priority</span>
+              <strong id="casePriority">-</strong>
+            </div>
+          </div>
+
+          <div class="tabs">
+            <button class="tab active" data-tab="summary" type="button">Summary</button>
+            <button class="tab" data-tab="mapping" type="button">Mapping</button>
+            <button class="tab" data-tab="queue" type="button">Queue</button>
+          </div>
+
+          <pre class="json-view" id="detailsView">{}</pre>
+        </section>
+
+        <section class="panel review-panel" aria-label="Nurse review">
+          <div class="panel-header">
+            <h2>Điều dưỡng</h2>
+            <button class="ghost-button" id="refreshQueueButton" type="button">Refresh</button>
+          </div>
+
+          <div class="review-controls">
+            <label for="approvedResponse">Phản hồi đã duyệt</label>
+            <textarea id="approvedResponse" rows="5">Nhân viên y tế đã xem thông tin của bạn và sẽ liên hệ theo mức ưu tiên phù hợp.</textarea>
+            <div class="button-row">
+              <button id="approveButton" type="button">Approve</button>
+              <button id="escalateButton" type="button">Escalate</button>
+              <button class="ghost-button" id="askMoreButton" type="button">Ask more</button>
+            </div>
+          </div>
+
+          <div class="queue-list" id="queueList"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
