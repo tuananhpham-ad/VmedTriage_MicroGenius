@@ -1,4 +1,4 @@
-.PHONY: run test lint format typecheck check clean
+.PHONY: run test lint format typecheck check eval clean
 
 run:
 	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
@@ -16,6 +16,9 @@ typecheck:
 	mypy src/
 
 check: lint format test
+
+eval:
+	python eval/scripts/run_eval.py
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

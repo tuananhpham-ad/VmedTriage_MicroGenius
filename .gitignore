@@ -36,6 +36,8 @@ data/
 # Logs
 logs/
 *.log
+eval/results/logging/*
+!eval/results/logging/.gitkeep
 
 # Test coverage
 htmlcov/
