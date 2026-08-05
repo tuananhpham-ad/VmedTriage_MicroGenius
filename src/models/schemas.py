@@ -123,6 +123,12 @@ class ChatRequest(BaseModel):
     case_id: str | None = Field(default=None, description="Existing triage case id")
 
 
+class PipelineTraceStage(BaseModel):
+    stage: str
+    title: str
+    output: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
     case_id: str
     response: str = Field(..., description="Patient-safe response")
@@ -133,6 +139,7 @@ class ChatResponse(BaseModel):
     red_flags: list[RedFlagFinding] = Field(default_factory=list)
     triage_proposal: TriageProposal | None = None
     summary: HandoffSummary | None = None
+    pipeline_trace: list[PipelineTraceStage] = Field(default_factory=list)
     requires_human_approval: bool = True
 
 

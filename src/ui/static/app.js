@@ -2,6 +2,7 @@ const state = {
   caseId: null,
   currentCase: null,
   activeTab: "summary",
+  activeTraceStage: "response",
 };
 
 const elements = {
@@ -14,6 +15,7 @@ const elements = {
   caseStatus: document.querySelector("#caseStatus"),
   casePriority: document.querySelector("#casePriority"),
   detailsView: document.querySelector("#detailsView"),
+  traceControls: document.querySelector("#traceControls"),
   queueList: document.querySelector("#queueList"),
   refreshQueueButton: document.querySelector("#refreshQueueButton"),
   approvedResponse: document.querySelector("#approvedResponse"),
@@ -122,6 +124,8 @@ function renderCase(data) {
     elements.caseId.textContent = "No case";
     elements.caseStatus.textContent = "-";
     elements.casePriority.textContent = "-";
+    elements.traceControls.hidden = true;
+    elements.traceControls.innerHTML = "";
     elements.detailsView.textContent = "{}";
     return;
   }
@@ -135,9 +139,19 @@ function renderCase(data) {
 function renderDetails() {
   const data = state.currentCase;
   if (!data) {
+    elements.traceControls.hidden = true;
+    elements.traceControls.innerHTML = "";
     elements.detailsView.textContent = "{}";
     return;
   }
+
+  if (state.activeTab === "trace") {
+    renderTrace(data);
+    return;
+  }
+
+  elements.traceControls.hidden = true;
+  elements.traceControls.innerHTML = "";
 
   const detailByTab = {
     summary: {
@@ -161,8 +175,10 @@ function renderDetails() {
 }
 
 function normalizeCaseResponse(data) {
+  const response = data.response || data.patient_visible_response || "";
   return {
     case_id: data.case_id,
+    response,
     status: data.status,
     structured_data: data.structured_data,
     validation: data.validation,
@@ -170,8 +186,77 @@ function normalizeCaseResponse(data) {
     triage_proposal: data.triage_proposal,
     summary: data.summary,
     queue_item: data.queue_item,
+    pipeline_trace: data.pipeline_trace || buildTrace(data, response),
     requires_human_approval: true,
   };
+}
+
+function renderTrace(data) {
+  const trace = data.pipeline_trace?.length ? data.pipeline_trace : buildTrace(data, data.response || "");
+  const activeStage = trace.find((item) => item.stage === state.activeTraceStage) || trace[trace.length - 1];
+
+  elements.traceControls.hidden = false;
+  elements.traceControls.innerHTML = "";
+
+  trace.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `trace-stage${item.stage === activeStage.stage ? " active" : ""}`;
+    button.textContent = item.title;
+    button.addEventListener("click", () => {
+      state.activeTraceStage = item.stage;
+      renderTrace(data);
+    });
+    elements.traceControls.appendChild(button);
+  });
+
+  elements.detailsView.textContent = JSON.stringify(activeStage.output || {}, null, 2);
+}
+
+function buildTrace(data, response) {
+  return [
+    {
+      stage: "input",
+      title: "Input",
+      output: {
+        case_id: data.case_id,
+      },
+    },
+    {
+      stage: "mapping",
+      title: "Semantic mapping",
+      output: {
+        structured_data: data.structured_data,
+        analysis: data.analysis,
+      },
+    },
+    {
+      stage: "validation",
+      title: "Checklist + red flags",
+      output: {
+        validation: data.validation,
+        red_flags: data.red_flags || [],
+      },
+    },
+    {
+      stage: "triage",
+      title: "Triage proposal",
+      output: {
+        triage_proposal: data.triage_proposal,
+        summary: data.summary,
+        queue_item: data.queue_item,
+        status: data.status,
+      },
+    },
+    {
+      stage: "response",
+      title: "Final response",
+      output: {
+        response,
+        requires_human_approval: data.requires_human_approval ?? true,
+      },
+    },
+  ];
 }
 
 function addMessage(role, content) {

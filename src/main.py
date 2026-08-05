@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,9 +12,17 @@ from src.ui.static_files import build_demo_static_app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger("vmedtriage").info(
+        "app.start name=%s env=%s",
+        settings.app_name,
+        settings.app_env,
+    )
     yield
-    print("Shutting down...")
+    logging.getLogger("vmedtriage").info("app.stop")
 
 
 app = FastAPI(

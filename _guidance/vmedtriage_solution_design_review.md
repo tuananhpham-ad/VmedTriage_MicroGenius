@@ -513,7 +513,7 @@ Output chuẩn:
 
 ### 8.3. Pipeline sau cập nhật
 
-Pipeline production và `src/full_pipeline.py` chạy preflight gồm:
+Pipeline production ch?y preflight g?m:
 
 ```text
 patient_message_normalizer
