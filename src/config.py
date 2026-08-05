@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,14 +21,30 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # LLM
+    llm_provider: Literal["auto", "openai", "deepseek", "gemini"] = "auto"
+    llm_provider_order: str = "deepseek,gemini"
     openai_api_key: str = ""
-    model_name: str = "gemma-3-4b"
+    openai_model_name: str = "gpt-4o-mini"
+    deepseek_api_key: str = ""
+    deepseek_model_name: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    gemini_model_name: str = "gemini-1.5-flash"
+    model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    supported_model_name: str = "Qwen/Qwen3-8B"
 
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
-    # Vector Store
+    # Weaviate Cloud / Vector Store
+    weaviate_url: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_URL", "WVC_URL"))
+    weaviate_api_key: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_API_KEY", "WVC_API_KEY"))
+    weaviate_cases_collection: str = "TriageCase"
+    weaviate_knowledge_collection: str = "ClinicalKnowledge"
+    weaviate_query_limit: int = Field(default=5, ge=1, le=100)
+
+    # Legacy vector store fallback
     chroma_persist_dir: str = "./data/chroma"
 
     # VMedTriage workflow

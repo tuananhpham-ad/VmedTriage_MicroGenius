@@ -61,6 +61,8 @@ async def test_chat_routes_red_flag_to_nurse_queue(client):
     assert data["triage_proposal"]["priority"] == "Emergency"
     assert data["status"] == "needs_nurse_review"
     assert data["requires_human_approval"] is True
+    assert data["pipeline_trace"][-1]["stage"] == "response"
+    assert data["pipeline_trace"][-1]["output"]["response"] == data["response"]
     assert "chuyển" in data["response"] or "chuyá»ƒn" in data["response"]
 
 

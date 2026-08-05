@@ -58,7 +58,7 @@ pip install -r requirements.txt
 Chạy FastAPI server:
 
 ```powershell
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 ```
 
 Hoặc dùng Makefile nếu môi trường có `make`:
@@ -343,18 +343,35 @@ Không hard-code port production. Render cần dùng `$PORT`:
 uvicorn src.main:app --host 0.0.0.0 --port $PORT
 ```
 
-## 12. Chạy readable pipeline và tool catalog
+## 12. Chay Weaviate pipelines
 
-Chạy pipeline đầy đủ với trace từng bước:
+Chay full pipeline voi sample upload + sample query:
 
 ```powershell
-python -m src.full_pipeline
+python -m src.pipeline.full_pipeline
 ```
 
-Trace hiện gồm 10 bước, trong đó `02_tool_orchestration_preflight` gọi sáu tool intake/safety trước
-validator và protocol engine.
+Neu chua cau hinh Weaviate Cloud, chay dry-run de xem sample payload:
 
-Kiểm tra registry discover đủ 82 tool:
+```powershell
+python -m src.pipeline.full_pipeline --dry-run
+```
+
+Chay ingest pipeline:
+
+```powershell
+python -m src.pipeline.database_update_phase
+```
+
+Chay querying pipeline:
+
+```powershell
+python -m src.pipeline.user_answer_phase
+```
+
+Can co `WEAVIATE_URL` va `WEAVIATE_API_KEY` trong `.env` truoc khi chay.
+
+Kiem tra registry discover du 82 tool:
 
 ```powershell
 python -c "from src.tool.catalog.registry import catalog_tool_registry as r; print(len(r.list_tools()))"

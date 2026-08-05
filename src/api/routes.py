@@ -1,7 +1,14 @@
 from fastapi import APIRouter, HTTPException
 
 from src.agents.graph import agent
-from src.models.schemas import ChatRequest, ChatResponse, NurseReviewRequest, NurseReviewResponse, TriageCase
+from src.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    NurseReviewRequest,
+    NurseReviewResponse,
+    PipelineTraceStage,
+    TriageCase,
+)
 from src.services.case_store import case_store
 from src.services.hitl_review import human_review_service
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
@@ -30,6 +37,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
             red_flags=triage_case.red_flags,
             triage_proposal=triage_case.triage_proposal,
             summary=triage_case.summary,
+            pipeline_trace=_build_pipeline_trace(
+                message=request.message,
+                analysis=result.get("analysis", ""),
+                triage_case=triage_case,
+                response=result.get("response", ""),
+            ),
             requires_human_approval=True,
         )
     except Exception as e:
@@ -79,3 +92,61 @@ async def review_case(case_id: str, request: NurseReviewRequest) -> NurseReviewR
         return human_review_service.review(case_id, request)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _dump(value):
+    return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+
+
+def _build_pipeline_trace(
+    *,
+    message: str,
+    analysis: str,
+    triage_case: TriageCase,
+    response: str,
+) -> list[PipelineTraceStage]:
+    return [
+        PipelineTraceStage(
+            stage="input",
+            title="Input",
+            output={
+                "message": message,
+                "case_id": triage_case.case_id,
+                "conversation_turns": len(triage_case.conversation),
+            },
+        ),
+        PipelineTraceStage(
+            stage="mapping",
+            title="Semantic mapping",
+            output={
+                "structured_data": _dump(triage_case.structured_data),
+                "analysis": analysis,
+            },
+        ),
+        PipelineTraceStage(
+            stage="validation",
+            title="Checklist + red flags",
+            output={
+                "validation": _dump(triage_case.validation),
+                "red_flags": [_dump(item) for item in triage_case.red_flags],
+            },
+        ),
+        PipelineTraceStage(
+            stage="triage",
+            title="Triage proposal",
+            output={
+                "triage_proposal": _dump(triage_case.triage_proposal),
+                "summary": _dump(triage_case.summary),
+                "queue_item": _dump(triage_case.queue_item),
+                "status": triage_case.status,
+            },
+        ),
+        PipelineTraceStage(
+            stage="response",
+            title="Final response",
+            output={
+                "response": response,
+                "requires_human_approval": True,
+            },
+        ),
+    ]
