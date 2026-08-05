@@ -29,7 +29,8 @@ env/
 Thumbs.db
 
 # Data (never commit large data)
-data/
+data/*
+!data/README.md
 *.db
 *.sqlite3
 
@@ -38,6 +39,7 @@ logs/
 *.log
 eval/results/logging/*
 !eval/results/logging/.gitkeep
+!eval/results/logging/README.md
 
 # Test coverage
 htmlcov/
