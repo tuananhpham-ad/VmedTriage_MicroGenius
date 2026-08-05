@@ -192,6 +192,7 @@ textarea {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -209,6 +210,32 @@ textarea {
   background: var(--accent);
   color: white;
   border-color: var(--accent);
+}
+
+.trace-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 14px;
+  background: #fbfcfe;
+}
+
+.trace-controls[hidden] {
+  display: none;
+}
+
+.trace-stage {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+}
+
+.trace-stage.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
 }
 
 .json-view {
