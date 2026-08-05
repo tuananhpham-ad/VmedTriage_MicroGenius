@@ -10,7 +10,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.pipeline.weaviate_cloud import WeaviateCloudRepository, WeaviateSearchHit
-from src.services.llm import get_llm
+from src.services.llm import get_llm_selection
 
 SearchMode = Literal["bm25", "semantic", "hybrid"]
 QueryScope = Literal["cases", "knowledge"]
@@ -55,7 +55,11 @@ class UserAnswerPhase:
         )
         context = self._build_context(hits)
         prompt = self._build_prompt(query, context)
-        answer = await asyncio.to_thread(self._generate_answer, prompt) if use_llm else self._build_answer(query, hits)
+        llm_metadata: dict[str, str] = {}
+        if use_llm:
+            answer, llm_metadata = await asyncio.to_thread(self._generate_answer, prompt)
+        else:
+            answer = self._build_answer(query, hits)
 
         return UserAnswerResult(
             query=query,
@@ -69,6 +73,7 @@ class UserAnswerPhase:
                 "reranker_model": "AITeamVN/Vietnamese_Reranker",
                 "context": context,
                 "llm_prompt": prompt,
+                **llm_metadata,
             },
         )
 
@@ -130,10 +135,28 @@ CONTEXT:
 {context}
 """
 
-    def _generate_answer(self, prompt: str) -> str:
-        llm = get_llm()
-        response = llm.invoke(prompt)
-        return str(getattr(response, "content", response))
+    def _generate_answer(self, prompt: str) -> tuple[str, dict[str, str]]:
+        selection = get_llm_selection()
+        response = selection.client.invoke(prompt)
+        return _response_text(getattr(response, "content", response)), {
+            "llm_provider": selection.provider,
+            "llm_model": selection.model,
+        }
+
+
+def _response_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+        if text_parts:
+            return "\n".join(text_parts)
+    return str(content)
 
 
 async def _demo() -> None:

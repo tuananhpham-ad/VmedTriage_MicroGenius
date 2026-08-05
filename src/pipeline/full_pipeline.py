@@ -10,6 +10,7 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.config import get_settings
 from src.pipeline.database_update_phase import DatabaseUpdatePhase, DatabaseUpdateResult
 from src.pipeline.sample_data import SAMPLE_QUERY, SAMPLE_UPLOADED_DOCUMENTS
 from src.pipeline.user_answer_phase import UserAnswerPhase, UserAnswerResult
@@ -21,6 +22,7 @@ class FullPipelineRunResult:
     database_updates: list[DatabaseUpdateResult] = field(default_factory=list)
     query_result: UserAnswerResult | None = None
     dry_run: bool = False
+    error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -40,28 +42,43 @@ class FullPipeline:
         dry_run: bool = False,
     ) -> FullPipelineRunResult:
         documents = documents or SAMPLE_UPLOADED_DOCUMENTS
+        settings = get_settings()
+        config_metadata = {
+            "weaviate_configured": self.repository.configured,
+            "knowledge_collection": self.repository.knowledge_collection,
+            "case_collection": self.repository.case_collection,
+            "core_llm_provider": settings.llm_provider,
+            "core_llm_provider_order": settings.llm_provider_order,
+            "deepseek_model": settings.deepseek_model_name,
+            "gemini_model": settings.gemini_model_name,
+            "supporter_model": settings.supported_model_name,
+        }
 
         if dry_run or not self.repository.configured:
             return FullPipelineRunResult(
                 dry_run=True,
                 metadata={
+                    **config_metadata,
                     "reason": "Weaviate Cloud is not configured." if not self.repository.configured else "Dry run requested.",
                     "required_env": [
-                        "WVC_URL",
-                        "WVC_API_KEY",
-                        "one of OPENAI_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY",
+                        "WEAVIATE_URL or WVC_URL",
+                        "WEAVIATE_API_KEY or WVC_API_KEY",
+                        "DEEPSEEK_API_KEY or GEMINI_API_KEY/GOOGLE_API_KEY",
                     ],
                     "sample_documents": documents,
                     "sample_query": query,
                 },
             )
 
+        current_stage = "STAGE 1 - ENSURE COLLECTIONS"
         try:
-            await self.database_update_phase.ensure_collections()
+            await _with_retries(self.database_update_phase.ensure_collections)
             updates = []
             for document in documents:
+                current_stage = f"STAGE 1 - UPLOAD DOCUMENT: {document['title']}"
                 updates.append(
-                    await self.database_update_phase.update_from_uploaded_document(
+                    await _with_retries(
+                        self.database_update_phase.update_from_uploaded_document,
                         title=str(document["title"]),
                         content=str(document["content"]),
                         topic=str(document.get("topic") or ""),
@@ -72,7 +89,9 @@ class FullPipeline:
                     )
                 )
 
-            query_result = await self.user_answer_phase.answer_user(
+            current_stage = "STAGE 2-6 - RETRIEVE, RERANK, AND ANSWER"
+            query_result = await _with_retries(
+                self.user_answer_phase.answer_user,
                 query,
                 scope="knowledge",
                 limit=4,
@@ -82,13 +101,15 @@ class FullPipeline:
             )
         except Exception as exc:
             return FullPipelineRunResult(
-                dry_run=True,
+                error=True,
                 metadata={
+                    **config_metadata,
+                    "failed_stage": current_stage,
                     "reason": str(exc),
                     "required_env": [
-                        "WEAVIATE_URL",
-                        "WEAVIATE_API_KEY",
-                        "one of OPENAI_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY",
+                        "WEAVIATE_URL or WVC_URL",
+                        "WEAVIATE_API_KEY or WVC_API_KEY",
+                        "DEEPSEEK_API_KEY or GEMINI_API_KEY/GOOGLE_API_KEY",
                     ],
                     "sample_documents": documents,
                     "sample_query": query,
@@ -99,6 +120,7 @@ class FullPipeline:
             database_updates=updates,
             query_result=query_result,
             metadata={
+                **config_metadata,
                 "uploaded_documents": len(updates),
                 "query": query,
                 "knowledge_collection": self.repository.knowledge_collection,
@@ -116,7 +138,30 @@ def _sep(title: str) -> None:
     print("-" * 80)
 
 
+async def _with_retries(call, *args, attempts: int = 3, delay_seconds: float = 2.0, **kwargs):
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await call(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == attempts:
+                break
+            await asyncio.sleep(delay_seconds * attempt)
+    raise last_exc  # type: ignore[misc]
+
+
 def _print_result(result: FullPipelineRunResult) -> None:
+    _sep("STAGE 0 - CONFIG")
+    print("Weaviate configured:", result.metadata.get("weaviate_configured"))
+    print("Knowledge collection:", result.metadata.get("knowledge_collection"))
+    print("Case collection:", result.metadata.get("case_collection"))
+    print("Core LLM provider setting:", result.metadata.get("core_llm_provider"))
+    print("Core LLM provider order:", result.metadata.get("core_llm_provider_order"))
+    print("DeepSeek model:", result.metadata.get("deepseek_model"))
+    print("Gemini model:", result.metadata.get("gemini_model"))
+    print("Supporter model:", result.metadata.get("supporter_model"))
+
     if result.dry_run:
         _sep("DRY RUN")
         print(result.metadata["reason"])
@@ -128,6 +173,13 @@ def _print_result(result: FullPipelineRunResult) -> None:
         print()
         print("Sample query:")
         print(result.metadata["sample_query"])
+        return
+
+    if result.error:
+        _sep("PIPELINE ERROR")
+        print("Failed stage:", result.metadata.get("failed_stage"))
+        print("Reason:", result.metadata.get("reason"))
+        print("Required env:", ", ".join(result.metadata.get("required_env") or []))
         return
 
     _sep("STAGE 1 - DATABASE UPDATE / UPLOAD")
@@ -150,6 +202,8 @@ def _print_result(result: FullPipelineRunResult) -> None:
     print("Mode:", result.query_result.mode)
     print("Alpha:", result.query_result.metadata.get("alpha"))
     print("Embedding:", result.query_result.metadata.get("embedding_model"))
+    print("LLM provider used:", result.query_result.metadata.get("llm_provider"))
+    print("LLM model used:", result.query_result.metadata.get("llm_model"))
     for index, hit in enumerate(result.query_result.hits, start=1):
         props = hit.properties
         print()
@@ -182,7 +236,7 @@ def _print_result(result: FullPipelineRunResult) -> None:
     _sep("STAGE 5 - LLM PROMPT")
     print(result.query_result.metadata.get("llm_prompt") or "")
 
-    _sep("STAGE 6 - RESPONSE")
+    _sep("STAGE 6 - FINAL RESPONSE")
     print(result.query_result.answer)
 
 
