@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
 from src.tool.catalog.framework import CatalogToolResult, ToolExecutionContext
 from src.tool.catalog.registry import CatalogToolRegistry, catalog_tool_registry
+
+logger = logging.getLogger("vmedtriage.trace")
 
 
 @dataclass
@@ -48,8 +52,16 @@ class ToolOrchestrator:
         run = OrchestrationRun(intent="patient_triage_intake")
         context = ToolExecutionContext(case_id=case_id, actor_role="patient")
         for name, arguments in self.plan_for_patient_query(query):
+            started = perf_counter()
             result = await self.registry.call(name, arguments, context=context)
             run.results.append(result)
+            logger.info(
+                "trace.tool case_id=%s stage=intake_tools tool=%s status=%s duration_ms=%s",
+                case_id or "-",
+                name,
+                "ok" if result.ok else "error",
+                int((perf_counter() - started) * 1000),
+            )
             if not result.ok:
                 break
         return run
