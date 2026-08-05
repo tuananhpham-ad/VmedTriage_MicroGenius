@@ -1,8 +1,7 @@
-import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,23 +22,24 @@ class Settings(BaseSettings):
 
     # LLM
     llm_provider: Literal["auto", "openai", "deepseek", "gemini"] = "auto"
-    llm_provider_order: str = "openai,deepseek,gemini"
+    llm_provider_order: str = "deepseek,gemini"
     openai_api_key: str = ""
     openai_model_name: str = "gpt-4o-mini"
     deepseek_api_key: str = ""
     deepseek_model_name: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
-    gemini_api_key: str = ""
+    gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     gemini_model_name: str = "gemini-1.5-flash"
     model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    supported_model_name: str = "Qwen/Qwen3-8B"
 
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
     # Weaviate Cloud / Vector Store
-    weaviate_url: str = ""
-    weaviate_api_key: str = ""
+    weaviate_url: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_URL", "WVC_URL"))
+    weaviate_api_key: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_API_KEY", "WVC_API_KEY"))
     weaviate_cases_collection: str = "TriageCase"
     weaviate_knowledge_collection: str = "ClinicalKnowledge"
     weaviate_query_limit: int = Field(default=5, ge=1, le=100)
@@ -175,11 +175,4 @@ MCP_TOOL_SERVER_CONFIGS: dict[str, dict[str, str]] = {
 
 @lru_cache
 def get_settings() -> Settings:
-    settings = Settings()
-    if not settings.weaviate_url:
-        settings.weaviate_url = os.getenv("WVC_URL", "")
-    if not settings.weaviate_api_key:
-        settings.weaviate_api_key = os.getenv("WVC_API_KEY", "")
-    if not settings.gemini_api_key:
-        settings.gemini_api_key = os.getenv("GOOGLE_API_KEY", "")
-    return settings
+    return Settings()
