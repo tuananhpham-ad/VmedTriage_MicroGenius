@@ -71,6 +71,8 @@ uvicorn src.main:app --reload --port 8000
 # http://localhost:8000/docs
 ```
 
+Xem hướng dẫn đăng ký, đăng nhập, JWT và test hai role tại [docs/AUTH.md](docs/AUTH.md).
+
 ### Bước 5: Đọc hướng dẫn
 
 📖 Mở **[Technical Guidebook](https://phoenix.note.transformerlabs.ai/technical-book)** và làm theo từng chương.

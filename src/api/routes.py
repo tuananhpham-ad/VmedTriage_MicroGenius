@@ -1,13 +1,15 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
 
 from src.agents.graph import agent
-from src.models.schemas import (
-    ChatRequest,
-    ChatResponse,
-    NurseReviewRequest,
-    NurseReviewResponse,
-    PipelineTraceStage,
-    TriageCase,
+from src.database import get_db_session
+from src.models.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from src.models.schemas import ChatRequest, ChatResponse, NurseReviewRequest, NurseReviewResponse, TriageCase
+from src.services.auth import (
+    InvalidCredentialsError,
+    NurseRegistrationDeniedError,
+    UserAlreadyExistsError,
+    auth_service,
 )
 from src.services.case_store import case_store
 from src.services.hitl_review import human_review_service
@@ -15,6 +17,46 @@ from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescript
 from src.tool.registry import tool_registry
 
 router = APIRouter()
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register(request: RegisterRequest, db: Session = Depends(get_db_session)) -> UserResponse:
+    """Create a patient account, or a nurse account with the private registration code."""
+    try:
+        user = auth_service.register(db, request)
+    except UserAlreadyExistsError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except NurseRegistrationDeniedError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    return UserResponse.model_validate(user)
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(request: LoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Authenticate an account and issue a short-lived JWT access token."""
+    try:
+        user = auth_service.authenticate(db, request)
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from error
+    access_token, expires_in = auth_service.create_access_token(user)
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+def current_user(request: Request, db: Session = Depends(get_db_session)) -> UserResponse:
+    """Return the user represented by the validated Bearer token."""
+    user = auth_service.get_user_by_id(db, int(request.state.auth.sub))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không còn hoạt động")
+    return UserResponse.model_validate(user)
 
 
 @router.post("/chat", response_model=ChatResponse)

@@ -17,8 +17,8 @@ async def test_demo_ui(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_empty_message(client):
-    response = await client.post("/api/v1/chat", json={"message": ""})
+async def test_chat_empty_message(client, patient_headers):
+    response = await client.post("/api/v1/chat", json={"message": ""}, headers=patient_headers)
     assert response.status_code == 422  # Validation error
 
 
@@ -29,8 +29,8 @@ async def test_agent_status(client):
 
 
 @pytest.mark.asyncio
-async def test_list_mcp_tool_descriptors(client):
-    response = await client.get("/api/v1/tools")
+async def test_list_mcp_tool_descriptors(client, nurse_headers):
+    response = await client.get("/api/v1/tools", headers=nurse_headers)
 
     assert response.status_code == 200
     data = response.json()
@@ -40,20 +40,22 @@ async def test_list_mcp_tool_descriptors(client):
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_mcp_tool_call_returns_503(client):
+async def test_unconfigured_mcp_tool_call_returns_503(client, nurse_headers):
     response = await client.post(
         "/api/v1/tools/clinical_guideline_search/call",
         json={"arguments": {"symptom_group": "chest_pain", "query": "chest pain triage"}},
+        headers=nurse_headers,
     )
 
     assert response.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_chat_routes_red_flag_to_nurse_queue(client):
+async def test_chat_routes_red_flag_to_nurse_queue(client, patient_headers):
     response = await client.post(
         "/api/v1/chat",
         json={"message": "Tôi đau ngực từ sáng, đi vài bước là hụt hơi."},
+        headers=patient_headers,
     )
 
     assert response.status_code == 200
@@ -67,10 +69,11 @@ async def test_chat_routes_red_flag_to_nurse_queue(client):
 
 
 @pytest.mark.asyncio
-async def test_nurse_can_approve_case(client):
+async def test_nurse_can_approve_case(client, patient_headers, nurse_headers):
     chat_response = await client.post(
         "/api/v1/chat",
         json={"message": "Tôi đau ngực từ sáng, mức đau 6/10, không lan tay."},
+        headers=patient_headers,
     )
     case_id = chat_response.json()["case_id"]
 
@@ -80,6 +83,7 @@ async def test_nurse_can_approve_case(client):
             "action": "approve",
             "approved_response": "Phản hồi đã được điều dưỡng duyệt.",
         },
+        headers=nurse_headers,
     )
 
     assert review_response.status_code == 200

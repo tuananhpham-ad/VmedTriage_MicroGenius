@@ -37,14 +37,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
-    # Weaviate Cloud / Vector Store
-    weaviate_url: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_URL", "WVC_URL"))
-    weaviate_api_key: str = Field(default="", validation_alias=AliasChoices("WEAVIATE_API_KEY", "WVC_API_KEY"))
-    weaviate_cases_collection: str = "TriageCase"
-    weaviate_knowledge_collection: str = "ClinicalKnowledge"
-    weaviate_query_limit: int = Field(default=5, ge=1, le=100)
+    # Authentication
+    jwt_secret_key: str = Field(default="development-only-change-before-production", min_length=32)
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
+    nurse_registration_code: str = ""
 
-    # Legacy vector store fallback
+    # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 
     # VMedTriage workflow
