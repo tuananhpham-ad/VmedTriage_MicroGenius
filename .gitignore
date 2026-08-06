@@ -16,7 +16,7 @@ env/
 .env
 .env.local
 .env.production
-
+.env.example
 # IDE
 .vscode/
 .idea/
@@ -29,13 +29,17 @@ env/
 Thumbs.db
 
 # Data (never commit large data)
-data/
+data/*
+!data/README.md
 *.db
 *.sqlite3
 
 # Logs
 logs/
 *.log
+eval/results/logging/*
+!eval/results/logging/.gitkeep
+!eval/results/logging/README.md
 
 # Test coverage
 htmlcov/
@@ -58,3 +62,5 @@ out/
 # AI logs — tracked structure, ignored content
 .ai-log/*.jsonl
 .ai-log/archive/
+
+
