@@ -57,6 +57,7 @@ AI Agent hỗ trợ thu thập triệu chứng theo kịch bản có cấu trúc
 - 4 người x 30 giờ/tuần = 120 giờ/tuần
 - Timeline: 6 tuần
 - Công cụ: GitHub, Discord, Google Drive; Claude/Codex (team tự chi trả)
+
 | Cột mốc | Tuần | Ngày dự kiến | Sản phẩm nộp | Người chịu trách nhiệm |
 |---|---|---|---|---|
 | Kickoff & Project Charter	| W1 | 29/07-02/08	| Project Charter + Quy chế	| Nguyễn Thị Thương |

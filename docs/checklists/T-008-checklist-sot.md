@@ -1,6 +1,6 @@
 # Checklist câu hỏi cố định — Nhóm Sốt
 
-**Version:** 1.2
+**Version:** 1.3
 **Ngày soạn:** 04/08/2026
 **Người soạn:** Thương 
 **Liên kết:** `docs/prd.md` mục 3–4
@@ -11,6 +11,7 @@
 | 1.0 | 04/08/2026 | Khởi tạo: checklist câu hỏi, rule red-flag, mapping 3 mức ưu tiên | Thực hiện T-008 |
 | 1.1 | 04/08/2026 | Bỏ phần câu hỏi bổ trợ; cập nhật căn cứ Bộ Y tế từ QĐ 3705/QĐ-BYT (2019, đã hết hiệu lực) sang QĐ 2760/QĐ-BYT (04/07/2023); bổ sung nguồn Mayo Clinic | Đồng bộ với văn bản pháp lý hiện hành, bổ sung nguồn tham khảo quốc tế |
 | 1.2 | 04/08/2026 | Thêm lại `severe_abdominal_pain` vào checklist + rule red-flag; thêm lại `onset_duration` vào checklist; bỏ risk factor `antipyretic_response` khỏi mapping Khám sớm | Khớp lại với dấu hiệu cảnh báo Dengue (QĐ 2760/QĐ-BYT, Mayo Clinic) |
+| 1.3 | 04/08/2026 | `underlying_condition` = "Không rõ" không còn được xem là tương đương "Có" trong mapping Khám sớm (chỉ "Có" mới trigger); bỏ risk factor `seizure_history` và `recent_outbreak_exposure` khỏi mapping (không có câu hỏi tương ứng trong checklist nên không thể áp dụng); không bổ sung bucket tuổi riêng cho người cao tuổi — rủi ro nhóm này được xem là đã bao phủ một phần qua `underlying_condition` (bệnh nền) | Xác nhận từ Thương sau khi rà soát bản v1.2 |
 
 ---
 
@@ -72,9 +73,8 @@ Checklist cố định, không hỏi ngoài phạm vi; red-flag escalate ngay kh
 |---|---|---|---|
 | 1 | `onset_duration` | = "Hơn 3 ngày" | Sốt kéo dài bất thường, quá ngưỡng tự khỏi thông thường của virus thông thường |
 | 2 | `measured_temperature_c` | = "Trên 39°C" | Sốt cao dù chưa kèm dấu hiệu red-flag khác, vẫn cần khám sớm hơn theo dõi tại nhà |
-| 3 | `underlying_condition` | = "Có" HOẶC "Không rõ" | Có bệnh nền (hoặc không chắc chắn) → tăng nguy cơ diễn tiến nặng dù triệu chứng bề mặt nhẹ |
+| 3 | `underlying_condition` | = "Có" | Có bệnh nền → tăng nguy cơ diễn tiến nặng dù triệu chứng bề mặt nhẹ. "Không rõ" **không** được xem là tương đương "Có" — chỉ trigger khi bệnh nhân xác nhận rõ ràng là có bệnh nền |
 | 4 | `patient_age_group` | = "1–3 tháng tuổi" | Trẻ sơ sinh có sốt luôn cần đánh giá y tế sớm, không bao giờ để ở mức Tự theo dõi |
-| 5 | `seizure_history` | = "Trước đây đã từng bị co giật khi sốt cao" | Tiền sử co giật do sốt → nguy cơ tái phát, cần theo dõi y tế chặt hơn dù hiện tại chưa co giật |
 
 ### Điều kiện mức "Tự theo dõi"
 

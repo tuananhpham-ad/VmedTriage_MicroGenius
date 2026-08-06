@@ -236,11 +236,9 @@ const screens = [
       return `
         <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-04</span></div>
         <div class="banner-emerg">
-          <b>🚨 CẢNH BÁO KHẨN CẤP</b><br><br>
-          Triệu chứng của bạn có dấu hiệu cần cấp cứu ngay.<br><br>
-          → Gọi <b>115</b> ngay lập tức<br>
-          → Đến cơ sở y tế gần nhất<br><br>
-          Nhân viên y tế đã được thông báo và đang xem xét ca của bạn.
+          <b>Ca của bạn đang được ưu tiên xem xét</b><br><br>
+          Nhân viên y tế đang xem xét thông tin bạn cung cấp với mức độ ưu tiên cao nhất.<br><br>
+          → Nhân viên y tế đang nhận thông tin<br>
         </div>
         <div class="wf-btn danger" style="margin-top:10px;position:relative">Tôi đã đọc, tiếp tục<div class="anno-dot" style="top:-10px;right:-10px;box-shadow:0 0 0 1.5px var(--hitl);background:var(--hitl)">1</div></div>
       `;
@@ -248,7 +246,7 @@ const screens = [
     annos:["Nút <b>Tôi đã đọc, tiếp tục</b> → <b>W-05</b>. Ca đã được đẩy vào hàng đợi với mức \"Cấp cứu\" ngay lập tức, không chờ trả lời hết checklist."],
     empty:"Không áp dụng — nội dung cố định.",
     error:"Không áp dụng — cố ý không phụ thuộc dữ liệu động để luôn hiển thị được kể cả khi phần khác của hệ thống lỗi.",
-    hitlNote:"Đây là <b>ngoại lệ có chủ đích</b>: hiển thị ngay cho bệnh nhân, KHÔNG chờ nhân viên y tế duyệt trước — vì an toàn tức thời quan trọng hơn. Ca vẫn bắt buộc vào hàng đợi để được xác nhận tiếp ở W-07; cảnh báo tự động không thay thế xác nhận của con người."
+    hitlNote:"<b>Checkpoint HITL quan trọng.</b> Banner này chỉ hiển thị khi AI phát hiện red-flag, và luôn yêu cầu bệnh nhân xác nhận đã đọc trước khi tiếp tục. Tuyệt đối không cho phép bỏ qua."
   },
   {
     id:"w05", label:"W-05 Kết quả", role:"Bệnh nhân", hitl:true,

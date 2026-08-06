@@ -25,5 +25,4 @@ def build_graph() -> StateGraph:
 
     return graph.compile()
 
-
 agent = build_graph()
