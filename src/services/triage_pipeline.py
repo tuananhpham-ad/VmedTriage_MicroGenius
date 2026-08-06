@@ -3,8 +3,16 @@ from __future__ import annotations
 import logging
 from time import perf_counter
 
+from src.config import get_settings
 from src.models.protocols import SemanticMapper
-from src.models.schemas import ActorRole, CaseStatus, ConversationMessage, RedFlagFinding, TriageCase
+from src.models.schemas import (
+    ActorRole,
+    CaseStatus,
+    ConversationMessage,
+    RedFlagFinding,
+    StructuredSymptomData,
+    TriageCase,
+)
 from src.services.case_store import InMemoryCaseStore, case_store
 from src.services.checklist_validator import ChecklistValidator
 from src.services.nurse_queue import NurseQueueService
@@ -66,7 +74,8 @@ class TriagePipeline:
         )
 
         stage_started = perf_counter()
-        structured_data = await self.mapper.map_message(normalized_message)
+        newly_mapped = await self.mapper.map_message(normalized_message)
+        structured_data = self._merge_structured_data(triage_case.structured_data, newly_mapped)
         self._log_stage(
             "semantic_mapping",
             triage_case.case_id,
@@ -168,6 +177,32 @@ class TriagePipeline:
             saved_case.triage_proposal.priority if saved_case.triage_proposal else "-",
         )
         return saved_case
+
+    def _merge_structured_data(
+        self,
+        previous: StructuredSymptomData | None,
+        newly_mapped: StructuredSymptomData,
+    ) -> StructuredSymptomData:
+        """Gộp dữ liệu triệu chứng mới trích xuất được với dữ liệu đã thu thập ở các lượt trước.
+
+        Mapper chỉ đọc tin nhắn mới nhất mỗi lượt, nên nếu không gộp lại thì các field đã trả lời
+        ở lượt trước sẽ bị mất khi bệnh nhân trả lời câu hỏi tiếp theo (hội thoại nhiều lượt).
+        """
+        if previous is None:
+            return newly_mapped
+
+        merged_fields = {**previous.fields, **newly_mapped.fields}
+        default_group = get_settings().default_symptom_group
+        merged_group = (
+            newly_mapped.symptom_group if newly_mapped.symptom_group != default_group else previous.symptom_group
+        )
+
+        return StructuredSymptomData(
+            symptom_group=merged_group,
+            fields=merged_fields,
+            confidence=max(previous.confidence, newly_mapped.confidence),
+            source=newly_mapped.source,
+        )
 
     def _load_or_create_case(self, case_id: str | None) -> TriageCase:
         if case_id:

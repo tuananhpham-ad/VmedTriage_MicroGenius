@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.config import TRIAGE_PROTOCOL_RULES, get_settings
+from src.config import DETECT_SOURCE_LABEL, GROUNDING_SOURCE_LABEL, TRIAGE_PROTOCOL_RULES, get_settings
 from src.models.schemas import RedFlagFinding, StructuredSymptomData, TriagePriority, TriageProposal, ValidationResult
 
 
@@ -19,6 +19,8 @@ class ProtocolTriageEngine:
                 + ", ".join(finding.label for finding in red_flags),
                 confidence=1.0,
                 requires_manual_review=True,
+                detect_source=DETECT_SOURCE_LABEL,
+                grounding_source=GROUNDING_SOURCE_LABEL,
             )
 
         if not validation.is_valid:
@@ -27,6 +29,8 @@ class ProtocolTriageEngine:
                 reason="Checklist is incomplete, contradictory, or below mapping confidence threshold.",
                 confidence=data.confidence,
                 requires_manual_review=True,
+                detect_source=DETECT_SOURCE_LABEL,
+                grounding_source=GROUNDING_SOURCE_LABEL,
             )
 
         for rule in TRIAGE_PROTOCOL_RULES:
@@ -37,6 +41,8 @@ class ProtocolTriageEngine:
                     reason=str(rule["reason"]),
                     confidence=max(data.confidence, get_settings().manual_review_confidence_threshold),
                     requires_manual_review=True,
+                    detect_source=DETECT_SOURCE_LABEL,
+                    grounding_source=GROUNDING_SOURCE_LABEL,
                 )
 
         return TriageProposal(
@@ -44,6 +50,8 @@ class ProtocolTriageEngine:
             reason="No configured protocol rule matched the structured data.",
             confidence=data.confidence,
             requires_manual_review=True,
+            detect_source=DETECT_SOURCE_LABEL,
+            grounding_source=GROUNDING_SOURCE_LABEL,
         )
 
     def _matches_rule(self, data: StructuredSymptomData, rule: dict[str, object]) -> bool:

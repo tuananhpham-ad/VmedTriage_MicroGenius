@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -82,6 +83,20 @@ class TriageProposal(BaseModel):
     reason: str
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     requires_manual_review: bool = True
+    detect_source: str = Field(
+        default="",
+        description="Nguồn dùng để phát hiện/gợi ý triệu chứng (mô phỏng nội bộ, KHÔNG dùng để kết luận mức độ ưu tiên).",
+    )
+    grounding_source: str = Field(
+        default="",
+        description="Nguồn dùng để 'ground' kết luận mức độ ưu tiên (mô phỏng nội bộ theo Bộ Y tế VN/WHO).",
+    )
+
+
+class SummaryField(BaseModel):
+    label: str
+    value: Any | None = None
+    is_missing: bool = False
 
 
 class HandoffSummary(BaseModel):
@@ -93,6 +108,8 @@ class HandoffSummary(BaseModel):
     red_flags: list[RedFlagFinding] = Field(default_factory=list)
     proposed_priority: TriagePriority | None = None
     protocol_reason: str = ""
+    detect_source: str = ""
+    grounding_source: str = ""
 
 
 class NurseQueueItem(BaseModel):
@@ -116,6 +133,14 @@ class TriageCase(BaseModel):
     queue_item: NurseQueueItem | None = None
     status: CaseStatus = CaseStatus.COLLECTING_INFORMATION
     patient_visible_response: str | None = None
+    patient_id: int | None = Field(default=None, description="Chủ sở hữu case (id bệnh nhân đã đăng nhập)")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    field_ask_counts: dict[str, int] = Field(default_factory=dict)
+    next_message: str | None = Field(
+        default=None, description="Câu hỏi/phản hồi tiếp theo của agent, null nếu đã đủ thông tin"
+    )
+    summary_ready: bool = False
+    summary_fields: list[SummaryField] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
