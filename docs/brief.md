@@ -26,13 +26,13 @@ AI Agent hỗ trợ thu thập triệu chứng theo kịch bản có cấu trúc
 ## 5. Phạm vi (Scope)
 
 ### Trong phạm vi (MVP)
-- **Core Agent**: hỏi-đáp có cấu trúc theo checklist cố định; triage cho 5 nhóm triệu chứng (Sốt, Đau bụng, Đau ngực, Khó thở, Đau đầu/Chấn thương đầu nhẹ)
+- **Core Agent**: AI Agent hội thoại tự do (free-text) phát hiện triệu chứng, triệu chứng liên quan & Red-flag; triage cho 5 nhóm triệu chứng (Sốt, Đau bụng, Đau ngực, Khó thở, Đau đầu/Chấn thương đầu nhẹ)
 - **Nhân viên y tế**: hàng đợi ca chờ duyệt (polling, chưa cần realtime); phiếu tóm tắt triệu chứng tự động; duyệt/chỉnh sửa/ghi đè mức ưu tiên; escalate thủ công
 - **Bệnh nhân**: giao diện khai báo triệu chứng dạng hội thoại; disclaimer & giới hạn hệ thống hiển thị cố định
 - **Hệ thống**: web app responsive, 2 role (nhân viên y tế + bệnh nhân), auth cơ bản; flag "đã duyệt/chưa duyệt" trong DB trước khi gửi cho bệnh nhân; bộ 100 ca thử nghiệm để đánh giá
 
 ### Add-on (nếu đủ nguồn lực)
-- Banner cảnh báo khẩn cấp tức thời khi phát hiện red-flag (hiển thị song song, không chờ duyệt)
+- Banner cảnh báo khẩn cấp tức thời khi phát hiện red-flag 
 - Log audit: ai duyệt, lúc nào, thay đổi gì so với đề xuất AI
 - Mã hoá/ẩn danh cơ bản dữ liệu PII trong lưu trữ và log
 
@@ -73,7 +73,3 @@ AI Agent hỗ trợ thu thập triệu chứng theo kịch bản có cấu trúc
 | Scope creep | Cao | Cao | Giữ đúng phạm vi đã chốt, mọi thay đổi thảo luận với mentor trước |
 | Thiếu hụt kỹ thuật AI/ML/DevOps | Trung bình | Trung bình | Dùng API thay tự build, nhờ mentor hướng dẫn |
 | Thành viên vắng mặt/không hoàn thành việc | Thấp | Cao | Phân việc rõ ràng, check daily |
-
-## 9. Câu hỏi còn mở, thảo luận thêm với mentor
-1. Nguồn protocol triage chuẩn nào dùng để "ground" AI Agent theo hướng dẫn của Bộ Y tế VN có hợp lý không (theo thang 5 mức hay 3 mức như đề bài đưa ra)?
-2. Đối tác/ người dùng khảo sát qua các trang diễn đàn có đủ thuyết phục hay không?

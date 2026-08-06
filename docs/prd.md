@@ -42,7 +42,7 @@ VMedTriage là web app hỗ trợ điều dưỡng phân loại mức độ ưu 
 
 | ID | Là | Tôi muốn | Để | Ưu tiên |
 |---|---|---|---|---|
-| US-01 | Bệnh nhân | Khai báo triệu chứng qua hội thoại có cấu trúc | Được hỗ trợ phân loại mức độ khẩn cấp ban đầu | P0 |
+| US-01 | Bệnh nhân | Khai báo triệu chứng qua hội thoại tự nhiên (free-text), được agent chủ động hỏi thêm về các triệu chứng liên quan mà tôi chưa tự nhắc tới  | Được hỗ trợ phân loại mức độ khẩn cấp ban đầu | P0 |
 | US-02 | Bệnh nhân | Thấy disclaimer & giới hạn hệ thống ngay từ đầu | Hiểu đây là công cụ hỗ trợ, không thay thế bác sĩ | P0 |
 | US-03 | Bệnh nhân | Nhận hướng dẫn xử trí sau khi đã được điều dưỡng duyệt | Có thông tin đáng tin cậy để hành động | P0 |
 | US-04 | Bệnh nhân | Nhận cảnh báo khẩn cấp ngay lập tức nếu có red-flag | Được xử trí kịp thời trong tình huống nguy hiểm | P1 |
@@ -84,7 +84,7 @@ VMedTriage là web app hỗ trợ điều dưỡng phân loại mức độ ưu 
 **Luồng Bệnh nhân:**
 1. Đăng nhập/đăng ký → xem disclaimer → bắt đầu khai báo triệu chứng
 2. Chọn/agent xác định nhóm triệu chứng → hội thoại có cấu trúc theo checklist
-3. [Nếu phát hiện red-flag] → hiển thị banner cảnh báo khẩn cấp ngay
+3. [Nếu phát hiện red-flag] → case tự động đẩy lên đầu hàng đợi mức Cấp cứu, điều dưỡng trực nhận thông báo ưu tiên xử lý ngay lập tức — banner cảnh báo cụ thể chỉ hiển thị cho bệnh nhân sau khi điều dưỡng đã xác nhận.
 4. Agent tạo phiếu tóm tắt → chuyển vào hàng đợi chờ điều dưỡng duyệt
 5. Bệnh nhân chờ / nhận thông báo hướng xử trí sau khi đã được duyệt
 
