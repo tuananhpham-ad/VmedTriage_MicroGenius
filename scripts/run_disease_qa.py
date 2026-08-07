@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.services import disease_session, provider_router
+from src.services import disease_session, provider_router, session_log
 from src.services.disease_checklist import ChecklistNotFoundError
 from src.services.disease_session import SessionState
 
@@ -62,6 +62,7 @@ def run(disease_id: str, demo: bool) -> int:
     print(f"Bệnh    : {session.checklist.disease_label}")
     print(f"Ngưỡng  : đủ khi >= {session.checklist.completion_threshold:.0%} trường bắt buộc")
     print(f"Chế độ  : {mode}")
+    print(f"Log     : {session_log.log_path(session.session_id)}")
     print("=" * 68)
     print(f"\n[AGENT] {session.last_question}")
 
@@ -107,6 +108,7 @@ def run(disease_id: str, demo: bool) -> int:
             print(f"\n[AGENT] {session.last_question}")
 
     print(f"\nTrạng thái phiên: {session.state.value}")
+    print(f"Log đầy đủ: {session_log.log_path(session.session_id)}")
     return 0
 
 
