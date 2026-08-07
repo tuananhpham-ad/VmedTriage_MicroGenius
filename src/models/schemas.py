@@ -23,6 +23,12 @@ class CaseStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     ESCALATED = "escalated"
+    # Điều dưỡng cần thêm thông tin trước khi quyết định (action ask_more) - quay lại hội thoại,
+    # khác COLLECTING_INFORMATION ban đầu vì câu hỏi lần này do điều dưỡng chỉ định, không phải checklist.
+    NEEDS_MORE_INFO = "needs_more_info"
+    # Điều dưỡng từ chối xử lý vì lý do KHÔNG liên quan đến độ chính xác AI (vd: bệnh nhân đã được
+    # xử lý offline). Tách khỏi REJECTED (vốn không phân biệt lý do) để không lẫn vào thống kê accuracy.
+    WITHDRAWN = "withdrawn"
 
 
 # Hành động điều dưỡng có thể thực hiện khi duyệt một case (human-in-the-loop).
@@ -38,6 +44,23 @@ class HITLAction(str, Enum):
 class QueuePriority(str, Enum):
     STANDARD = "standard"
     HIGH = "high"
+
+
+# Lý do điều dưỡng reject một case (Feature #2 mở rộng). BẮT BUỘC chọn để tách tín hiệu: chỉ
+# AI_INCORRECT mới được tính vào thống kê độ chính xác AI-điều dưỡng, hai lý do còn lại KHÔNG phải
+# tín hiệu AI đúng/sai nên không được lẫn vào accuracy scoring.
+class RejectReasonCode(str, Enum):
+    ALREADY_HANDLED_OFFLINE = "already_handled_offline"
+    AI_INCORRECT = "ai_incorrect"
+    OTHER = "other"
+
+
+# Nhãn chất lượng hội thoại do quality guard gán mỗi turn (không có quyền chặn tuyệt đối - xem
+# src/services/quality_guard.py). low_quality chỉ ảnh hưởng việc case có bị suppress khỏi hàng đợi
+# điều dưỡng hay không, KHÔNG BAO GIỜ chặn/ghi đè red-flag escalation.
+class ConversationQualityFlag(str, Enum):
+    NORMAL = "normal"
+    LOW_QUALITY = "low_quality"
 
 
 # Mức độ ưu tiên xử trí lâm sàng do triage engine đề xuất.
@@ -156,6 +179,10 @@ class TriageCase(BaseModel):
     )
     summary_ready: bool = False
     summary_fields: list[SummaryField] = Field(default_factory=list)
+    quality_flag: ConversationQualityFlag = Field(
+        default=ConversationQualityFlag.NORMAL,
+        description="Gán bởi quality_guard mỗi turn; low_quality chỉ dùng để suppress hàng đợi khi KHÔNG có red-flag.",
+    )
 
 
 # Request body của endpoint chat gốc: tin nhắn bệnh nhân + case_id nếu tiếp tục hội thoại đã có.

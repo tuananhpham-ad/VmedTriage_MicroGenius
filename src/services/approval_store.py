@@ -15,7 +15,7 @@ class ApprovalStatusRecord(BaseModel):
 
 
 class AuditLogEntry(BaseModel):
-    """audit_log(case_id, actor, action, old_value, new_value, timestamp)"""
+    """audit_log(case_id, actor, action, old_value, new_value, timestamp, reason)"""
 
     case_id: str
     actor: str
@@ -23,6 +23,9 @@ class AuditLogEntry(BaseModel):
     old_value: str | None = None
     new_value: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Bắt buộc cho action="reject" (xem RejectReasonCode) để tách tín hiệu accuracy khỏi lý do
+    # ngoài chuyên môn (vd: đã xử lý offline). Tự do cho các action khác (vd: nội dung câu hỏi ask_more).
+    reason: str | None = None
 
 
 class InMemoryApprovalStore:

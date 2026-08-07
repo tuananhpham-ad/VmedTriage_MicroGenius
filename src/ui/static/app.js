@@ -838,10 +838,15 @@ async function reviewCase(requestedAction) {
     return;
   }
 
-  const selectedPriority = elements.editedPriority.value;
   const originalPriority = currentCase.triage_proposal?.priority;
+  let selectedPriority = elements.editedPriority.value;
   let action = requestedAction;
-  if (requestedAction === "approve" && selectedPriority !== originalPriority) action = "edit";
+  if (action === "escalate") {
+    action = "edit";
+    selectedPriority = "Emergency";
+  } else if (action === "approve" && selectedPriority !== originalPriority) {
+    action = "edit";
+  }
 
   const payload = {
     action,
@@ -873,7 +878,7 @@ async function reviewCase(requestedAction) {
     }
 
     await refreshQueue({ silent: true, force: true });
-    showToast(reviewSuccessMessage(result.status));
+    showToast(requestedAction === "escalate" ? "Đã chuyển ca sang mức cấp cứu." : reviewSuccessMessage(result.status));
   } catch (error) {
     elements.reviewError.textContent = readableError(error, "Không thể lưu quyết định. Vui lòng thử lại.");
   } finally {

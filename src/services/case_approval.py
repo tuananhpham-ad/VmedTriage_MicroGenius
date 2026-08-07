@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from src.models.schemas import CaseStatus, TriageCase, TriagePriority
+from src.models.schemas import (
+    ActorRole,
+    CaseStatus,
+    ConversationMessage,
+    ConversationQualityFlag,
+    RejectReasonCode,
+    TriageCase,
+    TriagePriority,
+)
 from src.services.approval_store import ApprovalStatusRecord, AuditLogEntry, approval_store
 from src.services.case_store import case_store
 from src.services.priority_labels import PRIORITY_RANK, normalize_priority_value, priority_label_vi
@@ -34,6 +42,10 @@ def list_queue() -> list[dict]:
         if approval and approval.final_priority:
             continue  # đã duyệt/override/escalate -> ra khỏi hàng đợi chờ duyệt
         if triage_case.status not in (CaseStatus.NEEDS_NURSE_REVIEW, CaseStatus.AWAITING_APPROVAL):
+            continue  # WITHDRAWN/NEEDS_MORE_INFO cũng bị loại tự nhiên qua điều kiện này
+        if triage_case.quality_flag == ConversationQualityFlag.LOW_QUALITY and not triage_case.red_flags:
+            # Hội thoại bị quality_guard đánh giá vớ vẩn/off-topic -> không đẩy vào hàng đợi để
+            # tránh làm đầy queue. Red-flag LUÔN thắng: có red-flag thì không bao giờ bị suppress ở đây.
             continue
 
         priority = _ai_priority(triage_case)
@@ -105,6 +117,64 @@ def _record_decision(
     triage_case.status = status
     case_store.save(triage_case)
     return record
+
+
+def reject(case_id: str, actor_id: int, reason_code: str, note: str | None = None) -> AuditLogEntry:
+    """Điều dưỡng từ chối xử lý case (KHÔNG phải hạ mức ưu tiên - dùng override cho việc đó).
+
+    reason_code BẮT BUỘC là một trong RejectReasonCode: chỉ 'ai_incorrect' được tính vào thống kê
+    độ chính xác AI-điều dưỡng; 'already_handled_offline'/'other' không phải tín hiệu AI đúng/sai
+    (ví dụ bệnh nhân đã tự đến viện xử lý case ngoài hệ thống) nên phải tách riêng ngay từ audit log.
+    """
+    triage_case = _require_case(case_id)
+    try:
+        code = RejectReasonCode(reason_code)
+    except ValueError as error:
+        raise ValueError(f"reason_code không hợp lệ: {reason_code!r}") from error
+
+    old_value = _ai_priority(triage_case).value
+    triage_case.status = CaseStatus.WITHDRAWN
+    triage_case.patient_visible_response = None
+    case_store.save(triage_case)
+
+    return approval_store.log(
+        AuditLogEntry(
+            case_id=triage_case.case_id,
+            actor=str(actor_id),
+            action="reject",
+            old_value=old_value,
+            new_value=None,
+            reason=f"{code.value}: {note}" if note else code.value,
+        )
+    )
+
+
+def ask_more(case_id: str, actor_id: int, question: str) -> AuditLogEntry:
+    """Điều dưỡng cần thêm thông tin trước khi approve/override/reject.
+
+    Khác với follow-up question tự động của checklist: câu hỏi này do điều dưỡng chỉ định trực
+    tiếp, case quay lại hội thoại ở trạng thái NEEDS_MORE_INFO (không lẫn với COLLECTING_INFORMATION
+    ban đầu) và tự động rời khỏi hàng đợi cho tới khi bệnh nhân trả lời lượt tiếp theo.
+    """
+    triage_case = _require_case(case_id)
+    cleaned_question = (question or "").strip()
+    if not cleaned_question:
+        raise ValueError("question không được để trống khi yêu cầu ask_more.")
+
+    triage_case.status = CaseStatus.NEEDS_MORE_INFO
+    triage_case.next_message = cleaned_question
+    triage_case.summary_ready = False
+    triage_case.conversation.append(ConversationMessage(role=ActorRole.NURSE, content=cleaned_question))
+    case_store.save(triage_case)
+
+    return approval_store.log(
+        AuditLogEntry(
+            case_id=triage_case.case_id,
+            actor=str(actor_id),
+            action="ask_more",
+            reason=cleaned_question,
+        )
+    )
 
 
 def audit_log_for(case_id: str) -> list[AuditLogEntry]:

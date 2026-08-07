@@ -61,6 +61,32 @@ class ApprovalActionResponse(BaseModel):
     approved_at: datetime
 
 
+class RejectRequest(BaseModel):
+    """Body của POST /cases/{id}/reject. reason_code bắt buộc để tách tín hiệu accuracy."""
+
+    reason_code: str = Field(
+        ..., description="Một trong: already_handled_offline, ai_incorrect, other (xem RejectReasonCode)"
+    )
+    note: str | None = Field(default=None, max_length=500)
+
+
+class AskMoreRequest(BaseModel):
+    """Body của POST /cases/{id}/ask_more. Câu hỏi do điều dưỡng chỉ định, khác follow-up tự động."""
+
+    question: str = Field(..., min_length=1, max_length=1000)
+
+
+class AuditActionResponse(BaseModel):
+    """Response chung cho reject/ask_more - không có final_priority như approve/override/escalate."""
+
+    case_id: str
+    action: str
+    status: str
+    reason: str | None = None
+    actor: int
+    timestamp: datetime
+
+
 class DisclaimerResponse(BaseModel):
     text: str
 

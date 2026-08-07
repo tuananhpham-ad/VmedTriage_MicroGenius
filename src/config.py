@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from typing import Literal
 
 from pydantic import AliasChoices, Field
@@ -21,15 +22,20 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # LLM
-    llm_provider: Literal["auto", "openai", "deepseek", "gemini"] = "auto"
-    llm_provider_order: str = "deepseek,gemini"
-    openai_api_key: str = ""
+    llm_provider: Literal["auto", "openai", "deepseek", "gemini", "anthropic", "openrouter"] = "auto"
+    llm_provider_order: str = "gemini,deepseek,openai,anthropic,openrouter"
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model_name: str = "gpt-4o-mini"
-    deepseek_api_key: str = ""
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_model_name: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
     gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     gemini_model_name: str = "gemini-1.5-flash"
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    anthropic_model_name: str = "claude-haiku-4-5-20251001"
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    openrouter_model_name: str = "openai/gpt-4o-mini"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     supported_model_name: str = "Qwen/Qwen3-8B"
@@ -84,6 +90,8 @@ REQUIRED_FIELDS_BY_SYMPTOM_GROUP: dict[str, tuple[str, ...]] = {
     "fever": ("onset", "fever_severity", "neck_stiffness"),
     # Nhóm 5: Chấn thương / Chảy máu
     "bleeding": ("onset", "bleeding_severity"),
+    # Nhóm 6: Đau đầu - bổ sung vì bộ dữ liệu triage_daudau.csv không khớp nhóm nào có sẵn ở trên.
+    "headache": ("onset", "headache_severity", "thunderclap_onset"),
     # Nhóm bổ sung (thần kinh) - giữ lại vì logic red-flag đột quỵ đã dùng sẵn trong code cũ
     "neurologic": ("onset", "face_droop", "arm_weakness", "speech_difficulty"),
     "general": ("onset",),
@@ -104,6 +112,8 @@ FOLLOW_UP_QUESTIONS: dict[str, str] = {
     "rigid_abdomen": "Bụng của bạn có gồng cứng như gỗ khi sờ vào không?",
     "fever_severity": "Bạn sốt nhẹ, vừa hay sốt cao (trên 39°C)?",
     "neck_stiffness": "Bạn có cứng cổ, đau đầu dữ dội hoặc lú lẫn kèm sốt không?",
+    "headache_severity": "Mức độ đau đầu của bạn từ 1 đến 10 là bao nhiêu?",
+    "thunderclap_onset": "Cơn đau đầu này có đến đột ngột, dữ dội nhất từ trước tới nay chỉ trong vài giây/phút không?",
 }
 
 
@@ -153,6 +163,11 @@ RED_FLAG_RULES: tuple[dict[str, object], ...] = (
         "label": "Sốt kèm cứng cổ/lú lẫn (nghi viêm màng não)",
         "required_true_fields": ("neck_stiffness",),
     },
+    {
+        "code": "thunderclap_headache",
+        "label": "Đau đầu dữ dội đột ngột (nghi xuất huyết não)",
+        "required_true_fields": ("thunderclap_onset",),
+    },
 )
 
 
@@ -198,6 +213,20 @@ TRIAGE_PROTOCOL_RULES: tuple[dict[str, object], ...] = (
         "symptom_group": "fever",
         "conditions": {},
         "reason": "Sốt nhẹ/vừa không có dấu hiệu nguy hiểm, có thể theo dõi tại nhà.",
+    },
+    {
+        "id": "VMED-HD-001",
+        "priority": "Urgent",
+        "symptom_group": "headache",
+        "conditions": {"headache_severity": "high"},
+        "reason": "Đau đầu dữ dội cần được đánh giá sớm dù chưa đạt ngưỡng Emergency.",
+    },
+    {
+        "id": "VMED-HD-002",
+        "priority": "Self-care",
+        "symptom_group": "headache",
+        "conditions": {},
+        "reason": "Đau đầu nhẹ/vừa không có dấu hiệu nguy hiểm, có thể theo dõi tại nhà.",
     },
     {
         "id": "VMED-GEN-001",

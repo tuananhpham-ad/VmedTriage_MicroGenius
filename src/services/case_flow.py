@@ -9,6 +9,7 @@ from src.config import (
 )
 from src.models.schemas import CaseStatus, SummaryField, TriageCase
 from src.services.case_store import case_store
+from src.services.quality_guard import quality_guard
 from src.services.triage_pipeline import triage_pipeline
 
 # Cho phép hỏi lại tối đa 1 lần cho mỗi field còn thiếu (tổng cộng 2 lượt: lượt hỏi đầu + 1 lần hỏi lại),
@@ -85,10 +86,15 @@ def _finalize_turn(triage_case: TriageCase) -> TriageCase:
     triage_case.summary_ready = summary_ready
 
     # Sau khi đủ field bắt buộc HOẶC phát hiện red-flag -> đẩy vào hàng đợi chờ duyệt.
-    if summary_ready and triage_case.status == CaseStatus.COLLECTING_INFORMATION:
+    # NEEDS_MORE_INFO cũng được coi như đang thu thập lại: bệnh nhân vừa trả lời câu hỏi điều dưỡng
+    # chỉ định (case_approval.ask_more), lượt tiếp theo phải quay lại vào hàng đợi bình thường.
+    if summary_ready and triage_case.status in (CaseStatus.COLLECTING_INFORMATION, CaseStatus.NEEDS_MORE_INFO):
         triage_case.status = CaseStatus.NEEDS_NURSE_REVIEW if red_flags else CaseStatus.AWAITING_APPROVAL
 
     triage_case.summary_fields = _build_summary_fields(triage_case)
+    # Chỉ gắn nhãn - quyết định suppress khỏi hàng đợi nằm ở case_approval.list_queue(), nơi red-flag
+    # luôn được ưu tiên tuyệt đối bất kể quality_flag nói gì.
+    triage_case.quality_flag = quality_guard.assess(triage_case)
 
     if triage_case.summary:
         triage_case.summary.detect_source = DETECT_SOURCE_LABEL
