@@ -145,6 +145,133 @@ Lưu ý phạm vi demo:
 - Red-flag được quét bằng rule thuần **mỗi lượt**, không đợi checklist đủ, và không phụ thuộc LLM.
 - Session lưu in-memory, mất khi restart process.
 
+## 3c. Chạy Agent hỏi-đáp theo checklist TỪNG BỆNH (CLI, dùng LLM thật)
+
+Đây là phần mới theo mục 10 của `_guidance/vmedtriage_solution_design_review.md`: agent hỏi-đáp dẫn
+dắt người dùng điền checklist của **một bệnh cụ thể**, đủ ngưỡng thì sinh **phiếu tóm tắt tình trạng
+bệnh** và xin người dùng xác nhận.
+
+Khác demo intake ở mục 3b (bộ trường chung hardcode, chạy qua web UI), phần này:
+
+- Checklist **nạp từ JSON** trong `src/domain/_<disease_id>.json` → thêm bệnh mới = thêm file JSON,
+  không sửa code.
+- Chạy bằng **CLI**, chưa có REST endpoint và chưa nối vào nurse queue.
+
+### Cấu hình LLM trước khi chạy
+
+`.env` cần có ít nhất một API key hợp lệ. Biến `LLM_PROVIDER` chỉ nhận đúng các giá trị sau
+(xem `src/config.py`):
+
+```text
+auto | openai | deepseek | gemini | anthropic | openrouter
+```
+
+Đặt `LLM_PROVIDER=auto` để hệ thống tự chọn provider đầu tiên còn API key theo thứ tự trong
+`LLM_PROVIDER_ORDER`, hoặc đặt tên một provider cụ thể để ép dùng đúng provider đó.
+
+> ⚠️ Đặt nhầm **tên model** vào `LLM_PROVIDER` (ví dụ `LLM_PROVIDER="deepseek-chat"`) sẽ làm
+> `get_settings()` raise `ValidationError` và **cả app không khởi động được**, không riêng gì phần này.
+> Tên model đặt ở biến riêng: `DEEPSEEK_MODEL_NAME`, `GEMINI_MODEL_NAME`, ...
+
+Kiểm tra nhanh provider nào đang khả dụng:
+
+```powershell
+python -c "from src.services import provider_router; print(provider_router.available_providers())"
+```
+
+Kết quả kỳ vọng khi đã cấu hình đúng, ví dụ:
+
+```text
+['deepseek']
+```
+
+Danh sách rỗng `[]` nghĩa là chưa có API key nào dùng được — CLI vẫn chạy nhưng rơi về fallback
+deterministic (gán nguyên tin nhắn vào trường thiếu đầu tiên), và màn hình sẽ báo rõ chế độ đang chạy.
+
+### Chạy CLI
+
+Chạy từ root repository:
+
+```powershell
+# Kịch bản mẫu, không cần gõ tay - dùng để kiểm tra nhanh
+python -m scripts.run_disease_qa --demo
+
+# Hội thoại tương tác, tự gõ câu trả lời
+python -m scripts.run_disease_qa
+
+# Chỉ định bệnh khác (đọc src/domain/_<disease_id>.json)
+python -m scripts.run_disease_qa disease_x
+```
+
+Trong chế độ tương tác, gõ `q` để thoát.
+
+### Luồng CLI
+
+1. Agent chào và hỏi trường đầu tiên trong checklist.
+2. Bạn trả lời tự nhiên; LLM trích xuất thông tin vào đúng trường checklist.
+3. Sau mỗi lượt, CLI in `[checklist N% - x/y trường bắt buộc]` và các trường còn thiếu.
+4. Chưa đủ → LLM sinh câu hỏi tiếp theo tự nhiên (tối đa 2 trường/lượt) để dẫn dắt.
+5. Đạt **>= 85%** trường bắt buộc → in **phiếu tóm tắt tình trạng bệnh** và hỏi xác nhận.
+6. Chọn `d` (đúng) để chốt phiên, hoặc `s` (sửa) rồi nhập nội dung đính chính.
+
+Kết quả mẫu khi chạy `--demo` với DeepSeek thật:
+
+```text
+Chế độ  : LLM thật (provider: deepseek)
+
+[AGENT] Chào bạn, mình cần thu thập một vài thông tin về "Disease X (mock test)"...
+[BẠN  ] Chào bạn, tôi thấy trong người không ổn
+  [checklist 33% - 1/3 trường bắt buộc] còn thiếu: Tên, Thời gian phát bệnh
+[AGENT] Dạ, để tiện theo dõi, mình xin phép hỏi thêm: tên của bạn là gì và bạn bắt đầu
+        thấy người không ổn từ khi nào ạ?
+...
+====================================================================
+Tóm tắt tình trạng bệnh - Disease X (mock test):
+- Tên: Trần Minh Khoa
+- Tình trạng bệnh: thấy trong người không ổn
+- Thời gian phát bệnh: sáng hôm qua
+====================================================================
+```
+
+### Thêm một bệnh mới
+
+Tạo file `src/domain/_<disease_id>.json` theo đúng cấu trúc của `_disease_x.json`:
+
+```json
+{
+  "disease_id": "disease_x",
+  "disease_label": "Disease X (mock test)",
+  "completion_threshold": 0.85,
+  "fields": [
+    { "key": "name",      "label": "Tên",                "required": true, "hint": "...", "value": null },
+    { "key": "condition", "label": "Tình trạng bệnh",    "required": true, "hint": "...", "value": null },
+    { "key": "onset",     "label": "Thời gian phát bệnh","required": true, "hint": "...", "value": null }
+  ]
+}
+```
+
+`hint` được đưa thẳng vào prompt để LLM biết trường đó cần trích xuất cái gì — viết `hint` càng rõ
+thì trích xuất càng chính xác. `value: null` là giá trị khởi tạo, phiên chạy sẽ điền dần.
+
+### Chạy test (không gọi LLM)
+
+Test chỉ kiểm tra phần deterministic (nạp checklist, tính %, state machine, fallback):
+
+```powershell
+pytest tests/test_services/test_disease_session.py -v
+```
+
+### Giới hạn đã biết
+
+- **Trường đã có giá trị sẽ KHÔNG bị ghi đè ở các lượt sau.** Nếu người dùng mô tả sơ sài trước
+  ("thấy trong người không ổn") rồi mới nói chi tiết ("sốt 39 độ, đau họng, ho khan"), phần chi tiết
+  **bị bỏ qua** và không vào phiếu tóm tắt. Policy này hợp lý với trường hành chính (tên, tuổi) nhưng
+  sai với trường mô tả triệu chứng — cần bổ sung cơ chế cộng dồn cho các trường loại này.
+- Chỉ có CLI, **chưa có REST endpoint** và chưa nối vào `TriagePipeline`/nurse queue.
+- **Chưa có red-flag scan** trong luồng này (khác luồng intake ở mục 3b đã có). Không dùng để đánh
+  giá mức độ khẩn cấp.
+- Session lưu in-memory, mất khi kết thúc process.
+
 ## 4. Chạy API bằng curl hoặc PowerShell
 
 Kiểm tra health:
