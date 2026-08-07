@@ -5,6 +5,8 @@ chạy nhanh và không phụ thuộc API key, giống test_intake.py."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.services import disease_session
@@ -18,6 +20,14 @@ from src.services.disease_checklist import (
 from src.services.disease_session import SessionState
 
 DISEASE_ID = "disease_x"
+
+
+@pytest.fixture(autouse=True)
+def isolated_log_dir(tmp_path, monkeypatch):
+    """Không cho test ghi vào `logs/` thật - mỗi test một thư mục tạm riêng."""
+    from src.services import session_log
+
+    monkeypatch.setattr(session_log, "LOG_DIR", tmp_path / "logs")
 
 
 @pytest.fixture
@@ -155,6 +165,73 @@ class TestSessionFlow:
         session = disease_session.confirm_summary(session.session_id, is_correct=False, correction=None)
         assert session.state == SessionState.COLLECTING
         assert "chưa đúng" in session.last_question.lower()
+
+
+class TestSessionLog:
+    def test_log_file_written_with_questions_and_answers(self, no_llm):
+        from src.services import session_log
+
+        session = disease_session.start_session(DISEASE_ID)
+        session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
+
+        assert session_log.log_path(session.session_id).exists()
+        data = session_log.read(session.session_id)
+        types = [event["type"] for event in data["events"]]
+        assert "agent_question" in types, "phải lưu câu hỏi của system"
+        assert "user_message" in types, "phải lưu câu trả lời của user"
+        assert any(event.get("message") == "Nguyễn Văn A" for event in data["events"])
+
+    def test_all_summary_versions_are_kept(self, no_llm, monkeypatch):
+        """generated / revised / confirmed đều phải được lưu, không chỉ bản cuối."""
+        from src.services import session_log
+
+        session = disease_session.start_session(DISEASE_ID)
+        session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
+        session.state = SessionState.AWAITING_CONFIRMATION
+        disease_session._log_summary(session, "generated")
+
+        # Không có LLM thì extract_correction trả rỗng -> giả lập người dùng sửa được tên.
+        monkeypatch.setattr(
+            disease_session._agent_for(load_checklist(DISEASE_ID)),
+            "extract_correction",
+            lambda message, answers: ({"name": "Tên Mới"}, True),
+        )
+        session = disease_session.confirm_summary(session.session_id, is_correct=False, correction="sửa tên")
+        session = disease_session.confirm_summary(session.session_id, is_correct=True)
+
+        data = session_log.read(session.session_id)
+        assert [item["kind"] for item in data["summaries"]] == ["generated", "revised", "confirmed"]
+        assert data["summaries"][0]["answers"]["name"] == "Tên Cũ"
+        assert data["summaries"][-1]["answers"]["name"] == "Tên Mới"
+        assert data["final_state"] == "confirmed"
+
+    def test_correction_records_overwritten_value(self, no_llm, monkeypatch):
+        """Phải tra được người dùng sửa TỪ GÌ sang gì."""
+        from src.services import session_log
+
+        session = disease_session.start_session(DISEASE_ID)
+        session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
+        session.state = SessionState.AWAITING_CONFIRMATION
+        monkeypatch.setattr(
+            disease_session._agent_for(load_checklist(DISEASE_ID)),
+            "extract_correction",
+            lambda message, answers: ({"name": "Tên Mới"}, True),
+        )
+
+        session = disease_session.confirm_summary(session.session_id, is_correct=False, correction="sửa tên")
+        data = session_log.read(session.session_id)
+        correction = next(event for event in data["events"] if event["type"] == "correction")
+        assert correction["overwritten"] == {"name": "Tên Cũ"}
+
+    def test_logging_failure_does_not_break_session(self, no_llm, monkeypatch):
+        """Lỗi ghi log không được làm hỏng phiên hỏi-đáp."""
+        from src.services import session_log
+
+        session = disease_session.start_session(DISEASE_ID)
+        monkeypatch.setattr(session_log, "LOG_DIR", Path("/dev/null/khong-ghi-duoc"))
+
+        session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
+        assert session.answers.get("name") == "Nguyễn Văn A"
 
 
 class TestProgressReporting:
