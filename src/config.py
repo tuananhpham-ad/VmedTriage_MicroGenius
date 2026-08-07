@@ -1,5 +1,5 @@
-from functools import lru_cache
 import os
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import AliasChoices, Field
@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
     nurse_registration_code: str = ""
+    password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
+    password_reset_base_url: str = "http://localhost:8000"
+    email_verification_code_expire_minutes: int = Field(default=10, ge=5, le=60)
+
+    # Leave SMTP_HOST empty during development to write email contents to the server log.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_tls: bool = True
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
