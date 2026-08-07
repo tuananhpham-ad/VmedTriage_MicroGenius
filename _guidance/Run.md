@@ -88,6 +88,63 @@ Tôi đau ngực từ sáng, đi vài bước là hụt hơi.
 3. Xem panel bệnh nhân, case details và nurse review.
 4. Ở nurse review, thử các hành động `Approve`, `Escalate`, hoặc `Ask more`.
 
+## 3b. Demo hỏi đáp thu thập triệu chứng (Intake)
+
+Đây là demo tách riêng cho phần **hỏi-đáp + checklist + phiếu tóm tắt + xác nhận của người bệnh**.
+Phần duyệt của điều dưỡng và phần graph/GNN KHÔNG nằm trong demo này.
+
+Sau khi server chạy (mục 3), mở:
+
+```text
+http://localhost:8000/intake.html
+```
+
+Luồng demo:
+
+1. Agent chào và hỏi thông tin ban đầu.
+2. Bạn trả lời tự nhiên, ví dụ:
+
+```text
+Bố tôi tên Trần Văn Hùng, 68 tuổi, sáng nay đột nhiên bị méo miệng và nói ngọng
+```
+
+3. Panel bên phải hiển thị % checklist đã thu thập và trường nào còn thiếu.
+4. Agent tự sinh câu hỏi tiếp theo (bằng LLM) cho các trường còn trống.
+5. Khi đạt **>= 85% trường bắt buộc** (6/7), hệ thống hiện **phiếu tóm tắt** và hỏi bạn xác nhận.
+6. Bấm `✓ Đúng rồi` để chốt, hoặc `✎ Chưa đúng, cần sửa` rồi nhập nội dung đính chính.
+
+Kiểm tra hệ thống đang chạy bằng LLM thật hay fallback:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/v1/intake/health
+```
+
+Kết quả kỳ vọng khi đã cấu hình LLM:
+
+```json
+{ "llm_available": true }
+```
+
+Nếu `llm_available: false`, demo vẫn chạy được nhưng câu hỏi dùng mẫu cố định thay vì sinh tự nhiên
+(cấu hình `GEMINI_API_KEY`, `OPENAI_API_KEY` hoặc `DEEPSEEK_API_KEY` trong `.env` để bật LLM).
+
+Các endpoint của demo intake:
+
+```text
+GET  /api/v1/intake/health
+POST /api/v1/intake/sessions
+GET  /api/v1/intake/sessions/{session_id}
+POST /api/v1/intake/sessions/{session_id}/messages   body: {"message": "..."}
+POST /api/v1/intake/sessions/{session_id}/confirm    body: {"is_correct": true}
+                                                      hoặc {"is_correct": false, "correction": "..."}
+```
+
+Lưu ý phạm vi demo:
+
+- Router intake **không yêu cầu auth** (để chạy demo nhanh) — phải bổ sung trước khi dùng thật.
+- Red-flag được quét bằng rule thuần **mỗi lượt**, không đợi checklist đủ, và không phụ thuộc LLM.
+- Session lưu in-memory, mất khi restart process.
+
 ## 4. Chạy API bằng curl hoặc PowerShell
 
 Kiểm tra health:

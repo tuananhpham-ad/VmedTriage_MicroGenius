@@ -253,3 +253,74 @@ graph LR
 | Storage | In-memory now; Weaviate Cloud target | Fast for demo/testing today; production persistence should move cases, queue/audit state and vectorized knowledge into Weaviate Cloud. |
 | External tools | Optional MCP server URLs with local catalog fallback | Allows integration with FHIR/CDS/notification/audit systems without blocking MVP. |
 | LLM | Adapter exists but is not active in current pipeline | Keeps path open for LLM-based mapping/summarization while current behavior remains deterministic. |
+
+## Framework Update (2026-08-07) — Feature-spec REST API, Quality Guard, HITL mở rộng, GNN Advisory #TODO
+
+Mọi mô tả ở phía trên (LangGraph Agent, `/chat`, `/cases/{id}/review`) là **luồng demo Gen1** ban đầu.
+Song song đó, repo đã phát triển một luồng REST API bám sát đặc tả Feature #1–#5 (**Gen2**, đang là
+nguồn sự thật cho sản phẩm) nhưng chưa được tài liệu hoá ở đây. Cập nhật này bổ sung phần đó và ghi
+nhận rõ khoảng trùng lặp giữa hai luồng.
+
+### Gen1 vs Gen2 — khoảng trùng lặp cần dọn dẹp
+
+| | Gen1 (demo gốc, `src/api/routes.py`) | Gen2 (đúng đặc tả, `src/api/routers/*.py`) |
+|---|---|---|
+| Tạo/tiếp tục case | `POST /chat` (không auth, không ownership check) | `POST /cases`, `POST /cases/{id}/responses` (`case_flow.py`, có auth + ownership) |
+| Xem case | `GET /cases/{case_id}` trả nguyên `TriageCase` (lộ dữ liệu nội bộ cho bất kỳ ai) | `GET /cases/{id}/result` (`result.py`) — chỉ trả nội dung xử trí khi `approval_status = approved`, đúng ràng buộc HITL |
+| Duyệt case | `POST /cases/{id}/review` (`hitl_review.py`, action approve/edit/reject/ask_more, sửa thẳng `TriageCase.status`) | `POST /cases/{id}/approve\|override\|escalate\|reject\|ask_more` (`case_approval.py`, ghi `approval_store`/`audit_log` — khớp đặc tả #2) |
+| Hàng đợi | `GET /nurse/queue` trả toàn bộ case, không lọc theo priority/thời gian chờ | `GET /queue` (`case_approval.list_queue`) — sắp theo priority rồi thời gian chờ, đúng đặc tả #2 |
+
+**Khuyến nghị:** Gen1 (`routes.py`, `hitl_review.py`) nên được đánh dấu deprecated và gỡ khỏi router
+chính trong một PR riêng — nó vi phạm nguyên tắc "patient không thấy dữ liệu nội bộ" (DESIGN.md) vì
+không kiểm tra ownership và trả thẳng `TriageCase` đầy đủ. Chưa xoá trong lần cập nhật này để tránh
+phá vỡ các chỗ đang tham chiếu nó ngoài phạm vi thay đổi hiện tại; chỉ ghi nhận ở đây làm việc cần làm.
+
+### Checklist đa bệnh — bổ sung nhóm `headache`
+
+`REQUIRED_FIELDS_BY_SYMPTOM_GROUP` (`src/config.py`) trước đây có 6 nhóm (`chest_pain`, `breathing`,
+`abdominal`, `fever`, `bleeding`, `neurologic`) nhưng **không có nhóm nào khớp** với
+`data/triage_daudau.csv` (đau đầu). Đã bổ sung nhóm `headache` (`onset`, `headache_severity`,
+`thunderclap_onset`) cùng follow-up question, red-flag rule `thunderclap_headache` (nghi xuất huyết
+não) và protocol rule `VMED-HD-001`/`VMED-HD-002`, theo đúng pattern các nhóm sẵn có.
+
+### Quality Guard — suppress hàng đợi khi hội thoại "vớ vẩn", KHÔNG BAO GIỜ chặn red-flag
+
+- `src/services/quality_guard.py` (mới): heuristic rule-based (không LLM), gán
+  `TriageCase.quality_flag` (`normal`/`low_quality`) mỗi turn dựa trên độ dài tin nhắn, lặp lại y hệt
+  nhiều lần liên tiếp, hoặc số vòng hỏi lại vượt ngưỡng mà vẫn chưa đủ checklist.
+- Được gọi trong `case_flow._finalize_turn` — chỉ gắn nhãn, **không** tự đổi `CaseStatus`.
+- Quyết định suppress khỏi hàng đợi nằm **duy nhất** ở `case_approval.list_queue()`: bỏ qua case khi
+  `quality_flag == low_quality` **và** `not triage_case.red_flags`. Vì `RedFlagSafetyLayer` đã chạy
+  vô điều kiện mỗi turn từ trước (xác nhận trong `triage_pipeline.py`, không cần sửa), red-flag luôn
+  thắng quality guard theo đúng thiết kế đã thống nhất.
+
+### HITL mở rộng — reject/ask_more cộng thêm vào Gen2 (approve/override/escalate)
+
+Đặc tả #2 gốc chỉ định nghĩa 3 hành động (approve/override/escalate — đã implement đủ trong
+`case_approval.py`). Bổ sung 2 hành động mới cho đúng luồng nurse feedback đã thống nhất:
+
+- `POST /cases/{id}/reject` — bắt buộc `reason_code` (`RejectReasonCode`:
+  `already_handled_offline` / `ai_incorrect` / `other`). Case chuyển `CaseStatus.WITHDRAWN`. Tách
+  riêng khỏi `REJECTED` (giá trị cũ, thuộc Gen1) để không lẫn ngữ nghĩa.
+- `POST /cases/{id}/ask_more` — điều dưỡng chỉ định câu hỏi trực tiếp, case chuyển
+  `CaseStatus.NEEDS_MORE_INFO`, tự động rời khỏi hàng đợi; khi bệnh nhân trả lời lượt tiếp theo,
+  `case_flow._finalize_turn` đưa case quay lại hàng đợi bình thường.
+- Cả hai đều ghi vào `approval_store.AuditLogEntry` (đã bổ sung field `reason`) — dùng cho bước
+  calibration/feedback scoring sau này: **chỉ** audit entry có `action=reject` với `reason` bắt đầu
+  bằng `ai_incorrect` mới được tính vào thống kê độ chính xác AI–điều dưỡng; `already_handled_offline`
+  và `other` không phải tín hiệu AI đúng/sai nên bị loại khỏi phép đo ngay từ nguồn.
+
+### GNN Advisory Signal — #TODO, tách riêng khỏi luồng quyết định chính
+
+`src/services/graph_triage_advisor.py` (mới) là điểm neo interface cho phần dual-embedding + GNN đã
+thảo luận (checklist graph + text summary → similarity search case tương tự). Module này:
+
+- **Chưa có logic thật** (`NotImplementedError`), **không được gọi ở bất kỳ đâu** trong
+  `TriagePipeline`/`case_flow`/`case_approval` hiện tại.
+- Được thiết kế để CHỈ trả về evidence tham khảo (case tương tự + field đóng góp), không bao giờ được
+  gán trực tiếp vào `TriageProposal.priority` — `ProtocolTriageEngine`/`RedFlagSafetyLayer` tiếp tục là
+  nguồn quyết định priority duy nhất.
+- Toàn bộ checklist việc cần làm (schema graph, dual embedding, ingest 609 dòng
+  `data/triage_*.csv` đã dedupe, explainability trước khi bật hiển thị cho nurse, calibration offline
+  loại trừ lý do reject không liên quan accuracy) nằm trong docstring của file — giao cho người phụ
+  trách phần GNN, độc lập với luồng triage chính.
