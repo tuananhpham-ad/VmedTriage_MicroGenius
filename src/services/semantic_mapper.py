@@ -67,6 +67,41 @@ class RuleBackedSemanticMapper:
         if fields.get("shortness_of_breath") and _contains_any(normalized, ("nặng", "nang", "severe")):
             fields["breathing_severity"] = "severe"
 
+        if _contains_any(normalized, ("đau bụng", "dau bung", "abdominal pain", "đau dạ dày", "dau da day")):
+            if symptom_group == "general":
+                symptom_group = "abdominal"
+            if severity is not None:
+                fields["abdominal_pain_severity"] = severity
+
+        if _contains_any(
+            normalized,
+            ("nôn ra máu", "non ra mau", "đi ngoài phân đen", "di ngoai phan den", "phân đen", "phan den"),
+        ):
+            if symptom_group == "general":
+                symptom_group = "abdominal"
+            fields["vomiting_blood"] = True
+
+        if _contains_any(normalized, ("bụng cứng", "bung cung", "gồng cứng", "gong cung", "rigid abdomen")):
+            if symptom_group == "general":
+                symptom_group = "abdominal"
+            fields["rigid_abdomen"] = True
+
+        if _contains_any(normalized, ("sốt", "sot", "fever")):
+            if symptom_group == "general":
+                symptom_group = "fever"
+            if _contains_any(normalized, ("sốt cao", "sot cao", "high fever", "39", "40")):
+                fields["fever_severity"] = "high"
+            elif _contains_any(normalized, ("sốt nhẹ", "sot nhe", "mild fever")):
+                fields["fever_severity"] = "mild"
+            elif _contains_any(normalized, ("sốt vừa", "sot vua", "moderate fever")):
+                fields["fever_severity"] = "moderate"
+
+        if _contains_any(
+            normalized,
+            ("cứng cổ", "cung co", "neck stiffness", "đau đầu dữ dội", "dau dau du doi"),
+        ):
+            fields["neck_stiffness"] = True
+
         return StructuredSymptomData(
             symptom_group=symptom_group,
             fields=fields,

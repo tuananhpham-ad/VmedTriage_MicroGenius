@@ -396,6 +396,12 @@ main {
   color: var(--accent);
 }
 
+a.text-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .text-button:hover:not(:disabled) {
   background: var(--accent-soft);
 }

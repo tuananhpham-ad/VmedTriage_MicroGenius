@@ -4,7 +4,14 @@ from sqlalchemy.orm import Session
 from src.agents.graph import agent
 from src.database import get_db_session
 from src.models.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from src.models.schemas import ChatRequest, ChatResponse, NurseReviewRequest, NurseReviewResponse, TriageCase
+from src.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    NurseReviewRequest,
+    NurseReviewResponse,
+    PipelineTraceStage,
+    TriageCase,
+)
 from src.services.auth import (
     InvalidCredentialsError,
     NurseRegistrationDeniedError,
@@ -48,6 +55,18 @@ def login(request: LoginRequest, db: Session = Depends(get_db_session)) -> Token
         expires_in=expires_in,
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_alias(request: RegisterRequest, db: Session = Depends(get_db_session)) -> UserResponse:
+    """Alias của POST /register theo đặc tả Feature #3 (POST /auth/register). Giữ /register để tương thích ngược."""
+    return register(request, db)
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+def login_alias(request: LoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Alias của POST /login theo đặc tả Feature #3 (POST /auth/login). Giữ /login để tương thích ngược."""
+    return login(request, db)
 
 
 @router.get("/me", response_model=UserResponse)

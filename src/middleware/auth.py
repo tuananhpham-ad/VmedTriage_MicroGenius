@@ -27,8 +27,15 @@ ROUTE_POLICIES = (
     RoutePolicy("GET", re.compile(r"^/api/v1/tools/?$"), NURSE),
     RoutePolicy("POST", re.compile(r"^/api/v1/tools/[^/]+/call/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/?$"), PATIENT),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/responses/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/approve/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/override/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/escalate/?$"), NURSE),
+    RoutePolicy("GET", re.compile(r"^/api/v1/queue/?$"), NURSE),
 )
 
 
