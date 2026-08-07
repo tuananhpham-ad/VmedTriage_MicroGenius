@@ -233,6 +233,81 @@ Tóm tắt tình trạng bệnh - Disease X (mock test):
 ====================================================================
 ```
 
+### Log từng bước để tra cứu
+
+Mỗi phiên tự ghi một file `logs/<session_id>.json`, ví dụ:
+
+```text
+logs/11566e1f-fb8d-440e-ad73-4bcb714778da.json
+```
+
+CLI in đường dẫn log ngay khi bắt đầu và khi kết thúc phiên.
+
+Cấu trúc file:
+
+```json
+{
+  "session_id": "...",
+  "disease_id": "disease_x",
+  "completion_threshold": 0.85,
+  "final_state": "confirmed",
+  "answers": { "name": "...", "condition": "...", "onset": "..." },
+  "events":    [ ... trace tuần tự mọi bước ... ],
+  "summaries": [ ... mọi phiên bản phiếu tóm tắt ... ]
+}
+```
+
+**`events`** — trace tuần tự, mỗi bước có `seq` + `at` (UTC):
+
+| `type` | Nội dung |
+|---|---|
+| `agent_question` | Câu hỏi system hỏi, `llm_used`, `targets` (trường đang nhắm), `source` |
+| `user_message` | Nguyên văn câu trả lời của user, `turn` |
+| `extraction` | LLM trích được gì, snapshot `answers` + `progress` sau lượt đó |
+| `correction` | Như trên, kèm `overwritten` = giá trị CŨ bị ghi đè (tra được sửa từ gì sang gì) |
+| `summary_generated` / `summary_revised` / `summary_confirmed` | Mốc sinh / sửa / chốt phiếu |
+| `summary_rejected` | User bấm "chưa đúng", kèm nội dung đính chính |
+
+**`summaries`** — lưu **tất cả** phiên bản phiếu, không chỉ bản cuối:
+
+- `generated` — bản sinh lần đầu khi đủ ngưỡng
+- `revised` — bản sau mỗi lần user đính chính
+- `confirmed` — đúng bản user đã bấm xác nhận để gửi đi
+
+Mỗi bản gồm `text` (phiếu dạng chữ), `rows` (dạng field-value) và `answers` tại thời điểm đó.
+
+Ví dụ trace thật của một phiên có đính chính tên:
+
+```text
+ 1. agent_question   Q: Chào bạn, mình cần thu thập một vài thông tin về "Disease X"...
+ 2. user_message     A: Tôi tên Trần Minh Khoa
+ 3. extraction       extracted={'name': 'Trần Minh Khoa'}
+ 4. agent_question   Q: Dạ thưa anh Khoa, anh có thể mô tả giúp em các triệu chứng...
+ 5. user_message     A: Tôi bị sốt cao 39 độ
+ 6. extraction       extracted={'condition': 'sốt cao 39 độ'}
+ 7. agent_question   Q: Dạ thưa anh Khoa, anh bắt đầu thấy sốt từ khi nào ạ?
+ 8. user_message     A: từ sáng hôm qua
+ 9. extraction       extracted={'onset': 'sáng hôm qua'}
+10. summary_generated
+11. summary_rejected correction=Tên tôi là Trần Minh Khôi chứ không phải Khoa
+12. correction       extracted={'name': 'Trần Minh Khôi'} overwritten={'name': 'Trần Minh Khoa'}
+13. summary_revised
+14. summary_confirmed
+```
+
+Đọc nhanh một log bằng PowerShell:
+
+```powershell
+Get-Content logs\<session_id>.json -Encoding utf8 | ConvertFrom-Json | Select-Object -ExpandProperty events
+```
+
+Lưu ý:
+
+- Ghi log **không bao giờ làm hỏng phiên**: mọi lỗi I/O đều được nuốt và chỉ ghi cảnh báo.
+- File được **ghi đè toàn bộ** sau mỗi sự kiện nên luôn là JSON hợp lệ, kể cả khi process bị kill.
+- ⚠️ **File log chứa nguyên văn hội thoại người bệnh (PHI).** `logs/` đã nằm trong `.gitignore`.
+  Trước khi dùng thật cần bổ sung mã hoá at-rest, phân quyền đọc và chính sách xoá theo hạn lưu trữ.
+
 ### Thêm một bệnh mới
 
 Tạo file `src/domain/_<disease_id>.json` theo đúng cấu trúc của `_disease_x.json`:
