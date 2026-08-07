@@ -9,7 +9,7 @@
       content="VMedTriage hỗ trợ thu thập triệu chứng và phân luồng ban đầu với xác nhận bắt buộc từ nhân viên y tế."
     />
     <title>VMedTriage | Hỗ trợ phân luồng y tế</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=account-registration-v2" />
   </head>
   <body>
     <a class="skip-link" href="#mainContent">Đi tới nội dung chính</a>
@@ -30,6 +30,7 @@
             <span>Đang kết nối</span>
           </div>
           <a class="text-button" id="apiDocsLink" href="/docs" target="_blank" rel="noopener">API Docs</a>
+          <button class="text-button" id="changePasswordButton" type="button" hidden>Đổi mật khẩu</button>
           <button class="text-button" id="switchRoleButton" type="button" hidden>Đăng xuất</button>
         </div>
       </header>
@@ -81,19 +82,72 @@
                 <span>Họ và tên</span>
                 <input id="authFullName" name="full_name" type="text" minlength="2" maxlength="120" autocomplete="name" />
               </label>
+              <label class="auth-field" id="usernameField" for="authUsername" hidden>
+                <span>Tên đăng nhập</span>
+                <input id="authUsername" name="username" type="text" minlength="3" maxlength="50" autocomplete="username" />
+              </label>
               <label class="auth-field" for="authEmail">
                 <span>Email</span>
                 <input id="authEmail" name="email" type="email" maxlength="320" autocomplete="email" required />
               </label>
+              <label class="auth-field" id="phoneField" for="authPhone" hidden>
+                <span>Số điện thoại</span>
+                <input id="authPhone" name="phone_number" type="tel" maxlength="32" autocomplete="tel" />
+              </label>
+              <label class="auth-field" id="birthDateField" for="authBirthDate" hidden>
+                <span>Ngày tháng năm sinh</span>
+                <input id="authBirthDate" name="date_of_birth" type="date" autocomplete="bday" />
+              </label>
+              <label class="auth-field" id="genderField" for="authGender" hidden>
+                <span>Giới tính</span>
+                <select id="authGender" name="gender">
+                  <option value="">Chọn giới tính</option>
+                  <option value="male">Nam</option>
+                  <option value="female">Nữ</option>
+                  <option value="other">Khác</option>
+                  <option value="prefer_not_to_say">Không muốn nêu</option>
+                </select>
+              </label>
+              <label class="auth-field" id="avatarField" for="authAvatar" hidden>
+                <span>Ảnh đại diện</span>
+                <input id="authAvatar" name="avatar" type="file" accept="image/png,image/jpeg,image/webp" />
+                <small>PNG, JPEG hoặc WebP; tối đa 1 MB.</small>
+              </label>
               <label class="auth-field" for="authPassword">
                 <span>Mật khẩu</span>
                 <input id="authPassword" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required />
-                <small id="passwordHelp">Tối thiểu 8 ký tự khi tạo tài khoản.</small>
+                <small id="passwordHelp">Ít nhất 8 ký tự, gồm chữ hoa, chữ thường, số và ký tự đặc biệt.</small>
+              </label>
+              <label class="auth-field" id="confirmPasswordField" for="authConfirmPassword" hidden>
+                <span>Xác nhận mật khẩu</span>
+                <input id="authConfirmPassword" name="confirm_password" type="password" minlength="8" maxlength="128" autocomplete="new-password" />
               </label>
               <label class="auth-field" id="nurseCodeField" for="nurseRegistrationCode" hidden>
                 <span>Mã đăng ký điều dưỡng</span>
                 <input id="nurseRegistrationCode" name="nurse_registration_code" type="password" maxlength="256" autocomplete="off" />
                 <small>Mã riêng do quản trị viên cung cấp.</small>
+              </label>
+              <div class="registration-extra" id="nurseDetails" hidden>
+                <label class="auth-field" for="professionalLicense">
+                  <span>Giấy phép/chứng chỉ hành nghề</span>
+                  <input id="professionalLicense" type="text" maxlength="160" />
+                </label>
+                <label class="auth-field" for="workplace">
+                  <span>Nơi công tác</span>
+                  <input id="workplace" type="text" maxlength="160" />
+                </label>
+                <label class="auth-field" for="department">
+                  <span>Khoa/phòng ban</span>
+                  <input id="department" type="text" maxlength="160" />
+                </label>
+                <label class="auth-field nurse-bio-field" for="nurseBio">
+                  <span>Tiểu sử</span>
+                  <textarea id="nurseBio" rows="3" maxlength="2000"></textarea>
+                </label>
+              </div>
+              <label class="terms-field" id="termsField" hidden>
+                <input id="termsAccepted" type="checkbox" />
+                <span>Tôi chấp nhận Điều khoản sử dụng và Chính sách quyền riêng tư.</span>
               </label>
 
               <p class="field-error auth-error" id="authError" role="alert"></p>
@@ -101,6 +155,35 @@
                 <button class="primary-button" id="authSubmitButton" type="submit">Đăng nhập</button>
                 <button class="secondary-button" id="authBackButton" type="button">Chọn vai trò khác</button>
               </div>
+              <button class="text-button auth-forgot-button" id="forgotPasswordButton" type="button">Quên mật khẩu?</button>
+            </form>
+          </section>
+
+          <section class="auth-panel" id="emailVerificationPanel" aria-labelledby="emailVerificationTitle" hidden>
+            <div class="auth-heading"><p class="context-label">Xác thực email</p><h2 id="emailVerificationTitle">Nhập mã xác thực</h2><p>Mã gồm 6 chữ số đã được gửi tới email bạn vừa đăng ký.</p></div>
+            <form class="auth-form" id="emailVerificationForm" novalidate>
+              <label class="auth-field" for="verificationCode"><span>Mã xác thực</span><input id="verificationCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required /></label>
+              <p class="field-error auth-error" id="emailVerificationError" role="alert"></p>
+              <div class="auth-actions"><button class="primary-button" type="submit">Xác thực email</button><button class="secondary-button" id="resendVerificationButton" type="button">Gửi lại mã</button></div>
+            </form>
+          </section>
+
+          <section class="auth-panel" id="forgotPasswordPanel" aria-labelledby="forgotPasswordTitle" hidden>
+            <div class="auth-heading"><p class="context-label">Khôi phục tài khoản</p><h2 id="forgotPasswordTitle">Đặt lại mật khẩu</h2><p>Nhập email để nhận liên kết đặt lại mật khẩu.</p></div>
+            <form class="auth-form" id="forgotPasswordForm" novalidate>
+              <label class="auth-field" for="forgotPasswordEmail"><span>Email</span><input id="forgotPasswordEmail" type="email" maxlength="320" autocomplete="email" required /></label>
+              <p class="field-error auth-error" id="forgotPasswordError" role="alert"></p>
+              <div class="auth-actions"><button class="primary-button" type="submit">Gửi liên kết</button><button class="secondary-button" id="forgotPasswordBackButton" type="button">Quay lại</button></div>
+            </form>
+          </section>
+
+          <section class="auth-panel" id="resetPasswordPanel" aria-labelledby="resetPasswordTitle" hidden>
+            <div class="auth-heading"><p class="context-label">Khôi phục tài khoản</p><h2 id="resetPasswordTitle">Tạo mật khẩu mới</h2><p>Dùng mật khẩu mạnh, gồm chữ hoa, chữ thường, số và ký tự đặc biệt.</p></div>
+            <form class="auth-form" id="resetPasswordForm" novalidate>
+              <label class="auth-field" for="newPassword"><span>Mật khẩu mới</span><input id="newPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required /></label>
+              <label class="auth-field" for="confirmPassword"><span>Xác nhận mật khẩu mới</span><input id="confirmPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required /></label>
+              <p class="field-error auth-error" id="resetPasswordError" role="alert"></p>
+              <div class="auth-actions"><button class="primary-button" type="submit">Lưu mật khẩu mới</button><button class="secondary-button" id="resetPasswordBackButton" type="button">Quay lại</button></div>
             </form>
           </section>
 
@@ -390,6 +473,19 @@
         </section>
       </main>
 
+      <section class="account-dialog" id="changePasswordPanel" aria-labelledby="changePasswordTitle" hidden>
+        <form class="auth-panel" id="changePasswordForm" novalidate>
+          <div class="auth-heading"><p class="context-label">Bảo mật tài khoản</p><h2 id="changePasswordTitle">Đổi mật khẩu</h2><p>Nhập mật khẩu hiện tại và mật khẩu mới mạnh.</p></div>
+          <div class="auth-form">
+            <label class="auth-field" for="currentPassword"><span>Mật khẩu hiện tại</span><input id="currentPassword" type="password" maxlength="128" autocomplete="current-password" required /></label>
+            <label class="auth-field" for="changeNewPassword"><span>Mật khẩu mới</span><input id="changeNewPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required /></label>
+            <label class="auth-field" for="changeConfirmPassword"><span>Xác nhận mật khẩu mới</span><input id="changeConfirmPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required /></label>
+            <p class="field-error auth-error" id="changePasswordError" role="alert"></p>
+            <div class="auth-actions"><button class="primary-button" type="submit">Đổi mật khẩu</button><button class="secondary-button" id="changePasswordCancelButton" type="button">Hủy</button></div>
+          </div>
+        </form>
+      </section>
+
       <footer class="app-footer">
         <span>VMedTriage là công cụ hỗ trợ, không thay thế chẩn đoán hoặc quyết định của nhân viên y tế.</span>
         <span>Không sử dụng dữ liệu thật trong bản demo.</span>
@@ -397,6 +493,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script src="/app.js" defer></script>
+    <script src="/app.js?v=account-registration-v2" defer></script>
   </body>
 </html>

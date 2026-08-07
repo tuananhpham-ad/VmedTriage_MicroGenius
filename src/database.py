@@ -52,7 +52,7 @@ def configure_database(database_url: str | None = None) -> Engine:
 
 
 def create_tables() -> None:
-    from src.models import user  # noqa: F401 - registers ORM models with Base metadata
+    from src.models import password_reset, user  # noqa: F401 - registers ORM models with Base metadata
 
     engine = _engine or configure_database()
     Base.metadata.create_all(bind=engine)

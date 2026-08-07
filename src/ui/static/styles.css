@@ -573,6 +573,58 @@ a.text-button {
   gap: 10px;
 }
 
+.registration-extra,
+.terms-field,
+.auth-forgot-button {
+  grid-column: 1 / -1;
+}
+
+.registration-extra {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.nurse-bio-field {
+  grid-column: 1 / -1;
+}
+
+.terms-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.terms-field input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.auth-forgot-button {
+  justify-self: start;
+  min-height: 36px;
+  padding-inline: 0;
+}
+
+.account-dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(11 29 27 / 0.52);
+}
+
+.account-dialog .auth-panel {
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+}
+
 .demo-notice {
   display: grid;
   max-width: 800px;
