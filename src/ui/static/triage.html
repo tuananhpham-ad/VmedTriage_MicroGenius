@@ -29,6 +29,7 @@
             <span class="status-indicator" aria-hidden="true"></span>
             <span>Đang kết nối</span>
           </div>
+          <a class="text-button" id="homeLink" href="/">← Trang chủ</a>
           <a class="text-button" id="apiDocsLink" href="/docs" target="_blank" rel="noopener">API Docs</a>
           <button class="text-button" id="changePasswordButton" type="button" hidden>Đổi mật khẩu</button>
           <button class="text-button" id="switchRoleButton" type="button" hidden>Đăng xuất</button>
@@ -87,8 +88,11 @@
                 <input id="authUsername" name="username" type="text" minlength="3" maxlength="50" autocomplete="username" />
               </label>
               <label class="auth-field" for="authEmail">
-                <span>Email</span>
-                <input id="authEmail" name="email" type="email" maxlength="320" autocomplete="email" required />
+                <span id="authEmailLabel">Email</span>
+                <!-- type="text" chứ không phải "email": lúc đăng nhập ô này nhận cả tên đăng nhập,
+                     để type="email" thì trình duyệt chặn ngay trước khi gửi. Khi đăng ký, JS đổi
+                     lại thành type="email" để vẫn validate đúng. -->
+                <input id="authEmail" name="email" type="text" maxlength="320" autocomplete="username" required />
               </label>
               <label class="auth-field" id="phoneField" for="authPhone" hidden>
                 <span>Số điện thoại</span>
@@ -151,6 +155,11 @@
               </label>
 
               <p class="field-error auth-error" id="authError" role="alert"></p>
+              <p class="demo-hint" id="demoHint">
+                Tài khoản demo: <button type="button" class="demo-fill" data-user="user0">user0 / user0</button>
+                (bệnh nhân) · <button type="button" class="demo-fill" data-user="nurse0">nurse0 / nurse0</button>
+                (điều dưỡng). Bấm để điền sẵn.
+              </p>
               <div class="auth-actions">
                 <button class="primary-button" id="authSubmitButton" type="submit">Đăng nhập</button>
                 <button class="secondary-button" id="authBackButton" type="button">Chọn vai trò khác</button>

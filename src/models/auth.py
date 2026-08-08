@@ -81,7 +81,14 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    """Đăng nhập bằng email HOẶC tên đăng nhập.
+
+    Giữ tên trường là `email` để không phá client hiện có, nhưng kiểu là `str` chứ không phải
+    `EmailStr` - nếu ép EmailStr thì gõ tên đăng nhập sẽ bị chặn ngay ở tầng validate (422) và
+    không bao giờ tới được bước tra cứu.
+    """
+
+    email: str = Field(min_length=1, max_length=320, description="Email hoặc tên đăng nhập")
     password: str = Field(min_length=1, max_length=128)
 
 

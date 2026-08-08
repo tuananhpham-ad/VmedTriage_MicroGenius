@@ -28,9 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src import paths
+
 logger = logging.getLogger("vmedtriage.session_log")
 
-LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+LOG_DIR = paths.LOGS_DIR
 
 # Ghi log KHÔNG được làm hỏng phiên hỏi-đáp: mọi lỗi I/O đều nuốt và chỉ cảnh báo.
 # Một lock đủ cho mọi phiên vì thao tác ghi rất ngắn.

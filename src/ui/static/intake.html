@@ -123,8 +123,32 @@
   #correctionBox.on { display: block; }
   .done { color: var(--accent); font-weight: 600; margin-top: 14px; }
 
+  /* --- Nút về trang chủ --- */
+  header .home {
+    text-decoration: none; color: var(--accent); font-weight: 600; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
+    background: var(--panel);
+  }
+  header .home:hover { background: var(--accent-soft); }
+
   /* --- Panel cấu hình LLM (người test dùng API key của chính họ) --- */
   #llmPanel { grid-column: 1 / -1; }
+  #llmPanel > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px;
+    font-weight: 600; font-size: 15px;
+  }
+  #llmPanel > summary::-webkit-details-marker { display: none; }
+  #llmPanel > summary::before {
+    content: "▸"; color: var(--muted); font-size: 13px; transition: transform .15s;
+  }
+  #llmPanel[open] > summary::before { content: "▾"; }
+  #llmPanel > summary > span:first-of-type { flex: 1; }
+  #llmPanel .badge-warn, #llmPanel .badge-ok {
+    font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  }
+  #llmPanel .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  #llmPanel .badge-ok { background: var(--accent-soft); color: var(--accent); }
+  #llmPanel > *:not(summary) { margin-top: 14px; }
   #llmPanel .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
   #llmPanel label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
   #llmPanel select, #llmPanel input {
@@ -146,6 +170,7 @@
 </head>
 <body>
 <header>
+  <a class="home" href="/">← Trang chủ</a>
   <h1>VMedTriage · Demo hỏi đáp thu thập triệu chứng</h1>
   <span class="tag">Feature #1 — Intake</span>
   <span class="mode" id="mode">đang kiểm tra chế độ…</span>
@@ -161,33 +186,42 @@
        Nếu tình trạng nguy hiểm, hãy gọi <b>115</b> hoặc đến ngay cơ sở y tế gần nhất, không chờ hệ thống phản hồi.</p>
   </div>
 
-  <section class="panel" id="llmPanel">
-    <h2>Cấu hình LLM — dùng API key của bạn</h2>
-    <div class="row">
+  <details class="panel" id="llmPanel">
+    <summary>
+      <span>Cấu hình LLM — dùng API key của bạn</span>
+      <span id="llmBadge" class="badge-warn">chưa cấu hình</span>
+    </summary>
+    <!-- autocomplete="off" + name lạ: nếu không, Chrome coi đây là form đăng nhập và tự điền
+         email vào ô Model, mật khẩu vào ô API key. -->
+    <form class="row" autocomplete="off" onsubmit="return false">
       <label for="llmProvider">Nhà cung cấp
-        <select id="llmProvider"></select>
+        <select id="llmProvider" name="vmed-llm-provider"></select>
       </label>
       <label for="llmModel">Model
-        <input id="llmModel" list="llmModelList" type="text" placeholder="chọn hoặc gõ tên model" />
+        <input id="llmModel" name="vmed-llm-model" list="llmModelList" type="text"
+               placeholder="chọn hoặc gõ tên model" autocomplete="off"
+               autocorrect="off" autocapitalize="off" spellcheck="false" />
         <datalist id="llmModelList"></datalist>
       </label>
       <label for="llmKey">API key
         <span class="keywrap">
-          <input id="llmKey" type="password" class="key" placeholder="dán API key của bạn" autocomplete="off" />
+          <input id="llmKey" name="vmed-llm-secret" type="password" class="key"
+                 placeholder="dán API key của bạn" autocomplete="new-password"
+                 autocorrect="off" autocapitalize="off" spellcheck="false" />
           <button type="button" class="link" id="toggleKey">hiện</button>
         </span>
       </label>
       <button type="button" class="secondary" id="testLlm">Kiểm tra kết nối</button>
       <button type="button" id="applyLlm">Áp dụng &amp; bắt đầu phiên mới</button>
       <button type="button" class="secondary" id="clearLlm">Xoá key</button>
-    </div>
+    </form>
     <p class="hint">
       Key chỉ được giữ trong bộ nhớ của phiên trên server để gọi LLM — không ghi ra đĩa, không lưu vào
       log, không trả lại trong API. Trên trình duyệt, key lưu ở <code>sessionStorage</code> nên mất khi
       bạn đóng tab. Bỏ trống ô key thì demo dùng key mà server đã cấu hình sẵn (nếu có).
     </p>
     <div id="llmStatus" class="warn">Đang tải danh sách nhà cung cấp…</div>
-  </section>
+  </details>
 
   <section class="panel">
     <h2>Hội thoại</h2>

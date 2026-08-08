@@ -12,7 +12,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-DOMAIN_DIR = Path(__file__).resolve().parent.parent / "domain"
+from src import paths
+
+DOMAIN_DIR = paths.DOMAIN_DIR
 
 
 @dataclass(frozen=True, slots=True)

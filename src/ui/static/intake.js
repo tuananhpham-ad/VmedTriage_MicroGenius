@@ -34,6 +34,8 @@ const el = {
   applyLlm: document.getElementById("applyLlm"),
   clearLlm: document.getElementById("clearLlm"),
   llmStatus: document.getElementById("llmStatus"),
+  llmPanel: document.getElementById("llmPanel"),
+  llmBadge: document.getElementById("llmBadge"),
 };
 
 let sessionId = null;
@@ -57,9 +59,13 @@ function saveCredential(credential) {
   else sessionStorage.removeItem(KEY_STORE);
 }
 
-function setLlmStatus(text, kind) {
+function setLlmStatus(text, kind, badge) {
   el.llmStatus.textContent = text;
   el.llmStatus.className = kind;
+  if (badge) {
+    el.llmBadge.textContent = badge;
+    el.llmBadge.className = kind === "ok" ? "badge-ok" : "badge-warn";
+  }
 }
 
 async function api(path, options) {
@@ -170,11 +176,18 @@ function applyState(state) {
     setLlmStatus(
       `Đang dùng key của bạn · ${state.llm_provider} · ${state.llm_model || "model mặc định"} · ${state.llm_key_masked}`,
       "ok",
+      `key của bạn · ${state.llm_provider}`,
     );
   } else if (state.llm_used) {
-    setLlmStatus(`Đang dùng key của server · ${state.llm_provider || "?"}`, "warn");
+    setLlmStatus(`Đang dùng key của server · ${state.llm_provider || "?"}`, "ok", "key server");
   } else {
-    setLlmStatus("Chưa có LLM — đang chạy fallback mẫu cố định. Nhập API key để bật hỏi-đáp tự nhiên.", "warn");
+    setLlmStatus(
+      "Chưa có LLM — đang chạy fallback mẫu cố định. Nhập API key để bật hỏi-đáp tự nhiên.",
+      "warn",
+      "fallback mẫu cố định",
+    );
+    // Chưa chạy được LLM thì mở sẵn panel ra, người dùng không phải đi tìm chỗ nhập key.
+    el.llmPanel.open = true;
   }
 }
 

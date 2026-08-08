@@ -9,7 +9,7 @@ from src.models.schemas import (
     NurseReviewResponse,
     TriageCase,
 )
-from src.services.case_store import case_store
+from src.services.stores.case_store import case_store
 
 
 class HumanReviewService:

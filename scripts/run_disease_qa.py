@@ -16,9 +16,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.services import console_log, disease_session, provider_router, session_log
-from src.services.disease_checklist import ChecklistNotFoundError
-from src.services.disease_session import SessionState
+from src.services.checklists.disease_checklist import ChecklistNotFoundError
+from src.services.infra import console_log, provider_router, session_log
+from src.services.sessions import disease_session
+from src.services.sessions.disease_session import SessionState
 
 # Windows console mặc định cp1252, không in được tiếng Việt có dấu -> ép UTF-8 để script chạy được
 # ngay trên PowerShell mà người dùng không phải tự set PYTHONIOENCODING.

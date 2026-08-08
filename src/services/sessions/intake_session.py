@@ -24,8 +24,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services.intake_agent import IntakeAgent, RedFlagHit, intake_agent, scan_red_flags
-from src.services.intake_checklist import (
+from src.services.agents.intake_agent import IntakeAgent, RedFlagHit, intake_agent, scan_red_flags
+from src.services.checklists.intake_checklist import (
+    COMPLETION_THRESHOLD,
     FIELDS_BY_KEY,
     INTAKE_CHECKLIST,
     REQUIRED_KEYS,
@@ -33,7 +34,8 @@ from src.services.intake_checklist import (
     is_complete_enough,
     missing_required_keys,
 )
-from src.services.provider_router import LLMCredential
+from src.services.infra import console_log, session_log
+from src.services.infra.provider_router import LLMCredential
 
 # Chặn hỏi vô hạn khi người bệnh liên tục không cung cấp được trường còn thiếu: sau ngưỡng này,
 # phiên chuyển sang xác nhận với các trường đã có và đánh dấu phần còn thiếu là "Chưa cung cấp".
@@ -115,6 +117,25 @@ def start_session(credential: LLMCredential | None = None) -> IntakeSession:
     session = session_store.create(credential)
     session.last_question = OPENING_QUESTION
     session.conversation.append({"role": "assistant", "content": OPENING_QUESTION})
+
+    session_log.start(
+        session.session_id,
+        disease_id="intake",
+        disease_label="Intake chung (demo web)",
+        threshold=COMPLETION_THRESHOLD,
+        fields=[
+            {"key": item.key, "label": item.label, "required": item.required} for item in INTAKE_CHECKLIST
+        ],
+    )
+    session_log.event(session.session_id, "agent_question", question=OPENING_QUESTION, llm_used=False, source="opening")
+
+    provider = session.agent().active_provider or "fallback deterministic"
+    console_log.session_start(
+        session.session_id,
+        label="Intake (demo web)",
+        llm=f"{provider} ({'key của bạn' if credential else 'key server'})",  # KHÔNG in api_key
+    )
+    console_log.agent_question(session.session_id, OPENING_QUESTION, llm_used=False)
     return session
 
 
@@ -127,6 +148,8 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
 
     session.conversation.append({"role": "user", "content": cleaned})
     session.turn_count += 1
+    session_log.event(session.session_id, "user_message", message=cleaned, turn=session.turn_count)
+    console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
 
     # 1. Red-flag TRƯỚC trên text thô: rule thuần, chạy mọi lượt, không phụ thuộc LLM
     #    và không đợi checklist đủ. Chạy trước để nếu LLM lỗi thì red-flag vẫn được ghi nhận.
@@ -141,11 +164,13 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
     #    (vd "li bi" -> "li bì", "met lam" -> "lơ mơ") khiến bản quét text thô ở bước 1 bỏ sót.
     if extracted:
         session.red_flags.extend(scan_red_flags(*extracted.values()))
+    _trace_turn(session, extracted, llm_used)
 
     # 4. Đủ ngưỡng (hoặc đã hỏi quá nhiều lượt) -> chuyển sang xin xác nhận.
     if is_complete_enough(session.answers) or session.turn_count >= MAX_TURNS_BEFORE_FORCE_SUMMARY:
         session.state = SessionState.AWAITING_CONFIRMATION
         session.last_question = ""
+        _trace_summary(session, "generated")
         return session
 
     # 5. Chưa đủ -> sinh câu hỏi tiếp theo tự nhiên.
@@ -154,7 +179,55 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
     session.last_question = question
     if question:
         session.conversation.append({"role": "assistant", "content": question})
+        session_log.event(
+            session.session_id, "agent_question", question=question, llm_used=question_llm_used, source="follow_up"
+        )
+        console_log.agent_question(session.session_id, question, llm_used=question_llm_used)
     return session
+
+
+def _trace_turn(session: IntakeSession, extracted: dict[str, str], llm_used: bool, kind: str = "extraction") -> None:
+    progress = progress_of(session)
+    session_log.event(
+        session.session_id,
+        kind,
+        extracted=extracted,
+        llm_used=llm_used,
+        answers=dict(session.answers),
+        progress=progress,
+        red_flags=session.red_flag_codes(),
+    )
+    session_log.update_state(session.session_id, session.state.value, session.answers)
+    console_log.extraction(
+        session.session_id,
+        extracted,
+        percent=progress["percent"],
+        filled=progress["filled_required"],
+        total=progress["total_required"],
+    )
+    console_log.red_flag(session.session_id, session.red_flag_labels())
+
+
+def _trace_summary(session: IntakeSession, kind: str) -> None:
+    progress = progress_of(session)
+    session_log.summary(
+        session.session_id,
+        kind,
+        text="\n".join(
+            f"- {row['label']}: {row['value'] or '(chưa cung cấp)'}" for row in build_summary_rows(session)
+        ),
+        rows=build_summary_rows(session),
+        answers=session.answers,
+    )
+    session_log.update_state(session.session_id, session.state.value, session.answers)
+    console_log.summary(session.session_id, kind, percent=progress["percent"])
+    if kind == "confirmed":
+        console_log.session_end(
+            session.session_id,
+            state=session.state.value,
+            turns=session.turn_count,
+            percent=progress["percent"],
+        )
 
 
 def confirm_summary(session_id: str, is_correct: bool, correction: str | None = None) -> IntakeSession:
@@ -172,6 +245,7 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
         session.state = SessionState.CONFIRMED
         session.last_question = ""
         session.conversation.append({"role": "user", "content": "[Người bệnh xác nhận phiếu tóm tắt là ĐÚNG]"})
+        _trace_summary(session, "confirmed")
         return session
 
     session.state = SessionState.COLLECTING
@@ -188,15 +262,18 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
 
     # Ở bước sửa, người bệnh ĐANG chủ động đính chính -> dùng prompt riêng cho phép ghi đè,
     # nhưng chỉ với đúng những trường họ nhắc tới (xem IntakeAgent.extract_correction).
+    session_log.event(session.session_id, "summary_rejected", correction=cleaned)
     extracted, llm_used = session.agent().extract_correction(cleaned, session.answers)
     session.answers.update(extracted)
     session.llm_used_last_turn = llm_used
     if extracted:
         session.red_flags.extend(scan_red_flags(*extracted.values()))
 
+    _trace_turn(session, extracted, llm_used, kind="correction")
     if is_complete_enough(session.answers):
         session.state = SessionState.AWAITING_CONFIRMATION
         session.last_question = ""
+        _trace_summary(session, "revised")
         return session
 
     question, _targets, question_llm_used = session.agent().next_question(session.conversation, session.answers)

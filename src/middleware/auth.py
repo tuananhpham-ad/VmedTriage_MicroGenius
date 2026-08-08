@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from src.models.user import UserRole
-from src.services.auth import InvalidAccessTokenError, auth_service
+from src.services.infra.auth import InvalidAccessTokenError, auth_service
 
 
 @dataclass(frozen=True)

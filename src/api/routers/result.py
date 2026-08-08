@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from src.models.case_api import CaseResultResponse, DisclaimerResponse
-from src.services.approval_store import approval_store
-from src.services.case_store import case_store
-from src.services.priority_labels import priority_label_vi
+from src.services.engines.priority_labels import priority_label_vi
+from src.services.stores.approval_store import approval_store
+from src.services.stores.case_store import case_store
 
 router = APIRouter(tags=["Feature 4 - Disclaimer & Kết quả cho bệnh nhân"])
 

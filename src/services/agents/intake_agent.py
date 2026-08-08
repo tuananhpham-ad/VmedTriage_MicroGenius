@@ -20,14 +20,14 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from src.services import provider_router
-from src.services.intake_checklist import (
+from src.services.checklists.intake_checklist import (
     FIELDS_BY_KEY,
     INTAKE_CHECKLIST,
     ChecklistField,
     missing_optional_keys,
     missing_required_keys,
 )
+from src.services.infra import provider_router
 
 logger = logging.getLogger("vmedtriage.intake")
 

@@ -19,8 +19,8 @@ import json
 import logging
 import re
 
-from src.services import provider_router
-from src.services.disease_checklist import ChecklistField, DiseaseChecklist, missing_required_keys
+from src.services.checklists.disease_checklist import ChecklistField, DiseaseChecklist, missing_required_keys
+from src.services.infra import provider_router
 
 logger = logging.getLogger("vmedtriage.disease_agent")
 

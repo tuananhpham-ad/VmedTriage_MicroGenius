@@ -18,8 +18,9 @@ from src.models.intake_api import (
     IntakeSessionResponse,
     SummaryRow,
 )
-from src.services import intake_session, provider_router
-from src.services.intake_session import IntakeSession, SessionState
+from src.services.infra import provider_router
+from src.services.sessions import intake_session
+from src.services.sessions.intake_session import IntakeSession, SessionState
 
 router = APIRouter(prefix="/intake", tags=["Demo - Hỏi đáp thu thập triệu chứng"])
 

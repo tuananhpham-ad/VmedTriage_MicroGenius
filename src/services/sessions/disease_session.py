@@ -22,16 +22,16 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services import console_log, session_log
-from src.services.disease_agent import DiseaseQAAgent
-from src.services.disease_checklist import (
+from src.services.agents.disease_agent import DiseaseQAAgent
+from src.services.checklists.disease_checklist import (
     DiseaseChecklist,
     completion_ratio,
     is_complete_enough,
     load_checklist,
     missing_required_keys,
 )
-from src.services.provider_router import LLMCredential
+from src.services.infra import console_log, session_log
+from src.services.infra.provider_router import LLMCredential
 
 # Chặn hỏi vô hạn khi người dùng liên tục không cung cấp được trường còn thiếu: sau ngưỡng này,
 # phiên chuyển sang xác nhận với các trường đã có, phần còn thiếu hiển thị "(chưa cung cấp)".

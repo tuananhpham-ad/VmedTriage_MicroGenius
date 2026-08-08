@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from src.services import disease_session
-from src.services.disease_checklist import (
+from src.services.checklists.disease_checklist import (
     ChecklistNotFoundError,
     completion_ratio,
     is_complete_enough,
     load_checklist,
     missing_required_keys,
 )
-from src.services.disease_session import SessionState
+from src.services.sessions import disease_session
+from src.services.sessions.disease_session import SessionState
 
 DISEASE_ID = "disease_x"
 
@@ -25,7 +25,7 @@ DISEASE_ID = "disease_x"
 @pytest.fixture(autouse=True)
 def isolated_log_dir(tmp_path, monkeypatch):
     """Không cho test ghi vào `logs/` thật - mỗi test một thư mục tạm riêng."""
-    from src.services import session_log
+    from src.services.infra import session_log
 
     monkeypatch.setattr(session_log, "LOG_DIR", tmp_path / "logs")
 
@@ -33,7 +33,7 @@ def isolated_log_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def no_llm(monkeypatch):
     """Ép agent chạy nhánh fallback deterministic: giả lập không provider nào có API key."""
-    from src.services import provider_router
+    from src.services.infra import provider_router
 
     def _no_provider(*args, **kwargs):
         raise provider_router.NoProviderConfiguredError("test: không có provider")
@@ -169,7 +169,7 @@ class TestSessionFlow:
 
 class TestSessionLog:
     def test_log_file_written_with_questions_and_answers(self, no_llm):
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
@@ -183,7 +183,7 @@ class TestSessionLog:
 
     def test_all_summary_versions_are_kept(self, no_llm, monkeypatch):
         """generated / revised / confirmed đều phải được lưu, không chỉ bản cuối."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
@@ -207,7 +207,7 @@ class TestSessionLog:
 
     def test_correction_records_overwritten_value(self, no_llm, monkeypatch):
         """Phải tra được người dùng sửa TỪ GÌ sang gì."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
@@ -225,7 +225,7 @@ class TestSessionLog:
 
     def test_logging_failure_does_not_break_session(self, no_llm, monkeypatch):
         """Lỗi ghi log không được làm hỏng phiên hỏi-đáp."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         monkeypatch.setattr(session_log, "LOG_DIR", Path("/dev/null/khong-ghi-duoc"))
@@ -242,7 +242,7 @@ class TestAccumulateField:
     """
 
     def _agent(self):
-        from src.services.disease_agent import DiseaseQAAgent
+        from src.services.agents.disease_agent import DiseaseQAAgent
 
         return DiseaseQAAgent(load_checklist(DISEASE_ID))
 
@@ -280,7 +280,7 @@ class TestCredentialIsolation:
     """API key người dùng đưa không được rò ra file log."""
 
     def test_credential_never_written_to_log(self, no_llm, monkeypatch):
-        from src.services import provider_router, session_log
+        from src.services.infra import provider_router, session_log
 
         secret = "sk-super-secret-key-0123456789"
         credential = provider_router.LLMCredential(provider="deepseek", api_key=secret, model="deepseek-chat")
@@ -292,7 +292,7 @@ class TestCredentialIsolation:
         assert secret not in raw, "API key bị ghi vào file log!"
 
     def test_repr_masks_api_key(self):
-        from src.services import provider_router
+        from src.services.infra import provider_router
 
         credential = provider_router.LLMCredential(provider="deepseek", api_key="sk-abcdefgh1234wxyz")
         assert "sk-abcdefgh1234wxyz" not in repr(credential)
@@ -305,7 +305,7 @@ class TestCredentialIsolation:
 
     def test_session_with_credential_gets_isolated_agent(self):
         """Có credential -> KHÔNG cache, tránh phiên này dùng nhầm key của phiên khác."""
-        from src.services import provider_router
+        from src.services.infra import provider_router
 
         checklist = load_checklist(DISEASE_ID)
         cred_a = provider_router.LLMCredential(provider="deepseek", api_key="key-a-1234567890")

@@ -145,6 +145,25 @@ Lưu ý phạm vi demo:
 - Red-flag được quét bằng rule thuần **mỗi lượt**, không đợi checklist đủ, và không phụ thuộc LLM.
 - Session lưu in-memory, mất khi restart process.
 
+## 3b-bis. Tài khoản demo (khỏi đăng ký + xác thực email)
+
+```powershell
+python -m scripts.seed_demo_users
+```
+
+| Vai trò | Tài khoản | Mật khẩu |
+|---|---|---|
+| Bệnh nhân | `user0` | `user0` |
+| Điều dưỡng | `nurse0` | `nurse0` |
+
+Đăng nhập bằng **tên đăng nhập hoặc email** (`user0@example.com` / `nurse0@example.com`). Trên form
+đăng nhập có sẵn chip bấm-để-điền.
+
+Chạy lại script bất cứ lúc nào để đặt lại mật khẩu và mở khoá 2 tài khoản này.
+
+⚠️ Mật khẩu cố tình yếu, ghi thẳng hash vào DB nên **bỏ qua** `validate_strong_password`, và
+`email_verified=True` để không phải nhập mã. Script tự từ chối chạy khi `APP_ENV=production`.
+
 ## 3c. Chạy Agent hỏi-đáp theo checklist TỪNG BỆNH (CLI, dùng LLM thật)
 
 Đây là phần mới theo mục 10 của `_guidance/vmedtriage_solution_design_review.md`: agent hỏi-đáp dẫn
