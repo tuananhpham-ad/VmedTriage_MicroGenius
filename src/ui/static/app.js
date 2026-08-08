@@ -1225,16 +1225,19 @@ async function fetchJson(url, options = {}) {
 
   if (!response.ok) {
     let message = `Yêu cầu thất bại (${response.status}).`;
+    // Body của Response chỉ đọc được MỘT lần. Đọc ra text trước rồi mới thử parse JSON -
+    // nếu gọi response.json() rồi fallback sang response.text() thì lần đọc thứ hai ném
+    // "body stream already read", và lỗi giả đó che mất lỗi thật của server.
+    const raw = await response.text().catch(() => "");
     try {
-      const payload = await response.json();
+      const payload = JSON.parse(raw);
       if (Array.isArray(payload.detail)) {
         message = payload.detail.map((item) => item.msg).join("; ") || message;
-      } else {
-        message = payload.detail || message;
+      } else if (payload.detail) {
+        message = payload.detail;
       }
     } catch {
-      const text = await response.text();
-      if (text) message = text;
+      if (raw) message = raw.slice(0, 500);
     }
     throw new Error(message);
   }

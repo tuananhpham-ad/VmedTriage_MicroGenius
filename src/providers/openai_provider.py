@@ -15,10 +15,15 @@ class OpenAIProvider:
         self,
         *,
         api_key_env: str = "OPENAI_API_KEY",
+        api_key: str | None = None,
         base_url: str | None = None,
         default_model: str | None = None,
     ) -> None:
         self.api_key_env = api_key_env
+        # Key truyền tường minh (vd key riêng của người đang test). None -> đọc env như trước.
+        # Bắt buộc phải có đường truyền tường minh: os.environ là biến TOÀN PROCESS, nếu mỗi
+        # request ghi key của mình vào đó thì hai người test song song sẽ đè key lên nhau.
+        self.api_key = api_key
         self.base_url = base_url
         self.default_model = default_model or get_settings().openai_model_name
 
@@ -36,7 +41,7 @@ class OpenAIProvider:
         except ImportError as exc:
             raise RuntimeError("Install live provider dependency first: pip install openai") from exc
 
-        api_key = os.getenv(self.api_key_env)
+        api_key = self.api_key or os.getenv(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"Missing API key env var: {self.api_key_env}")
 

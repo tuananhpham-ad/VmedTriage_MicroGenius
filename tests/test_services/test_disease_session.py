@@ -234,6 +234,90 @@ class TestSessionLog:
         assert session.answers.get("name") == "Nguyễn Văn A"
 
 
+class TestAccumulateField:
+    """Trường mô tả (accumulate) phải CỘNG DỒN, không bị bỏ qua khi đã có giá trị.
+
+    Bug thật đã gặp: người bệnh nói sơ sài trước ("thấy trong người không ổn") rồi mới kể chi tiết
+    ("sốt 39 độ, đau họng"), phần chi tiết bị vứt mất khỏi phiếu tóm tắt.
+    """
+
+    def _agent(self):
+        from src.services.disease_agent import DiseaseQAAgent
+
+        return DiseaseQAAgent(load_checklist(DISEASE_ID))
+
+    def test_disease_x_marks_condition_as_accumulate(self):
+        checklist = load_checklist(DISEASE_ID)
+        assert checklist.fields_by_key["condition"].accumulate is True
+        assert checklist.fields_by_key["name"].accumulate is False
+
+    def test_accumulate_field_merges_new_detail(self):
+        merged = self._agent()._collect(
+            {"condition": "sốt cao 39 độ, đau họng"},
+            skip_existing={"condition": "thấy trong người không ổn"},
+        )
+        assert merged["condition"] == "thấy trong người không ổn; sốt cao 39 độ, đau họng"
+
+    def test_non_accumulate_field_is_not_overwritten(self):
+        """Tên/tuổi đã xác nhận thì giữ nguyên, không cộng dồn cũng không ghi đè."""
+        result = self._agent()._collect({"name": "Tên Khác"}, skip_existing={"name": "Trần Minh Khoa"})
+        assert "name" not in result
+
+    def test_duplicate_detail_is_not_appended_twice(self):
+        result = self._agent()._collect(
+            {"condition": "sốt cao"},
+            skip_existing={"condition": "sốt cao 39 độ"},
+        )
+        assert "condition" not in result, "mô tả đã bao hàm rồi thì không nối thêm"
+
+    def test_correction_replaces_instead_of_accumulating(self):
+        """Luồng đính chính (skip_existing=None) phải GHI ĐÈ, kể cả trường accumulate."""
+        result = self._agent()._collect({"condition": "chỉ bị đau đầu nhẹ"}, skip_existing=None)
+        assert result["condition"] == "chỉ bị đau đầu nhẹ"
+
+
+class TestCredentialIsolation:
+    """API key người dùng đưa không được rò ra file log."""
+
+    def test_credential_never_written_to_log(self, no_llm, monkeypatch):
+        from src.services import provider_router, session_log
+
+        secret = "sk-super-secret-key-0123456789"
+        credential = provider_router.LLMCredential(provider="deepseek", api_key=secret, model="deepseek-chat")
+
+        session = disease_session.start_session(DISEASE_ID, credential)
+        session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
+
+        raw = session_log.log_path(session.session_id).read_text(encoding="utf-8")
+        assert secret not in raw, "API key bị ghi vào file log!"
+
+    def test_repr_masks_api_key(self):
+        from src.services import provider_router
+
+        credential = provider_router.LLMCredential(provider="deepseek", api_key="sk-abcdefgh1234wxyz")
+        assert "sk-abcdefgh1234wxyz" not in repr(credential)
+        assert credential.masked() == "sk-••••wxyz"
+
+    def test_session_without_credential_uses_shared_agent(self):
+        """Không có credential -> dùng agent cache dùng chung (giữ hành vi cũ)."""
+        checklist = load_checklist(DISEASE_ID)
+        assert disease_session._agent_for(checklist) is disease_session._agent_for(checklist)
+
+    def test_session_with_credential_gets_isolated_agent(self):
+        """Có credential -> KHÔNG cache, tránh phiên này dùng nhầm key của phiên khác."""
+        from src.services import provider_router
+
+        checklist = load_checklist(DISEASE_ID)
+        cred_a = provider_router.LLMCredential(provider="deepseek", api_key="key-a-1234567890")
+        cred_b = provider_router.LLMCredential(provider="deepseek", api_key="key-b-1234567890")
+
+        agent_a = disease_session._agent_for(checklist, cred_a)
+        agent_b = disease_session._agent_for(checklist, cred_b)
+        assert agent_a is not agent_b
+        assert agent_a.credential.api_key != agent_b.credential.api_key
+        assert disease_session._agent_for(checklist).credential is None
+
+
 class TestProgressReporting:
     def test_progress_reports_missing_labels(self, no_llm):
         session = disease_session.start_session(DISEASE_ID)

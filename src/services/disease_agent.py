@@ -27,6 +27,20 @@ logger = logging.getLogger("vmedtriage.disease_agent")
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
+def _merge_description(current: str, addition: str) -> str:
+    """Cộng dồn mô tả mới vào mô tả đã có, bỏ qua phần trùng lặp.
+
+    Không dùng LLM để gộp: gộp bằng LLM có thể diễn giải lại và làm sai lệch lời người bệnh.
+    """
+    current_flat = current.strip()
+    addition_flat = addition.strip()
+    if not addition_flat or addition_flat.casefold() in current_flat.casefold():
+        return current_flat
+    if current_flat.casefold() in addition_flat.casefold():
+        return addition_flat  # mô tả mới đã bao hàm mô tả cũ -> thay thế
+    return f"{current_flat}; {addition_flat}"
+
+
 def _parse_json_object(raw: str) -> dict:
     """Bóc JSON object khỏi output LLM (chịu được ```json fence và chữ thừa xung quanh)."""
     cleaned = raw.strip()
@@ -87,12 +101,24 @@ class DiseaseQAAgent:
     (gemini/deepseek/openai/anthropic/openrouter), tự fallback nếu provider đầu lỗi.
     """
 
-    def __init__(self, checklist: DiseaseChecklist) -> None:
+    def __init__(self, checklist: DiseaseChecklist, credential: provider_router.LLMCredential | None = None) -> None:
         self.checklist = checklist
+        # Key riêng của người test (nếu có). Chỉ in-memory, không ghi log/không trả về API.
+        self.credential = credential
 
     @property
     def llm_available(self) -> bool:
-        return bool(provider_router.available_providers())
+        return bool(self.credential) or bool(provider_router.available_providers())
+
+    @property
+    def active_provider(self) -> str | None:
+        if self.credential:
+            return self.credential.provider
+        providers = provider_router.available_providers()
+        return providers[0] if providers else None
+
+    def _complete(self, messages: list[dict[str, str]]):
+        return provider_router.complete(messages, credential=self.credential)
 
     def extract(self, message: str, current_answers: dict[str, str | None]) -> tuple[dict[str, str], bool]:
         """Trích xuất field từ tin nhắn. Trả (field mới trích được, có dùng LLM hay không).
@@ -170,7 +196,7 @@ QUY TẮC BẮT BUỘC:
 - Chỉ trả về đúng câu hỏi, không thêm lời dẫn hay giải thích."""
 
         try:
-            question = provider_router.complete([{"role": "user", "content": prompt}]).text.strip().strip('"')
+            question = self._complete([{"role": "user", "content": prompt}]).text.strip().strip('"')
         except Exception as exc:
             logger.warning("disease_agent.question_failed reason=%s detail=%s", type(exc).__name__, exc)
             return self._question_fallback(focus_fields), focus_keys, False
@@ -195,7 +221,7 @@ QUY TẮC BẮT BUỘC:
 
     def _invoke_json(self, system_prompt: str, user_message: str) -> dict | None:
         try:
-            result = provider_router.complete(
+            result = self._complete(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
@@ -207,17 +233,33 @@ QUY TẮC BẮT BUỘC:
             return None
 
     def _collect(self, parsed: dict, skip_existing: dict[str, str | None] | None) -> dict[str, str]:
-        """Lọc output LLM về đúng các key hợp lệ, bỏ null/rỗng, phẳng hoá list."""
+        """Lọc output LLM về đúng các key hợp lệ, bỏ null/rỗng, phẳng hoá list.
+
+        `skip_existing` != None (luồng thu thập): trường đã có giá trị thì bỏ qua, TRỪ trường
+        `accumulate` - loại đó cộng dồn thêm mô tả mới.
+        `skip_existing` is None (luồng đính chính): mọi trường đều được phép ghi đè, kể cả
+        `accumulate` - người dùng đang chủ động sửa thì phải thay thế, không cộng dồn.
+        """
         extracted: dict[str, str] = {}
         fields_by_key = self.checklist.fields_by_key
         for key, value in parsed.items():
-            if key not in fields_by_key or value in (None, "", "null"):
+            field_spec = fields_by_key.get(key)
+            if field_spec is None or value in (None, "", "null"):
                 continue
-            if skip_existing is not None and skip_existing.get(key):
-                continue  # đã có -> không ghi đè
+
             text = ", ".join(str(item) for item in value) if isinstance(value, list) else str(value)
-            if text.strip():
-                extracted[key] = text.strip()
+            text = text.strip()
+            if not text:
+                continue
+
+            current = (skip_existing or {}).get(key) if skip_existing is not None else None
+            if current:
+                if not field_spec.accumulate:
+                    continue  # trường hành chính (tên, tuổi...) -> giữ giá trị đã xác nhận
+                text = _merge_description(current, text)
+                if text == current:
+                    continue  # không có thông tin mới -> đừng báo là vừa trích được
+            extracted[key] = text
         return extracted
 
     def _extract_fallback(self, message: str, current_answers: dict[str, str | None]) -> dict[str, str]:

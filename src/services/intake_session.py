@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services.intake_agent import RedFlagHit, intake_agent, scan_red_flags
+from src.services.intake_agent import IntakeAgent, RedFlagHit, intake_agent, scan_red_flags
 from src.services.intake_checklist import (
     FIELDS_BY_KEY,
     INTAKE_CHECKLIST,
@@ -33,6 +33,7 @@ from src.services.intake_checklist import (
     is_complete_enough,
     missing_required_keys,
 )
+from src.services.provider_router import LLMCredential
 
 # Chặn hỏi vô hạn khi người bệnh liên tục không cung cấp được trường còn thiếu: sau ngưỡng này,
 # phiên chuyển sang xác nhận với các trường đã có và đánh dấu phần còn thiếu là "Chưa cung cấp".
@@ -56,6 +57,12 @@ class IntakeSession:
     last_question: str = ""
     llm_used_last_turn: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # API key riêng của người test. CHỈ in-memory: không ghi ra logs/, không trả về trong response.
+    credential: LLMCredential | None = None
+
+    def agent(self) -> IntakeAgent:
+        """Agent gắn với credential của phiên (không có thì rơi về key trong .env của server)."""
+        return IntakeAgent(self.credential) if self.credential else intake_agent
 
     def red_flag_codes(self) -> list[str]:
         return sorted({hit.code for hit in self.red_flags})
@@ -73,8 +80,8 @@ class InMemoryIntakeSessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, IntakeSession] = {}
 
-    def create(self) -> IntakeSession:
-        session = IntakeSession()
+    def create(self, credential: LLMCredential | None = None) -> IntakeSession:
+        session = IntakeSession(credential=credential)
         self._sessions[session.session_id] = session
         return session
 
@@ -104,8 +111,8 @@ def get_session(session_id: str) -> IntakeSession:
     return _require_session(session_id)
 
 
-def start_session() -> IntakeSession:
-    session = session_store.create()
+def start_session(credential: LLMCredential | None = None) -> IntakeSession:
+    session = session_store.create(credential)
     session.last_question = OPENING_QUESTION
     session.conversation.append({"role": "assistant", "content": OPENING_QUESTION})
     return session
@@ -126,7 +133,7 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
     session.red_flags.extend(scan_red_flags(cleaned))
 
     # 2. Trích xuất checklist bằng LLM (không ghi đè trường đã có).
-    extracted, llm_used = intake_agent.extract(cleaned, session.answers)
+    extracted, llm_used = session.agent().extract(cleaned, session.answers)
     session.answers.update(extracted)
     session.llm_used_last_turn = llm_used
 
@@ -142,7 +149,7 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
         return session
 
     # 5. Chưa đủ -> sinh câu hỏi tiếp theo tự nhiên.
-    question, _targets, question_llm_used = intake_agent.next_question(session.conversation, session.answers)
+    question, _targets, question_llm_used = session.agent().next_question(session.conversation, session.answers)
     session.llm_used_last_turn = llm_used or question_llm_used
     session.last_question = question
     if question:
@@ -181,7 +188,7 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
 
     # Ở bước sửa, người bệnh ĐANG chủ động đính chính -> dùng prompt riêng cho phép ghi đè,
     # nhưng chỉ với đúng những trường họ nhắc tới (xem IntakeAgent.extract_correction).
-    extracted, llm_used = intake_agent.extract_correction(cleaned, session.answers)
+    extracted, llm_used = session.agent().extract_correction(cleaned, session.answers)
     session.answers.update(extracted)
     session.llm_used_last_turn = llm_used
     if extracted:
@@ -192,7 +199,7 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
         session.last_question = ""
         return session
 
-    question, _targets, question_llm_used = intake_agent.next_question(session.conversation, session.answers)
+    question, _targets, question_llm_used = session.agent().next_question(session.conversation, session.answers)
     session.llm_used_last_turn = llm_used or question_llm_used
     session.last_question = question
     if question:

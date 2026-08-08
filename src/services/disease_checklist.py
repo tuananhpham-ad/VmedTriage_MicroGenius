@@ -22,6 +22,14 @@ class ChecklistField:
     required: bool
     hint: str
     """Gợi ý ngữ nghĩa cho LLM biết trường này cần trích xuất cái gì (đưa vào prompt extraction)."""
+    accumulate: bool = False
+    """True -> giá trị mới được CỘNG DỒN vào giá trị cũ thay vì bị bỏ qua.
+
+    Cần cho các trường mô tả (triệu chứng, tình trạng bệnh): người bệnh hay nói sơ sài trước
+    ("thấy trong người không ổn") rồi mới kể chi tiết ("sốt 39 độ, đau họng, ho khan"). Nếu áp policy
+    "trường đã có thì không ghi đè" như với tên/tuổi thì phần chi tiết - vốn là thông tin lâm sàng
+    quan trọng nhất - sẽ bị vứt đi.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +69,7 @@ def _parse(path: Path) -> DiseaseChecklist:
             label=item["label"],
             required=bool(item.get("required", True)),
             hint=item.get("hint", ""),
+            accumulate=bool(item.get("accumulate", False)),
         )
         for item in raw["fields"]
     )

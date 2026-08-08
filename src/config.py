@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     weaviate_knowledge_collection: str = "TriageKnowledge"
     weaviate_query_limit: int = Field(default=5, ge=1, le=50)
 
+    # Console trace: in từng bước hỏi-đáp ra terminal để quan sát khi dev.
+    # "auto" = bật khi app_env != production. CẢNH BÁO: trace in nguyên văn hội thoại (PHI),
+    # không bật ở môi trường có dữ liệu thật.
+    console_trace: Literal["auto", "on", "off"] = "auto"
+
     # VMedTriage workflow
     semantic_mapping_confidence_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
     manual_review_confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)

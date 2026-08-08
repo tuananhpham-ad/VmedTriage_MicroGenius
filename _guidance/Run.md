@@ -336,16 +336,121 @@ Test chỉ kiểm tra phần deterministic (nạp checklist, tính %, state mach
 pytest tests/test_services/test_disease_session.py -v
 ```
 
+### Cộng dồn mô tả: cờ `accumulate`
+
+Trường có `"accumulate": true` sẽ **cộng dồn** giá trị mới thay vì bỏ qua khi đã có giá trị:
+
+```text
+[BẠN] Tôi thấy trong người không ổn      → condition = "trong người không ổn"
+[BẠN] sốt cao 39 độ, đau họng            → condition = "trong người không ổn; sốt cao 39 độ, đau họng"
+```
+
+Cần thiết vì người bệnh hay mô tả sơ sài trước rồi mới kể chi tiết — nếu áp policy "trường đã có thì
+không ghi đè" như với tên/tuổi thì phần chi tiết (thông tin lâm sàng quan trọng nhất) sẽ bị vứt đi.
+
+Quy tắc:
+
+- Trường **không** `accumulate` (tên, tuổi, thời gian): giữ nguyên giá trị đã có, không ghi đè.
+- Trường `accumulate` (mô tả triệu chứng): nối thêm bằng `; `, bỏ qua nếu nội dung mới đã nằm trong
+  mô tả cũ; nếu mô tả mới bao hàm mô tả cũ thì thay thế.
+- Riêng luồng **đính chính** (người dùng bấm "chưa đúng"): mọi trường đều **ghi đè**, kể cả
+  `accumulate` — vì lúc đó người dùng đang chủ động sửa, không phải bổ sung.
+
 ### Giới hạn đã biết
 
-- **Trường đã có giá trị sẽ KHÔNG bị ghi đè ở các lượt sau.** Nếu người dùng mô tả sơ sài trước
-  ("thấy trong người không ổn") rồi mới nói chi tiết ("sốt 39 độ, đau họng, ho khan"), phần chi tiết
-  **bị bỏ qua** và không vào phiếu tóm tắt. Policy này hợp lý với trường hành chính (tên, tuổi) nhưng
-  sai với trường mô tả triệu chứng — cần bổ sung cơ chế cộng dồn cho các trường loại này.
 - Chỉ có CLI, **chưa có REST endpoint** và chưa nối vào `TriagePipeline`/nurse queue.
 - **Chưa có red-flag scan** trong luồng này (khác luồng intake ở mục 3b đã có). Không dùng để đánh
   giá mức độ khẩn cấp.
 - Session lưu in-memory, mất khi kết thúc process.
+
+## 3d. Trang hub, BYO API key và console trace
+
+### Trang hub tại `/`
+
+`http://localhost:8000/` giờ là **trang chọn demo**, không vào thẳng một demo như trước:
+
+| Demo | Link | Loại |
+|---|---|---|
+| Triage pipeline | `/triage.html` | rule-based, có đăng nhập |
+| Hỏi-đáp thu thập triệu chứng | `/intake.html` | dùng LLM, nhập API key riêng |
+| Checklist theo bệnh (Disease X) | *(CLI)* | `python -m scripts.run_disease_qa --demo` |
+
+Mỗi card có badge ghi rõ **dùng LLM** hay **rule-based**, tránh nhầm demo nào đang gọi model.
+
+### Người test dùng API key của chính họ
+
+Trang `/intake.html` có panel **Cấu hình LLM** ở đầu:
+
+1. Chọn **Nhà cung cấp** → ô **Model** gợi ý sẵn các model của provider đó (vẫn gõ tay tên khác được).
+2. Dán **API key** (ô dạng password, có nút hiện/ẩn).
+3. Bấm **Kiểm tra kết nối** để gọi thử một request rất ngắn — báo OK hoặc lỗi cụ thể.
+4. Bấm **Áp dụng & bắt đầu phiên mới** để chạy demo bằng key đó.
+
+Badge trạng thái cho biết đang chạy bằng *key của bạn*, *key của server*, hay *fallback deterministic*.
+Bỏ trống ô key thì dùng key server đã cấu hình trong `.env`.
+
+**Cách key được bảo vệ:**
+
+- Chỉ giữ **in-memory theo phiên** trên server — không ghi ra `logs/`, không in ra console.
+- API response chỉ trả bản đã che (`sk-••••1f13`), không bao giờ trả key nguyên văn.
+- `LLMCredential.__repr__` tự che key, chặn lọt ra khi log/debug vô ý.
+- Lỗi từ SDK không đưa nguyên văn ra ngoài (thông báo lỗi có thể chứa lại key).
+- Trình duyệt lưu ở `sessionStorage` (mất khi đóng tab), **không** `localStorage`.
+- Mỗi phiên có credential dùng agent riêng, **không cache dùng chung** — nếu cache theo bệnh thì
+  phiên của người này sẽ dùng nhầm key của người khác.
+
+Endpoint liên quan:
+
+```text
+GET  /api/v1/intake/providers        # danh sách provider + model gợi ý + server có key hay không
+POST /api/v1/intake/providers/test   # gọi thử 1 request ngắn với key của bạn
+POST /api/v1/intake/sessions         # body tuỳ chọn: {"provider","api_key","model"}
+```
+
+### Console trace — xem từng bước ngay trên terminal
+
+Khi chạy server, mỗi lượt hỏi-đáp được in gọn ra cửa sổ uvicorn:
+
+```text
+┌─ phiên b319847b · Disease X (mock test) · deepseek/deepseek-chat (key của bạn)
+│ AGENT(mẫu)  Chào bạn, mình cần thu thập một vài thông tin về "Disease X (mock test)"…
+│ USER #1     Tôi thấy trong người không ổn
+│    ↳ condition='trong người không ổn'  [33% · 1/3]
+│ AGENT       Dạ, tôi hiểu. Để tiện theo dõi, bạn cho tôi xin họ và tên được không ạ?
+│ USER #2     Tôi tên Trần Minh Khoa
+│    ↳ name='Trần Minh Khoa'  [67% · 2/3]
+│ USER #3     sốt cao 39 độ, đau họng
+│    ↳ condition='trong người không ổn; sốt cao 3…'  [67% · 2/3]
+│ USER #4     từ sáng hôm qua
+│    ↳ onset='sáng hôm qua'  [100% · 3/3]
+│    phiếu tóm tắt [generated] · 100%
+│    phiếu tóm tắt [confirmed] · 100%
+└─ ✓ confirmed · 100% · 4 lượt
+```
+
+Bật/tắt bằng `CONSOLE_TRACE` trong `.env`:
+
+```text
+CONSOLE_TRACE=auto   # mặc định — bật khi APP_ENV khác production
+CONSOLE_TRACE=on     # ép bật
+CONSOLE_TRACE=off    # ép tắt
+```
+
+Với CLI (`scripts/run_disease_qa.py`) trace **mặc định tắt** vì CLI đã có giao diện riêng, bật cả hai
+sẽ in trùng nội dung. Thêm `--trace` nếu vẫn muốn xem:
+
+```powershell
+python -m scripts.run_disease_qa --demo --trace
+```
+
+Chi tiết triển khai:
+
+- Tự chuyển sang bộ ký tự ASCII khi console không hiển thị được Unicode (Windows cp1252) — không để
+  `UnicodeEncodeError` làm chết request giữa chừng.
+- Tự bỏ màu khi output bị pipe/redirect, hoặc khi đặt `NO_COLOR`.
+- Mọi lỗi ghi trace đều bị nuốt: trace hỏng **không** làm hỏng phiên hỏi-đáp.
+- ⚠️ Trace in **nguyên văn hội thoại người bệnh (PHI)**. Không bật ở môi trường có dữ liệu thật.
+  API key thì không bao giờ được in — chỉ tên provider/model.
 
 ## 4. Chạy API bằng curl hoặc PowerShell
 

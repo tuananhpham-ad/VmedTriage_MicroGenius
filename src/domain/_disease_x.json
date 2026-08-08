@@ -15,6 +15,7 @@
       "label": "Tình trạng bệnh",
       "required": true,
       "hint": "Mô tả triệu chứng / tình trạng hiện tại của người bệnh.",
+      "accumulate": true,
       "value": null
     },
     {
