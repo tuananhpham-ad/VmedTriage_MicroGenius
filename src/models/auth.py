@@ -137,6 +137,18 @@ class ChangePasswordRequest(BaseModel):
         return self
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=120)
+    phone_number: str = Field(min_length=9, max_length=32)
+    date_of_birth: date
+    gender: Gender
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, value: str) -> str:
+        return RegisterRequest.validate_phone_number(value)
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -144,6 +156,9 @@ class UserResponse(BaseModel):
     username: str
     email: EmailStr
     full_name: str
+    phone_number: str
+    date_of_birth: date
+    gender: Gender
     role: UserRole
     email_verified: bool
     is_active: bool

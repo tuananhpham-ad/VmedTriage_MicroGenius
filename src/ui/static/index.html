@@ -9,7 +9,7 @@
       content="VMedTriage hỗ trợ thu thập triệu chứng và phân luồng ban đầu với xác nhận bắt buộc từ nhân viên y tế."
     />
     <title>VMedTriage | Hỗ trợ phân luồng y tế</title>
-    <link rel="stylesheet" href="/styles.css?v=account-registration-v2" />
+    <link rel="stylesheet" href="/styles.css?v=history-sync-v8" />
   </head>
   <body>
     <a class="skip-link" href="#mainContent">Đi tới nội dung chính</a>
@@ -235,7 +235,39 @@
             <button class="emergency-button" id="acknowledgeEmergencyButton" type="button">Tôi đã đọc</button>
           </div>
 
-          <div class="patient-layout">
+          <div class="patient-workspace">
+            <aside class="chat-history-sidebar" aria-label="Lịch sử bệnh nhân">
+              <div class="history-sidebar-heading">
+                <div>
+                  <p class="panel-overline">Không gian của bạn</p>
+                  <h2 id="historySidebarTitle">Khai báo triệu chứng</h2>
+                </div>
+              </div>
+
+              <button class="secondary-button history-new-chat-button" id="historyNewChatButton" type="button">Đoạn chat mới</button>
+
+              <div class="history-tabs" role="tablist" aria-label="Loại lịch sử">
+                <button class="history-tab is-active" type="button" role="tab" aria-selected="true" data-history-tab="chats">Chat</button>
+                <button class="history-tab" type="button" role="tab" aria-selected="false" data-history-tab="triage">Triage</button>
+              </div>
+
+              <div class="history-list" id="chatHistoryList" aria-live="polite"></div>
+
+              <div class="history-sidebar-footer">
+                <button class="account-menu-button" id="patientSettingsButton" type="button">
+                  <span class="account-initial" id="patientAccountInitial">B</span>
+                  <span><strong id="patientAccountName">Tài khoản</strong><small>Cài đặt và hỗ trợ</small></span>
+                </button>
+              </div>
+            </aside>
+
+            <div class="patient-main" id="patientChatWorkspace">
+          <section class="patient-triage-workspace" id="triageHistoryWorkspace" aria-labelledby="triageHistoryTitle" hidden>
+            <header class="triage-history-heading"><div><p class="panel-overline">Lịch sử lâm sàng</p><h2 id="triageHistoryTitle">Các lần triage</h2><p>Mỗi ca hiển thị thời gian, trạng thái, người duyệt và phiếu tóm tắt triệu chứng.</p></div></header>
+            <div class="triage-history-list" id="triageHistoryList" aria-live="polite"></div>
+          </section>
+          <div id="patientConversationArea">
+          <div class="patient-layout patient-layout-single">
             <aside class="patient-sidebar" aria-labelledby="patientTitle">
               <p class="context-label">Khu vực bệnh nhân</p>
               <h1 id="patientTitle">Khai báo triệu chứng</h1>
@@ -256,12 +288,13 @@
             <section class="conversation-panel" aria-labelledby="conversationTitle">
               <header class="panel-heading">
                 <div>
-                  <p class="panel-overline">Phiên tư vấn</p>
-                  <h2 id="conversationTitle">Trao đổi với trợ lý y tế</h2>
+                  <h1 id="conversationTitle">Khai báo triệu chứng</h1>
+                  <p class="conversation-intro">Mô tả ngắn gọn, chính xác nhất các triệu chứng bạn đang gặp.</p>
                 </div>
                 <div class="case-reference">
-                  <span>Mã ca</span>
-                  <strong id="patientCaseId">Chưa có</strong>
+                  <span id="patientHeaderState">Chưa bắt đầu</span>
+                  <small>Mã tham chiếu</small>
+                  <strong id="patientCaseId" hidden>Chưa có</strong>
                 </div>
               </header>
 
@@ -311,6 +344,9 @@
               <button class="text-button" id="newCaseButton" type="button">Bắt đầu ca mới</button>
             </div>
           </section>
+          </div>
+            </div>
+          </div>
         </section>
 
         <section class="view nurse-view" id="nurseView" aria-labelledby="nurseTitle" hidden>
@@ -330,21 +366,43 @@
             <aside class="queue-panel" aria-labelledby="queueTitle">
               <header class="queue-header">
                 <div>
-                  <h2 id="queueTitle">Danh sách ca</h2>
+                  <p class="queue-kicker">Danh sách công việc</p>
+                  <h2 id="queueTitle">Ca cần xử lý</h2>
                   <p id="queueUpdatedAt">Chưa tải dữ liệu</p>
                 </div>
                 <button class="secondary-button compact-button" id="refreshQueueButton" type="button">Làm mới</button>
               </header>
 
-              <label class="filter-field" for="queueFilter">
-                <span>Lọc theo trạng thái</span>
-                <select id="queueFilter">
-                  <option value="pending">Đang chờ duyệt</option>
-                  <option value="all">Tất cả ca</option>
-                  <option value="emergency">Chỉ ca cấp cứu</option>
-                  <option value="completed">Đã xử lý</option>
-                </select>
-              </label>
+              <div class="queue-priority-filters" role="group" aria-label="Lọc nhanh theo mức độ ưu tiên">
+                <button class="queue-priority-filter is-active" type="button" data-queue-priority="all" aria-pressed="true">
+                  <span>Tất cả</span><strong id="queueCountAll">0</strong>
+                </button>
+                <button class="queue-priority-filter is-emergency" type="button" data-queue-priority="Emergency" aria-pressed="false">
+                  <span>Cấp cứu</span><strong id="queueCountEmergency">0</strong>
+                </button>
+                <button class="queue-priority-filter is-urgent" type="button" data-queue-priority="Urgent" aria-pressed="false">
+                  <span>Khám sớm</span><strong id="queueCountUrgent">0</strong>
+                </button>
+                <button class="queue-priority-filter is-routine" type="button" data-queue-priority="Routine" aria-pressed="false">
+                  <span>Theo dõi</span><strong id="queueCountRoutine">0</strong>
+                </button>
+              </div>
+
+              <div class="queue-tools">
+                <label class="queue-search-field" for="queueSearch">
+                  <span>Tìm ca</span>
+                  <input id="queueSearch" type="search" placeholder="Mã ca hoặc triệu chứng" autocomplete="off" />
+                </label>
+                <label class="filter-field" for="queueFilter">
+                  <span>Trạng thái</span>
+                  <select id="queueFilter">
+                    <option value="pending">Đang chờ duyệt</option>
+                    <option value="all">Tất cả ca</option>
+                    <option value="emergency">Chỉ ca cấp cứu</option>
+                    <option value="completed">Đã xử lý</option>
+                  </select>
+                </label>
+              </div>
 
               <div class="queue-message" id="queueMessage" role="status" aria-live="polite">
                 <strong>Đang tải hàng đợi</strong>
@@ -486,6 +544,34 @@
         </form>
       </section>
 
+      <section class="account-dialog" id="profilePanel" aria-labelledby="profileTitle" hidden>
+        <form class="auth-panel" id="profileForm" novalidate>
+          <div class="auth-heading"><p class="context-label">Hồ sơ tài khoản</p><h2 id="profileTitle">Chỉnh sửa hồ sơ</h2><p>Thông tin này giúp nhân viên y tế nhận diện đúng tài khoản, không thay thế hồ sơ bệnh án.</p></div>
+          <div class="auth-form">
+            <label class="auth-field" for="profileFullName"><span>Họ và tên</span><input id="profileFullName" type="text" minlength="2" maxlength="120" autocomplete="name" required /></label>
+            <label class="auth-field" for="profilePhone"><span>Số điện thoại</span><input id="profilePhone" type="tel" maxlength="32" autocomplete="tel" required /></label>
+            <label class="auth-field" for="profileBirthDate"><span>Ngày tháng năm sinh</span><input id="profileBirthDate" type="date" autocomplete="bday" required /></label>
+            <label class="auth-field" for="profileGender"><span>Giới tính</span><select id="profileGender" required><option value="male">Nam</option><option value="female">Nữ</option><option value="other">Khác</option><option value="prefer_not_to_say">Không muốn nêu</option></select></label>
+            <p class="field-error auth-error" id="profileError" role="alert"></p>
+            <div class="auth-actions"><button class="primary-button" type="submit">Lưu thay đổi</button><button class="secondary-button" id="profileCancelButton" type="button">Hủy</button></div>
+          </div>
+        </form>
+      </section>
+
+      <section class="account-dialog" id="patientSettingsPanel" aria-labelledby="patientSettingsTitle" hidden>
+        <div class="auth-panel settings-panel">
+          <div class="auth-heading"><p class="context-label">Tài khoản</p><h2 id="patientSettingsTitle">Cài đặt</h2><p>Quản lý tài khoản, dữ liệu hiển thị trên thiết bị này và nhận trợ giúp.</p></div>
+          <div class="settings-actions">
+            <button class="settings-action" id="editProfileButton" type="button"><strong>Chỉnh sửa hồ sơ</strong><span>Cập nhật thông tin tài khoản</span></button>
+            <button class="settings-action" id="settingsChangePasswordButton" type="button"><strong>Đổi mật khẩu</strong><span>Tạo mật khẩu mới và đăng nhập lại</span></button>
+            <button class="settings-action is-destructive" id="clearChatHistoryButton" type="button"><strong>Xóa danh sách chat trên thiết bị</strong><span>Không xóa hồ sơ triage đã lưu để bảo đảm an toàn</span></button>
+            <button class="settings-action" id="helpButton" type="button"><strong>Trợ giúp</strong><span>Hướng dẫn sử dụng và thông tin khẩn cấp</span></button>
+            <button class="settings-action is-danger" id="settingsLogoutButton" type="button"><strong>Đăng xuất</strong><span>Kết thúc phiên trên trình duyệt này</span></button>
+          </div>
+          <button class="secondary-button" id="settingsCloseButton" type="button">Đóng</button>
+        </div>
+      </section>
+
       <footer class="app-footer">
         <span>VMedTriage là công cụ hỗ trợ, không thay thế chẩn đoán hoặc quyết định của nhân viên y tế.</span>
         <span>Không sử dụng dữ liệu thật trong bản demo.</span>
@@ -493,6 +579,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script src="/app.js?v=account-registration-v2" defer></script>
+    <script src="/app.js?v=history-sync-v10" defer></script>
   </body>
 </html>

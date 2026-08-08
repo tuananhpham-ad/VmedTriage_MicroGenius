@@ -171,8 +171,13 @@ class TriageCase(BaseModel):
     queue_item: NurseQueueItem | None = None
     status: CaseStatus = CaseStatus.COLLECTING_INFORMATION
     patient_visible_response: str | None = None
+    nurse_feedback: str | None = None
+    reviewed_by_id: int | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
     patient_id: int | None = Field(default=None, description="Chủ sở hữu case (id bệnh nhân đã đăng nhập)")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     field_ask_counts: dict[str, int] = Field(default_factory=dict)
     next_message: str | None = Field(
         default=None, description="Câu hỏi/phản hồi tiếp theo của agent, null nếu đã đủ thông tin"

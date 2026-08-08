@@ -13,7 +13,14 @@ from src.services.case_store import case_store
 
 
 class HumanReviewService:
-    def review(self, case_id: str, request: NurseReviewRequest) -> NurseReviewResponse:
+    def review(
+        self,
+        case_id: str,
+        request: NurseReviewRequest,
+        *,
+        nurse_id: int | None = None,
+        nurse_name: str | None = None,
+    ) -> NurseReviewResponse:
         triage_case = case_store.get(case_id)
         if not triage_case:
             raise ValueError("Case not found.")
@@ -28,6 +35,16 @@ class HumanReviewService:
                 triage_case.patient_visible_response = None
             case HITLAction.ASK_MORE:
                 self._ask_more(triage_case, request)
+
+        if nurse_id is not None:
+            from datetime import datetime, timezone
+
+            triage_case.reviewed_by_id = nurse_id
+            triage_case.reviewed_by_name = nurse_name
+            triage_case.reviewed_at = datetime.now(timezone.utc)
+            # Ghi chú nội bộ không được lộ sang lịch sử bệnh nhân. Chỉ phản hồi
+            # đã được gửi cho bệnh nhân mới được dùng như feedback hiển thị.
+            triage_case.nurse_feedback = triage_case.patient_visible_response
 
         case_store.save(triage_case)
         return NurseReviewResponse(

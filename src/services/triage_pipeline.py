@@ -218,14 +218,20 @@ class TriagePipeline:
             return CaseStatus.COLLECTING_INFORMATION
         return CaseStatus.AWAITING_APPROVAL
 
-    def _build_patient_safe_response(self, validation, red_flags) -> str:
-        if red_flags:
-            return "Thông tin của bạn đã được chuyển vào hàng đợi ưu tiên để nhân viên y tế xem xét."
+    def _build_patient_safe_response(self, validation, red_flags) -> str | None:
+        """Only return intake questions before a clinician has reviewed the case.
+
+        The rule engine may collect information, but its priority and red-flag
+        assessment are internal proposals. They are never a patient-facing
+        result until a nurse records an approval.
+        """
+        if red_flags or validation.is_valid:
+            return None
 
         if validation.follow_up_questions:
             return "\n".join(validation.follow_up_questions)
 
-        return "Thông tin của bạn đã được ghi nhận và đang chờ điều dưỡng/bác sĩ duyệt phản hồi."
+        return None
 
     async def _persist_to_weaviate(self, triage_case: TriageCase) -> None:
         stage_started = perf_counter()

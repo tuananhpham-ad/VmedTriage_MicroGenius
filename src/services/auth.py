@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
-from src.models.auth import LoginRequest, RegisterRequest, TokenClaims
+from src.models.auth import LoginRequest, RegisterRequest, TokenClaims, UpdateProfileRequest
 from src.models.password_reset import EmailVerificationCodeRecord, PasswordResetTokenRecord
 from src.models.user import UserRecord, UserRole
 
@@ -197,6 +197,20 @@ class AuthService:
         user.password_hash = self.password_hash.hash(new_password)
         db.commit()
         return True
+
+    def update_profile(self, db: Session, *, user: UserRecord, payload: UpdateProfileRequest) -> UserRecord:
+        other_user = db.scalar(
+            select(UserRecord).where(UserRecord.phone_number == payload.phone_number, UserRecord.id != user.id)
+        )
+        if other_user is not None:
+            raise UserAlreadyExistsError("Số điện thoại đã được sử dụng")
+        user.full_name = payload.full_name.strip()
+        user.phone_number = payload.phone_number
+        user.date_of_birth = payload.date_of_birth
+        user.gender = payload.gender
+        db.commit()
+        db.refresh(user)
+        return user
 
     def create_access_token(self, user: UserRecord) -> tuple[str, int]:
         settings = get_settings()
