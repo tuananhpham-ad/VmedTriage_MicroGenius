@@ -10,6 +10,18 @@ class IntakeMessageRequest(BaseModel):
     message: str = Field(default="", max_length=5000)
 
 
+class IntakeCredentialRequest(BaseModel):
+    """API key + model do người test tự cung cấp cho phiên này.
+
+    Bỏ trống -> dùng key server đã cấu hình trong `.env` (hoặc fallback deterministic nếu không có).
+    Key CHỈ được giữ in-memory theo phiên, không ghi ra đĩa và không trả lại trong response.
+    """
+
+    provider: str | None = Field(default=None, max_length=32)
+    api_key: str | None = Field(default=None, max_length=512)
+    model: str | None = Field(default=None, max_length=128)
+
+
 class IntakeConfirmRequest(BaseModel):
     is_correct: bool
     correction: str | None = Field(default=None, max_length=2000)
@@ -44,5 +56,15 @@ class IntakeSessionResponse(BaseModel):
     llm_used: bool = Field(
         default=False,
         description="False nghĩa là lượt vừa rồi chạy bằng fallback deterministic (LLM chưa cấu hình hoặc lỗi).",
+    )
+    llm_source: str = Field(
+        default="server",
+        description="'user' = đang dùng API key người test nhập; 'server' = key trong .env của server.",
+    )
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_key_masked: str | None = Field(
+        default=None,
+        description="Key đã che (vd sk-••••1f13). Không bao giờ trả về key nguyên văn.",
     )
     disclaimer: str

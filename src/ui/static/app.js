@@ -112,6 +112,8 @@ const elements = {
   nurseCodeField: document.querySelector("#nurseCodeField"),
   nurseRegistrationCode: document.querySelector("#nurseRegistrationCode"),
   authError: document.querySelector("#authError"),
+  authEmailLabel: document.querySelector("#authEmailLabel"),
+  demoHint: document.querySelector("#demoHint"),
   authSubmitButton: document.querySelector("#authSubmitButton"),
   authBackButton: document.querySelector("#authBackButton"),
   nurseDetails: document.querySelector("#nurseDetails"),
@@ -211,6 +213,16 @@ elements.switchRoleButton.addEventListener("click", logout);
 elements.changePasswordButton.addEventListener("click", openChangePasswordForm);
 elements.authBackButton.addEventListener("click", returnToRoleSelection);
 elements.authForm.addEventListener("submit", submitAuthForm);
+
+// Bấm chip tài khoản demo -> điền sẵn để khỏi phải gõ.
+elements.demoHint?.querySelectorAll(".demo-fill").forEach((button) => {
+  button.addEventListener("click", () => {
+    const account = button.dataset.user;
+    elements.authEmail.value = account;
+    elements.authPassword.value = account;
+    elements.authPassword.focus();
+  });
+});
 elements.forgotPasswordButton.addEventListener("click", openForgotPasswordForm);
 elements.emailVerificationForm.addEventListener("submit", submitEmailVerification);
 elements.resendVerificationButton.addEventListener("click", resendVerificationCode);
@@ -341,6 +353,12 @@ function setAuthMode(mode) {
   elements.forgotPasswordButton.hidden = isRegister;
   elements.authSubmitButton.textContent = isRegister ? "Tạo tài khoản và tiếp tục" : "Đăng nhập";
   elements.authError.textContent = "";
+
+  // Đăng nhập nhận cả tên đăng nhập nên phải là type="text"; đăng ký thì bắt buộc email hợp lệ.
+  elements.authEmail.type = isRegister ? "email" : "text";
+  elements.authEmail.autocomplete = isRegister ? "email" : "username";
+  elements.authEmailLabel.textContent = isRegister ? "Email" : "Email hoặc tên đăng nhập";
+  elements.demoHint.hidden = isRegister;
 }
 
 async function submitAuthForm(event) {
@@ -1225,16 +1243,19 @@ async function fetchJson(url, options = {}) {
 
   if (!response.ok) {
     let message = `Yêu cầu thất bại (${response.status}).`;
+    // Body của Response chỉ đọc được MỘT lần. Đọc ra text trước rồi mới thử parse JSON -
+    // nếu gọi response.json() rồi fallback sang response.text() thì lần đọc thứ hai ném
+    // "body stream already read", và lỗi giả đó che mất lỗi thật của server.
+    const raw = await response.text().catch(() => "");
     try {
-      const payload = await response.json();
+      const payload = JSON.parse(raw);
       if (Array.isArray(payload.detail)) {
         message = payload.detail.map((item) => item.msg).join("; ") || message;
-      } else {
-        message = payload.detail || message;
+      } else if (payload.detail) {
+        message = payload.detail;
       }
     } catch {
-      const text = await response.text();
-      if (text) message = text;
+      if (raw) message = raw.slice(0, 500);
     }
     throw new Error(message);
   }

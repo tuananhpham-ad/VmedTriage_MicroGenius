@@ -11,9 +11,9 @@ from src.models.schemas import (
     TriageCase,
     TriagePriority,
 )
-from src.services.approval_store import ApprovalStatusRecord, AuditLogEntry, approval_store
-from src.services.case_store import case_store
-from src.services.priority_labels import PRIORITY_RANK, normalize_priority_value, priority_label_vi
+from src.services.engines.priority_labels import PRIORITY_RANK, normalize_priority_value, priority_label_vi
+from src.services.stores.approval_store import ApprovalStatusRecord, AuditLogEntry, approval_store
+from src.services.stores.case_store import case_store
 
 
 class CaseNotFoundError(ValueError):

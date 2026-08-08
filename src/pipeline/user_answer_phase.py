@@ -10,7 +10,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.pipeline.weaviate_cloud import WeaviateCloudRepository, WeaviateSearchHit
-from src.services.llm import get_llm_selection
+from src.services.infra.llm import get_llm_selection
 
 SearchMode = Literal["bm25", "semantic", "hybrid"]
 QueryScope = Literal["cases", "knowledge"]

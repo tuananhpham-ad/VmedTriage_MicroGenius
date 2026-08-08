@@ -23,16 +23,16 @@ from src.models.schemas import (
     PipelineTraceStage,
     TriageCase,
 )
-from src.services.account_mailer import account_mailer
-from src.services.auth import (
+from src.services.infra.account_mailer import account_mailer
+from src.services.infra.auth import (
     EmailNotVerifiedError,
     InvalidCredentialsError,
     NurseRegistrationDeniedError,
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.case_store import case_store
-from src.services.hitl_review import human_review_service
+from src.services.sessions.hitl_review import human_review_service
+from src.services.stores.case_store import case_store
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
 

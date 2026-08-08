@@ -16,9 +16,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.services import disease_session, provider_router, session_log
-from src.services.disease_checklist import ChecklistNotFoundError
-from src.services.disease_session import SessionState
+from src.services.checklists.disease_checklist import ChecklistNotFoundError
+from src.services.infra import console_log, provider_router, session_log
+from src.services.sessions import disease_session
+from src.services.sessions.disease_session import SessionState
 
 # Windows console mặc định cp1252, không in được tiếng Việt có dấu -> ép UTF-8 để script chạy được
 # ngay trên PowerShell mà người dùng không phải tự set PYTHONIOENCODING.
@@ -124,7 +125,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="CLI hỏi-đáp theo checklist từng bệnh.")
     parser.add_argument("disease_id", nargs="?", default="disease_x", help="mặc định: disease_x")
     parser.add_argument("--demo", action="store_true", help="chạy kịch bản mẫu, không cần gõ tay")
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="in thêm console trace (mặc định tắt vì CLI đã có giao diện riêng, bật lên sẽ in trùng)",
+    )
     args = parser.parse_args()
+    console_log.set_enabled(args.trace)
     return run(args.disease_id, args.demo)
 
 

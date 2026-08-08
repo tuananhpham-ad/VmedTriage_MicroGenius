@@ -6,7 +6,7 @@ from threading import RLock
 
 import pytest
 
-from src.services.case_store import InMemoryCaseStore
+from src.services.stores.case_store import InMemoryCaseStore
 from src.services.triage_pipeline import TriagePipeline
 from src.tool.catalog.framework import ToolExecutionContext
 from src.tool.catalog.orchestrator import tool_orchestrator

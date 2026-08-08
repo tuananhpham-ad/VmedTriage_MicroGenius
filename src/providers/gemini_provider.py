@@ -74,9 +74,11 @@ class GeminiProvider:
         self,
         *,
         api_key_env: str = "GEMINI_API_KEY",
+        api_key: str | None = None,
         default_model: str | None = None,
     ) -> None:
         self.api_key_env = api_key_env
+        self.api_key = api_key  # xem ghi chú ở OpenAIProvider về việc không dùng os.environ
         self.default_model = default_model or get_settings().gemini_model_name
 
     def complete(
@@ -94,7 +96,7 @@ class GeminiProvider:
         except ImportError as exc:
             raise RuntimeError("Install live provider dependency first: pip install google-genai") from exc
 
-        api_key = os.getenv(self.api_key_env)
+        api_key = self.api_key or os.getenv(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"Missing API key env var: {self.api_key_env}")
 

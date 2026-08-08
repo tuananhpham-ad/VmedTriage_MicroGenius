@@ -20,14 +20,14 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from src.services import provider_router
-from src.services.intake_checklist import (
+from src.services.checklists.intake_checklist import (
     FIELDS_BY_KEY,
     INTAKE_CHECKLIST,
     ChecklistField,
     missing_optional_keys,
     missing_required_keys,
 )
+from src.services.infra import provider_router
 
 logger = logging.getLogger("vmedtriage.intake")
 
@@ -174,15 +174,24 @@ class IntakeAgent:
     `llm_used` để tầng trên biết và hiển thị cho người dùng, không im lặng.
     """
 
+    def __init__(self, credential: provider_router.LLMCredential | None = None) -> None:
+        # Key riêng của người đang test (nếu có). Chỉ giữ in-memory, không ghi log/không trả về API.
+        self.credential = credential
+
     @property
     def llm_available(self) -> bool:
-        return bool(provider_router.available_providers())
+        return bool(self.credential) or bool(provider_router.available_providers())
 
     @property
     def active_provider(self) -> str | None:
         """Provider sẽ được thử đầu tiên - dùng để hiển thị chế độ đang chạy trên UI."""
+        if self.credential:
+            return self.credential.provider
         providers = provider_router.available_providers()
         return providers[0] if providers else None
+
+    def _complete(self, messages: list[dict[str, str]]):
+        return provider_router.complete(messages, credential=self.credential)
 
     def extract(self, message: str, current_answers: dict[str, str | None]) -> tuple[dict[str, str], bool]:
         """Trích xuất field từ tin nhắn. Trả (field mới trích được, có dùng LLM hay không).
@@ -223,7 +232,7 @@ class IntakeAgent:
 
     def _invoke_json(self, system_prompt: str, user_message: str) -> dict | None:
         try:
-            result = provider_router.complete(
+            result = self._complete(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
@@ -290,7 +299,7 @@ QUY TẮC BẮT BUỘC:
 - Chỉ trả về đúng câu hỏi, không thêm lời dẫn hay giải thích."""
 
         try:
-            question = provider_router.complete([{"role": "user", "content": prompt}]).text.strip().strip('"')
+            question = self._complete([{"role": "user", "content": prompt}]).text.strip().strip('"')
         except Exception as exc:
             logger.warning("intake.question_failed reason=%s detail=%s", type(exc).__name__, exc)
             return self._question_fallback(focus_fields), focus_keys, False

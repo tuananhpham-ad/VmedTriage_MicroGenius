@@ -13,14 +13,14 @@ from src.models.schemas import (
     StructuredSymptomData,
     TriageCase,
 )
-from src.services.case_store import InMemoryCaseStore, case_store
-from src.services.checklist_validator import ChecklistValidator
-from src.services.nurse_queue import NurseQueueService
-from src.services.red_flag import RedFlagSafetyLayer
-from src.services.semantic_mapper import RuleBackedSemanticMapper
-from src.services.summary_generator import SummaryGenerator
-from src.services.triage_engine import ProtocolTriageEngine
 from src.pipeline.database_update_phase import DatabaseUpdatePhase
+from src.services.engines.checklist_validator import ChecklistValidator
+from src.services.engines.red_flag import RedFlagSafetyLayer
+from src.services.engines.semantic_mapper import RuleBackedSemanticMapper
+from src.services.engines.summary_generator import SummaryGenerator
+from src.services.engines.triage_engine import ProtocolTriageEngine
+from src.services.stores.case_store import InMemoryCaseStore, case_store
+from src.services.stores.nurse_queue import NurseQueueService
 from src.tool.catalog.orchestrator import ToolOrchestrator, tool_orchestrator
 
 logger = logging.getLogger("vmedtriage.trace")

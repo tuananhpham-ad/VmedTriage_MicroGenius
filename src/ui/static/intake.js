@@ -25,10 +25,48 @@ const el = {
   correctionForm: document.getElementById("correctionForm"),
   correctionInput: document.getElementById("correctionInput"),
   doneMsg: document.getElementById("doneMsg"),
+  llmProvider: document.getElementById("llmProvider"),
+  llmModel: document.getElementById("llmModel"),
+  llmModelList: document.getElementById("llmModelList"),
+  llmKey: document.getElementById("llmKey"),
+  toggleKey: document.getElementById("toggleKey"),
+  testLlm: document.getElementById("testLlm"),
+  applyLlm: document.getElementById("applyLlm"),
+  clearLlm: document.getElementById("clearLlm"),
+  llmStatus: document.getElementById("llmStatus"),
+  llmPanel: document.getElementById("llmPanel"),
+  llmBadge: document.getElementById("llmBadge"),
 };
 
 let sessionId = null;
 let renderedTurns = 0;
+let providerCatalog = [];
+
+/* API key nguoi test tu nhap. Dung sessionStorage (mat khi dong tab), KHONG dung localStorage
+   de key khong nam lai lau dai tren may dung chung. */
+const KEY_STORE = "vmed_llm_credential";
+
+function loadCredential() {
+  try {
+    return JSON.parse(sessionStorage.getItem(KEY_STORE) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveCredential(credential) {
+  if (credential) sessionStorage.setItem(KEY_STORE, JSON.stringify(credential));
+  else sessionStorage.removeItem(KEY_STORE);
+}
+
+function setLlmStatus(text, kind, badge) {
+  el.llmStatus.textContent = text;
+  el.llmStatus.className = kind;
+  if (badge) {
+    el.llmBadge.textContent = badge;
+    el.llmBadge.className = kind === "ok" ? "badge-ok" : "badge-warn";
+  }
+}
 
 async function api(path, options) {
   const response = await fetch(path, {
@@ -133,24 +171,85 @@ function applyState(state) {
   el.mode.textContent = state.llm_used
     ? "chế độ: LLM sinh câu hỏi tự nhiên"
     : "chế độ: fallback mẫu cố định (LLM chưa sẵn sàng)";
+
+  if (state.llm_source === "user") {
+    setLlmStatus(
+      `Đang dùng key của bạn · ${state.llm_provider} · ${state.llm_model || "model mặc định"} · ${state.llm_key_masked}`,
+      "ok",
+      `key của bạn · ${state.llm_provider}`,
+    );
+  } else if (state.llm_used) {
+    setLlmStatus(`Đang dùng key của server · ${state.llm_provider || "?"}`, "ok", "key server");
+  } else {
+    setLlmStatus(
+      "Chưa có LLM — đang chạy fallback mẫu cố định. Nhập API key để bật hỏi-đáp tự nhiên.",
+      "warn",
+      "fallback mẫu cố định",
+    );
+    // Chưa chạy được LLM thì mở sẵn panel ra, người dùng không phải đi tìm chỗ nhập key.
+    el.llmPanel.open = true;
+  }
+}
+
+function renderModelOptions(providerName) {
+  const entry = providerCatalog.find((item) => item.name === providerName);
+  el.llmModelList.innerHTML = "";
+  (entry?.suggested_models || []).forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    el.llmModelList.appendChild(option);
+  });
+  el.llmModel.placeholder = entry?.suggested_models?.[0] || "tên model";
+}
+
+async function loadProviders() {
+  const data = await api(`${API}/providers`);
+  providerCatalog = data.providers || [];
+  el.llmProvider.innerHTML = "";
+  providerCatalog.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.name;
+    option.textContent = item.server_has_key ? `${item.name} (server có sẵn key)` : item.name;
+    el.llmProvider.appendChild(option);
+  });
+
+  const saved = loadCredential();
+  const initial = saved?.provider || data.server_default_provider || providerCatalog[0]?.name;
+  if (initial) el.llmProvider.value = initial;
+  renderModelOptions(el.llmProvider.value);
+  if (saved) {
+    el.llmModel.value = saved.model || "";
+    el.llmKey.value = saved.api_key || "";
+  }
+}
+
+/* Bat dau phien moi. Credential (neu co) gui kem khi tao phien va duoc server giu cho ca phien. */
+async function startSession() {
+  const saved = loadCredential();
+  const body = saved && saved.api_key ? JSON.stringify(saved) : undefined;
+  const state = await api(`${API}/sessions`, { method: "POST", body });
+  el.disclaimer.textContent = state.disclaimer;
+
+  // Reset khung chat khi tao phien moi, neu khong cac luot cu se dinh lai.
+  el.chat.innerHTML = "";
+  renderedTurns = 0;
+  el.summaryCard.classList.remove("on");
+  el.doneMsg.hidden = true;
+  applyState(state);
 }
 
 async function boot() {
   try {
-    const health = await api(`${API}/health`);
-    el.mode.textContent = health.llm_available
-      ? "chế độ: LLM sinh câu hỏi tự nhiên"
-      : "chế độ: fallback mẫu cố định (LLM chưa cấu hình)";
-  } catch {
-    el.mode.textContent = "không đọc được trạng thái LLM";
+    await loadProviders();
+  } catch (error) {
+    setLlmStatus(`Không tải được danh sách provider: ${error.message}`, "err");
   }
 
   try {
-    const state = await api(`${API}/sessions`, { method: "POST" });
-    el.disclaimer.textContent = state.disclaimer;
-    applyState(state);
+    await startSession();
   } catch (error) {
     addBubble("sys", `Không khởi tạo được phiên: ${error.message}`);
+    setLlmStatus(`Không khởi tạo được phiên: ${error.message}`, "err");
   }
 }
 
@@ -210,6 +309,80 @@ el.correctionForm.addEventListener("submit", async (event) => {
     }));
   } catch (error) {
     addBubble("sys", `Lỗi: ${error.message}`);
+  }
+});
+
+el.llmProvider.addEventListener("change", () => {
+  renderModelOptions(el.llmProvider.value);
+  el.llmModel.value = "";
+});
+
+el.toggleKey.addEventListener("click", () => {
+  const hidden = el.llmKey.type === "password";
+  el.llmKey.type = hidden ? "text" : "password";
+  el.toggleKey.textContent = hidden ? "ẩn" : "hiện";
+});
+
+el.testLlm.addEventListener("click", async () => {
+  const apiKey = el.llmKey.value.trim();
+  if (!apiKey) {
+    setLlmStatus("Nhập API key trước khi kiểm tra.", "warn");
+    return;
+  }
+  el.testLlm.disabled = true;
+  setLlmStatus("Đang gọi thử…", "warn");
+  try {
+    const result = await api(`${API}/providers/test`, {
+      method: "POST",
+      body: JSON.stringify({
+        provider: el.llmProvider.value,
+        api_key: apiKey,
+        model: el.llmModel.value.trim() || null,
+      }),
+    });
+    if (result.ok) {
+      setLlmStatus(`Kết nối OK · ${result.provider} · ${result.model} · ${result.key_masked}`, "ok");
+    } else {
+      setLlmStatus(`Không gọi được: ${result.detail}`, "err");
+    }
+  } catch (error) {
+    setLlmStatus(`Không gọi được: ${error.message}`, "err");
+  } finally {
+    el.testLlm.disabled = false;
+  }
+});
+
+el.applyLlm.addEventListener("click", async () => {
+  const apiKey = el.llmKey.value.trim();
+  if (!apiKey) {
+    setLlmStatus("Chưa nhập API key. Bỏ trống thì demo sẽ dùng key của server (nếu có).", "warn");
+    saveCredential(null);
+  } else {
+    saveCredential({
+      provider: el.llmProvider.value,
+      api_key: apiKey,
+      model: el.llmModel.value.trim() || null,
+    });
+  }
+
+  el.applyLlm.disabled = true;
+  try {
+    await startSession();
+  } catch (error) {
+    setLlmStatus(`Không áp dụng được: ${error.message}`, "err");
+  } finally {
+    el.applyLlm.disabled = false;
+  }
+});
+
+el.clearLlm.addEventListener("click", async () => {
+  saveCredential(null);
+  el.llmKey.value = "";
+  el.llmModel.value = "";
+  try {
+    await startSession();
+  } catch (error) {
+    setLlmStatus(`Lỗi: ${error.message}`, "err");
   }
 });
 
