@@ -2,17 +2,37 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from src.agents.graph import agent
+from src.config import get_settings
 from src.database import get_db_session
-from src.models.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from src.models.schemas import ChatRequest, ChatResponse, NurseReviewRequest, NurseReviewResponse, TriageCase
-from src.services.auth import (
+from src.models.auth import (
+    ChangePasswordRequest,
+    EmailVerificationConfirmRequest,
+    LoginRequest,
+    MessageResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserResponse,
+)
+from src.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    NurseReviewRequest,
+    NurseReviewResponse,
+    PipelineTraceStage,
+    TriageCase,
+)
+from src.services.infra.account_mailer import account_mailer
+from src.services.infra.auth import (
+    EmailNotVerifiedError,
     InvalidCredentialsError,
     NurseRegistrationDeniedError,
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.case_store import case_store
-from src.services.hitl_review import human_review_service
+from src.services.sessions.hitl_review import human_review_service
+from src.services.stores.case_store import case_store
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
 
@@ -28,6 +48,8 @@ def register(request: RegisterRequest, db: Session = Depends(get_db_session)) ->
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     except NurseRegistrationDeniedError as error:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    verification_code = auth_service.create_email_verification_code(db, user)
+    account_mailer.send_email_verification_code(recipient=user.email, code=verification_code)
     return UserResponse.model_validate(user)
 
 
@@ -42,12 +64,80 @@ def login(request: LoginRequest, db: Session = Depends(get_db_session)) -> Token
             detail=str(error),
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
+    except EmailNotVerifiedError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     access_token, expires_in = auth_service.create_access_token(user)
     return TokenResponse(
         access_token=access_token,
         expires_in=expires_in,
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_alias(request: RegisterRequest, db: Session = Depends(get_db_session)) -> UserResponse:
+    """Alias của POST /register theo đặc tả Feature #3 (POST /auth/register). Giữ /register để tương thích ngược."""
+    return register(request, db)
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+def login_alias(request: LoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Alias của POST /login theo đặc tả Feature #3 (POST /auth/login). Giữ /login để tương thích ngược."""
+    return login(request, db)
+
+
+@router.post("/auth/email-verification/confirm", response_model=MessageResponse)
+def confirm_email_verification(
+    payload: EmailVerificationConfirmRequest, db: Session = Depends(get_db_session)
+) -> MessageResponse:
+    if not auth_service.verify_email(db, email=str(payload.email), code=payload.code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mã xác thực không hợp lệ hoặc đã hết hạn.")
+    return MessageResponse(message="Email đã được xác thực. Bạn có thể đăng nhập.")
+
+
+@router.post("/auth/email-verification/resend", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
+def resend_email_verification(payload: PasswordResetRequest, db: Session = Depends(get_db_session)) -> MessageResponse:
+    result = auth_service.resend_email_verification_code(db, str(payload.email))
+    if result is not None:
+        user, code = result
+        account_mailer.send_email_verification_code(recipient=user.email, code=code)
+    return MessageResponse(message="Nếu tài khoản chưa xác thực tồn tại, chúng tôi đã gửi mã mới.")
+
+
+@router.post("/auth/password-reset/request", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db_session)) -> MessageResponse:
+    result = auth_service.create_password_reset_token(db, str(payload.email))
+    if result is not None:
+        user, token = result
+        base_url = get_settings().password_reset_base_url.rstrip("/")
+        account_mailer.send_password_reset_email(
+            recipient=user.email,
+            reset_url=f"{base_url}/?reset_token={token}",
+        )
+    return MessageResponse(message="Nếu email tồn tại, chúng tôi đã gửi liên kết đặt lại mật khẩu.")
+
+
+@router.post("/auth/password-reset/confirm", response_model=MessageResponse)
+def confirm_password_reset(
+    payload: PasswordResetConfirmRequest, db: Session = Depends(get_db_session)
+) -> MessageResponse:
+    if not auth_service.reset_password(db, token=payload.token, new_password=payload.new_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+    return MessageResponse(message="Đã đặt lại mật khẩu. Bạn có thể đăng nhập bằng mật khẩu mới.")
+
+
+@router.post("/auth/change-password", response_model=MessageResponse)
+def change_password(
+    request: Request, payload: ChangePasswordRequest, db: Session = Depends(get_db_session)
+) -> MessageResponse:
+    user = auth_service.get_user_by_id(db, int(request.state.auth.sub))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không còn hoạt động")
+    if not auth_service.change_password(
+        db, user=user, current_password=payload.current_password, new_password=payload.new_password
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không đúng.")
+    return MessageResponse(message="Đã đổi mật khẩu. Vui lòng đăng nhập lại.")
 
 
 @router.get("/me", response_model=UserResponse)

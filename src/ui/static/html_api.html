@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VMedTriage — API Test Console</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #273449;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --get: #22c55e;
+    --post: #f59e0b;
+    --error: #f87171;
+    --ok: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    margin-right: 12px;
+    white-space: nowrap;
+  }
+  header input[type=text], header input[type=password] {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  header label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  #baseUrl { width: 220px; }
+  #tokenBox { width: 260px; font-family: monospace; font-size: 11px; }
+  .btn {
+    background: var(--accent);
+    color: #001018;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .feature {
+    margin-bottom: 22px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .feature > summary {
+    cursor: pointer;
+    padding: 12px 14px;
+    background: var(--panel);
+    font-weight: 700;
+    font-size: 15px;
+    list-style: none;
+  }
+  .feature > summary::-webkit-details-marker { display: none; }
+  .feature > summary::before { content: "▸ "; color: var(--accent); }
+  .feature[open] > summary::before { content: "▾ "; }
+  .feature-desc { font-weight: 400; font-size: 12px; color: var(--muted); display: block; margin-top: 4px; }
+  .endpoint {
+    border-top: 1px solid var(--border);
+    padding: 14px;
+    background: var(--bg);
+  }
+  .endpoint-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .method {
+    font-family: monospace;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    color: #001018;
+  }
+  .method.GET { background: var(--get); }
+  .method.POST { background: var(--post); }
+  .path { font-family: monospace; font-size: 13px; }
+  .desc { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field label { font-size: 11px; color: var(--muted); }
+  .field input[type=text] {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    min-width: 160px;
+  }
+  textarea.body {
+    width: 100%;
+    min-height: 90px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+  }
+  .endpoint-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .status-badge {
+    font-family: monospace;
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--panel-2);
+  }
+  .status-badge.ok { color: var(--ok); }
+  .status-badge.err { color: var(--error); }
+  pre.response {
+    margin-top: 8px;
+    background: #0a1120;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>VMedTriage — API Test Console</h1>
+  <label>Base URL
+    <input type="text" id="baseUrl" value="http://localhost:8000" />
+  </label>
+  <label>Access token
+    <input type="text" id="tokenBox" placeholder="(chưa đăng nhập)" />
+  </label>
+  <label><input type="checkbox" id="autoAttach" checked /> Tự gắn Bearer token</label>
+  <button class="btn secondary" id="clearToken">Xoá token</button>
+</header>
+
+<main id="app"></main>
+
+<footer>VMedTriage demo test console — chỉ dùng nội bộ để kiểm thử API, không phải giao diện bệnh nhân/điều dưỡng chính thức.</footer>
+
+<script>
+/* ---------------------------------------------------------------------
+   Endpoint catalog: grouped by feature. Each entry describes how to
+   render a form and call the API via fetch().
+--------------------------------------------------------------------- */
+const FEATURES = [
+  {
+    title: "Feature #3 — Auth & Phân quyền",
+    desc: "Đăng ký / đăng nhập / thông tin tài khoản. Token JWT lưu ở localStorage, gắn tự động vào các request khác nếu bật toggle.",
+    endpoints: [
+      {
+        method: "POST", path: "/api/v1/auth/register",
+        desc: "Đăng ký tài khoản patient hoặc nurse (nurse cần mã đăng ký riêng). Alias của /register.",
+        body: { email: "patient1@example.com", password: "StrongPass123!", full_name: "Nguyen Van A", role: "patient", nurse_registration_code: null },
+        captureToken: false,
+      },
+      {
+        method: "POST", path: "/api/v1/auth/login",
+        desc: "Đăng nhập, trả access_token + role. Alias của /login. Response sẽ tự lưu token nếu thành công.",
+        body: { email: "patient1@example.com", password: "StrongPass123!" },
+        captureToken: true,
+      },
+      {
+        method: "POST", path: "/api/v1/register",
+        desc: "Endpoint đăng ký gốc (giữ tương thích ngược với UI cũ).",
+        body: { email: "nurse1@example.com", password: "StrongPass123!", full_name: "Y Ta B", role: "nurse", nurse_registration_code: "REPLACE_WITH_NURSE_CODE" },
+      },
+      {
+        method: "POST", path: "/api/v1/login",
+        desc: "Endpoint đăng nhập gốc (giữ tương thích ngược với UI cũ).",
+        body: { email: "nurse1@example.com", password: "StrongPass123!" },
+        captureToken: true,
+      },
+      {
+        method: "GET", path: "/api/v1/me",
+        desc: "Thông tin tài khoản của token hiện tại. Yêu cầu Bearer token.",
+      },
+    ],
+  },
+  {
+    title: "Feature #1 — AI Agent khai báo triệu chứng (hội thoại)",
+    desc: "Patient-only. Tạo case mới và gửi tin nhắn tiếp theo. Agent tự detect nhóm triệu chứng, hỏi lại tối đa 1 lần cho field còn thiếu, phát hiện red-flag ngay từ tin đầu tiên.",
+    endpoints: [
+      {
+        method: "POST", path: "/api/v1/cases",
+        desc: "Tạo case mới từ tin nhắn tự do đầu tiên của bệnh nhân.",
+        body: { message: "Tôi đau ngực từ sáng, mức đau 6/10, không lan tay." },
+      },
+      {
+        method: "POST", path: "/api/v1/cases/{case_id}/responses",
+        desc: "Gửi tin nhắn tiếp theo trong hội thoại đã có (điền case_id lấy từ bước tạo case).",
+        pathParams: [{ name: "case_id", sample: "" }],
+        body: { message: "Cơn đau bắt đầu từ sáng nay, không lan." },
+      },
+    ],
+  },
+  {
+    title: "Feature #5 — Phiếu tóm tắt có cấu trúc (nhúng trong Feature #1)",
+    desc: "Không có endpoint riêng — phiếu tóm tắt (summary, summary_fields) trả về trong response của POST /cases/{id}/responses khi summary_ready=true, và qua GET /cases/{id} bên dưới.",
+    endpoints: [
+      {
+        method: "GET", path: "/api/v1/cases/{case_id}",
+        desc: "Xem toàn bộ trạng thái case (bao gồm summary, summary_fields, red_flags, triage_proposal). Dùng cho màn hình duyệt ca.",
+        pathParams: [{ name: "case_id", sample: "" }],
+      },
+    ],
+  },
+  {
+    title: "Feature #2 — Hàng đợi & Duyệt ca (Human-in-the-loop)",
+    desc: "Staff-only (nurse). Xem hàng đợi, duyệt / ghi đè / chuyển cấp cứu một case. Có audit_log giá trị cũ/mới.",
+    endpoints: [
+      {
+        method: "GET", path: "/api/v1/queue",
+        desc: "Danh sách case chờ duyệt, sắp theo priority (Cấp cứu trước) rồi theo thời gian chờ.",
+      },
+      {
+        method: "POST", path: "/api/v1/cases/{case_id}/approve",
+        desc: "Giữ nguyên đề xuất AI làm final_priority.",
+        pathParams: [{ name: "case_id", sample: "" }],
+        body: {},
+      },
+      {
+        method: "POST", path: "/api/v1/cases/{case_id}/override",
+        desc: "Đổi mức ưu tiên khác với đề xuất AI (ghi audit_log giá trị cũ/mới).",
+        pathParams: [{ name: "case_id", sample: "" }],
+        body: { new_priority: "Urgent" },
+      },
+      {
+        method: "POST", path: "/api/v1/cases/{case_id}/escalate",
+        desc: "Luôn đặt final_priority = 'Emergency' (Cấp cứu) bất kể AI đề xuất gì.",
+        pathParams: [{ name: "case_id", sample: "" }],
+        body: {},
+      },
+      {
+        method: "GET", path: "/api/v1/nurse/queue",
+        desc: "Endpoint hàng đợi gốc (danh sách toàn bộ TriageCase, giữ tương thích ngược).",
+      },
+      {
+        method: "POST", path: "/api/v1/cases/{case_id}/review",
+        desc: "Endpoint duyệt ca gốc (action: approve|edit|reject|escalate|ask_more), giữ tương thích ngược.",
+        pathParams: [{ name: "case_id", sample: "" }],
+        body: { action: "approve", approved_response: "Phản hồi đã được điều dưỡng duyệt." },
+      },
+    ],
+  },
+  {
+    title: "Feature #4 — Disclaimer & Kết quả cho bệnh nhân",
+    desc: "GET /disclaimer công khai. GET /cases/{id}/result patient-only, kiểm tra ownership; chỉ trả nội dung xử trí khi đã duyệt.",
+    endpoints: [
+      {
+        method: "GET", path: "/api/v1/disclaimer",
+        desc: "Nội dung disclaimer tĩnh — công cụ không thay thế bác sĩ.",
+      },
+      {
+        method: "GET", path: "/api/v1/cases/{case_id}/result",
+        desc: "Kết quả xử trí cho bệnh nhân. Chưa duyệt → chỉ trả trạng thái + estimated_wait_minutes (không lộ nội dung xử trí).",
+        pathParams: [{ name: "case_id", sample: "" }],
+      },
+    ],
+  },
+  {
+    title: "Khác — Agent / MCP Tools / Chat gốc",
+    desc: "Các endpoint hạ tầng sẵn có trước khi bổ sung 5 tính năng trên.",
+    endpoints: [
+      {
+        method: "GET", path: "/api/v1/status",
+        desc: "Kiểm tra trạng thái agent.",
+      },
+      {
+        method: "POST", path: "/api/v1/chat",
+        desc: "Endpoint chat pipeline gốc (điều khiển toàn bộ pipeline detect→extract→validate→red-flag→triage→summary).",
+        body: { message: "Tôi bị khó thở từ hôm qua.", case_id: null },
+      },
+      {
+        method: "GET", path: "/api/v1/tools",
+        desc: "Danh sách MCP tool descriptor (nurse-only).",
+      },
+      {
+        method: "POST", path: "/api/v1/tools/{tool_name}/call",
+        desc: "Gọi một MCP tool ngoài qua registry (nurse-only).",
+        pathParams: [{ name: "tool_name", sample: "clinical_guideline_search" }],
+        body: { arguments: { symptom_group: "chest_pain", query: "chest pain triage" } },
+      },
+    ],
+  },
+];
+
+/* ---------------------------------------------------------------------
+   State + helpers
+--------------------------------------------------------------------- */
+const els = {
+  baseUrl: document.getElementById("baseUrl"),
+  tokenBox: document.getElementById("tokenBox"),
+  autoAttach: document.getElementById("autoAttach"),
+  clearToken: document.getElementById("clearToken"),
+  app: document.getElementById("app"),
+};
+
+function loadToken() {
+  return localStorage.getItem("vmed_console_token") || "";
+}
+function saveToken(token) {
+  localStorage.setItem("vmed_console_token", token || "");
+  els.tokenBox.value = token || "";
+}
+function loadBaseUrl() {
+  return localStorage.getItem("vmed_console_base_url") || "http://localhost:8000";
+}
+
+els.baseUrl.value = loadBaseUrl();
+els.tokenBox.value = loadToken();
+els.baseUrl.addEventListener("change", () => localStorage.setItem("vmed_console_base_url", els.baseUrl.value.trim()));
+els.tokenBox.addEventListener("change", () => saveToken(els.tokenBox.value.trim()));
+els.clearToken.addEventListener("click", () => saveToken(""));
+
+function buildUrl(path, pathParamValues) {
+  let resolved = path;
+  for (const [name, value] of Object.entries(pathParamValues || {})) {
+    resolved = resolved.replace(`{${name}}`, encodeURIComponent(value || ""));
+  }
+  const base = els.baseUrl.value.trim().replace(/\/+$/, "");
+  return base + resolved;
+}
+
+async function callEndpoint(ep, formEls, statusEl, responseEl) {
+  const pathParamValues = {};
+  (ep.pathParams || []).forEach((p) => {
+    pathParamValues[p.name] = formEls.pathInputs[p.name].value.trim();
+  });
+
+  const url = buildUrl(ep.path, pathParamValues);
+  const headers = { "Content-Type": "application/json" };
+  if (els.autoAttach.checked) {
+    const token = loadToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+  }
+
+  let fetchOptions = { method: ep.method, headers };
+  if (ep.method !== "GET" && formEls.bodyArea) {
+    const raw = formEls.bodyArea.value.trim();
+    if (raw) {
+      try {
+        JSON.parse(raw); // validate
+        fetchOptions.body = raw;
+      } catch (err) {
+        statusEl.textContent = "JSON không hợp lệ";
+        statusEl.className = "status-badge err";
+        responseEl.textContent = String(err);
+        return;
+      }
+    }
+  }
+
+  statusEl.textContent = "Đang gửi...";
+  statusEl.className = "status-badge";
+  responseEl.textContent = "";
+
+  try {
+    const res = await fetch(url, fetchOptions);
+    const text = await res.text();
+    let pretty = text;
+    let json = null;
+    try {
+      json = JSON.parse(text);
+      pretty = JSON.stringify(json, null, 2);
+    } catch (_) {
+      /* not JSON, leave as-is */
+    }
+    statusEl.textContent = `HTTP ${res.status}`;
+    statusEl.className = "status-badge " + (res.ok ? "ok" : "err");
+    responseEl.textContent = pretty;
+
+    if (res.ok && json && (ep.captureToken || json.access_token)) {
+      if (json.access_token) {
+        saveToken(json.access_token);
+        statusEl.textContent += " · token đã lưu";
+      }
+    }
+  } catch (err) {
+    statusEl.textContent = "Lỗi mạng";
+    statusEl.className = "status-badge err";
+    responseEl.textContent = String(err);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Rendering
+--------------------------------------------------------------------- */
+function renderEndpoint(ep) {
+  const wrap = document.createElement("div");
+  wrap.className = "endpoint";
+
+  const head = document.createElement("div");
+  head.className = "endpoint-head";
+  head.innerHTML = `<span class="method ${ep.method}">${ep.method}</span><span class="path">${ep.path}</span>`;
+  wrap.appendChild(head);
+
+  const desc = document.createElement("div");
+  desc.className = "desc";
+  desc.textContent = ep.desc || "";
+  wrap.appendChild(desc);
+
+  const formEls = { pathInputs: {}, bodyArea: null };
+
+  if (ep.pathParams && ep.pathParams.length) {
+    const row = document.createElement("div");
+    row.className = "row";
+    ep.pathParams.forEach((p) => {
+      const field = document.createElement("div");
+      field.className = "field";
+      const label = document.createElement("label");
+      label.textContent = `path param: ${p.name}`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = p.sample || "";
+      input.placeholder = p.name;
+      field.appendChild(label);
+      field.appendChild(input);
+      row.appendChild(field);
+      formEls.pathInputs[p.name] = input;
+    });
+    wrap.appendChild(row);
+  }
+
+  if (ep.method !== "GET") {
+    const bodyArea = document.createElement("textarea");
+    bodyArea.className = "body";
+    bodyArea.value = ep.body !== undefined ? JSON.stringify(ep.body, null, 2) : "";
+    wrap.appendChild(bodyArea);
+    formEls.bodyArea = bodyArea;
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "endpoint-actions";
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "btn";
+  sendBtn.textContent = "Gửi";
+  const statusEl = document.createElement("span");
+  statusEl.className = "status-badge";
+  statusEl.textContent = "chưa gửi";
+  actions.appendChild(sendBtn);
+  actions.appendChild(statusEl);
+  wrap.appendChild(actions);
+
+  const responseEl = document.createElement("pre");
+  responseEl.className = "response";
+  wrap.appendChild(responseEl);
+
+  sendBtn.addEventListener("click", () => callEndpoint(ep, formEls, statusEl, responseEl));
+
+  return wrap;
+}
+
+function renderFeature(feature) {
+  const details = document.createElement("details");
+  details.className = "feature";
+
+  const summary = document.createElement("summary");
+  summary.innerHTML = `${feature.title}<span class="feature-desc">${feature.desc}</span>`;
+  details.appendChild(summary);
+
+  feature.endpoints.forEach((ep) => details.appendChild(renderEndpoint(ep)));
+  return details;
+}
+
+FEATURES.forEach((feature, idx) => {
+  const node = renderFeature(feature);
+  if (idx < 2) node.open = true; // mở sẵn 2 mục đầu để demo nhanh
+  els.app.appendChild(node);
+});
+</script>
+</body>
+</html>

@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.routers.cases import router as cases_router
+from src.api.routers.intake import router as intake_router
+from src.api.routers.queue import router as queue_router
+from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
@@ -45,6 +48,19 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(cases_router, prefix="/api/v1")
+app.include_router(queue_router, prefix="/api/v1")
+app.include_router(result_router, prefix="/api/v1")
+app.include_router(intake_router, prefix="/api/v1")
+
+
+@app.middleware("http")
+async def prevent_demo_asset_caching(request, call_next):
+    """Ensure the demo cannot keep running stale JavaScript after an update."""
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css"}:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.get("/health")

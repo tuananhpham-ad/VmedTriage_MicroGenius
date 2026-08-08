@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from src.models.user import UserRole
-from src.services.auth import InvalidAccessTokenError, auth_service
+from src.services.infra.auth import InvalidAccessTokenError, auth_service
 
 
 @dataclass(frozen=True)
@@ -24,11 +24,19 @@ AUTHENTICATED = frozenset({UserRole.PATIENT, UserRole.NURSE})
 ROUTE_POLICIES = (
     RoutePolicy("POST", re.compile(r"^/api/v1/chat/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
+    RoutePolicy("POST", re.compile(r"^/api/v1/auth/change-password/?$"), AUTHENTICATED),
     RoutePolicy("GET", re.compile(r"^/api/v1/tools/?$"), NURSE),
     RoutePolicy("POST", re.compile(r"^/api/v1/tools/[^/]+/call/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/?$"), PATIENT),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/responses/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/approve/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/override/?$"), NURSE),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/escalate/?$"), NURSE),
+    RoutePolicy("GET", re.compile(r"^/api/v1/queue/?$"), NURSE),
 )
 
 
