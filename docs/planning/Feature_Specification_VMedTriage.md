@@ -81,7 +81,7 @@ Hallucination/agent tự chẩn đoán → guard rail + review thủ công (T-05
 
 ---
 
-## ĐẶC TẢ #2 — Hàng đợi ca chờ duyệt & Duyệt/Chỉnh sửa/Escalate mức ưu tiên (HITL)
+## ĐẶC TẢ #2 — Hàng đợi ca chờ duyệt & Duyệt/Chỉnh sửa/Từ chối/Hỏi thêm  (HITL)
 
 | | |
 |---|---|
@@ -112,10 +112,10 @@ Auto-approve các ca mức "Tự theo dõi" (thấp nhất) để giảm tải �
 Backend expose API hàng đợi theo cơ chế polling (chưa realtime) → Frontend W-06 poll định kỳ → điều dưỡng chọn 1 ca → W-07 hiển thị phiếu tóm tắt + 3 hành động → ghi quyết định vào approval_status và audit_log.
 
 **Thiết kế giao diện (UI/UX)**
-W-06 Hàng đợi: danh sách ca theo màu ưu tiên (đỏ/vàng/xanh), sắp theo mức ưu tiên và thời gian chờ, ca Cấp cứu chờ lâu được highlight viền đỏ. W-07 Duyệt ca: phiếu tóm tắt, cờ red-flag, 3 nút Duyệt nguyên trạng / Chỉnh sửa mức ưu tiên.
+W-06 Hàng đợi: danh sách ca theo màu ưu tiên (đỏ/vàng/xanh), sắp theo mức ưu tiên và thời gian chờ, ca Cấp cứu chờ lâu được highlight viền đỏ. W-07 Duyệt ca: phiếu tóm tắt, cờ red-flag, 4 nút Duyệt nguyên trạng / Chỉnh sửa mức ưu tiên / Từ chối/ Hỏi thêm.
 
 **Thiết kế API**
-GET /queue (polling, trả danh sách case sắp theo priority + thời gian chờ) — POST /cases/{id}/approve (giữ nguyên đề xuất AI) — POST /cases/{id}/override (chỉnh mức ưu tiên, ghi log giá trị cũ/mới) — POST /cases/{id}/escalate (luôn set mức Cấp cứu bất kể AI đề xuất gì).
+GET /queue (polling, trả danh sách case sắp theo priority + thời gian chờ) — POST /cases/{id}/approve (giữ nguyên đề xuất AI) — POST /cases/{id}/override (chỉnh mức ưu tiên, ghi log giá trị cũ/mới) — POST /cases/{id}/reject (từ chối xử lý case) — POST /cases/{id}/askmore (vào chat trực tiếp với bệnh nhân và đưa ra phương án).				
 
 **Mô hình dữ liệu**
 `approval_status(case_id, approved_by, approved_at, final_priority)` · `audit_log(case_id, actor, action, old_value, new_value, timestamp)`.
@@ -132,7 +132,7 @@ Chỉ role "Nhân viên y tế" truy cập được W-06/W-07. Mọi hành độ
 ### 3. Kế hoạch (Plan)
 
 **Các bước thực hiện**
-(1) Thiết kế schema priority_flag/approval_status/audit_log — (2) Build UI W-06 với data giả — (3) Implement API hàng đợi polling — (4) Build UI W-07 — (5) Implement API duyệt/chỉnh sửa/escalate — (6) Enforce chặn trả kết quả khi chưa duyệt — (7) QA toàn luồng.
+(1) Thiết kế schema priority_flag/approval_status/audit_log — (2) Build UI W-06 với data giả — (3) Implement API hàng đợi polling — (4) Build UI W-07 — (5) Implement API duyệt/chỉnh sửa/ từ chối/ hỏi thêm — (6) Enforce chặn trả kết quả khi chưa duyệt — (7) QA toàn luồng.
 
 **Công việc con (liên kết Backlog)**
 
