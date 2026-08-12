@@ -25,6 +25,11 @@ from src.tool.catalog.orchestrator import ToolOrchestrator, tool_orchestrator
 
 logger = logging.getLogger("vmedtriage.trace")
 
+EMERGENCY_MESSAGE = (
+    "Dấu hiệu bạn mô tả có thể là tình trạng cấp cứu. Hãy gọi 115 ngay hoặc đến cơ sở y tế gần nhất. "
+    "Không chờ phản hồi trực tuyến."
+)
+
 
 class TriagePipeline:
     def __init__(
@@ -97,7 +102,7 @@ class TriagePipeline:
         )
 
         stage_started = perf_counter()
-        red_flags = self.red_flag_layer.detect(structured_data)
+        red_flags = self.red_flag_layer.detect(structured_data, message, normalized_message)
         self_harm = intake_run.data_for("self_harm_risk_detector")
         if self_harm.get("risk_level") == "high":
             red_flags.append(
@@ -157,7 +162,7 @@ class TriagePipeline:
             "ok",
             case_status=triage_case.status,
             response_chars=len(triage_case.patient_visible_response or ""),
-            requires_human_approval=True,
+            requires_human_approval=triage_case.status != CaseStatus.ESCALATED,
         )
 
         stage_started = perf_counter()
@@ -213,19 +218,26 @@ class TriagePipeline:
 
     def _derive_case_status(self, validation, red_flags) -> CaseStatus:
         if red_flags:
-            return CaseStatus.NEEDS_NURSE_REVIEW
+            return CaseStatus.ESCALATED
         if not validation.is_valid:
             return CaseStatus.COLLECTING_INFORMATION
         return CaseStatus.AWAITING_APPROVAL
 
-    def _build_patient_safe_response(self, validation, red_flags) -> str:
+    def _build_patient_safe_response(self, validation, red_flags) -> str | None:
+        """Return only fixed emergency wording for a deterministic red flag.
+
+        Other clinical guidance still needs clinician approval; the red-flag
+        message only instructs the patient to seek emergency help immediately.
+        """
         if red_flags:
-            return "Thông tin của bạn đã được chuyển vào hàng đợi ưu tiên để nhân viên y tế xem xét."
+            return EMERGENCY_MESSAGE
+        if validation.is_valid:
+            return None
 
         if validation.follow_up_questions:
             return "\n".join(validation.follow_up_questions)
 
-        return "Thông tin của bạn đã được ghi nhận và đang chờ điều dưỡng/bác sĩ duyệt phản hồi."
+        return None
 
     async def _persist_to_weaviate(self, triage_case: TriageCase) -> None:
         stage_started = perf_counter()

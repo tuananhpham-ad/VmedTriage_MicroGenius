@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from src.config import RED_FLAG_RULES
 from src.models.schemas import RedFlagFinding, StructuredSymptomData
+from src.services.engines.red_flag_text_rules import detect_text_red_flags
 
 
 class RedFlagSafetyLayer:
-    def detect(self, data: StructuredSymptomData) -> list[RedFlagFinding]:
+    def detect(self, data: StructuredSymptomData, *texts: str) -> list[RedFlagFinding]:
         findings: list[RedFlagFinding] = []
 
         for rule in RED_FLAG_RULES:
@@ -18,6 +19,23 @@ class RedFlagSafetyLayer:
                         matched_fields=matched_fields,
                     )
                 )
+
+        # Structured fields catch explicit questionnaire answers.  The text rules
+        # cover a patient describing an emergency in free text before every field
+        # has been mapped; the same rule list is also used by the standalone LLM
+        # intake demo.
+        existing_codes = {finding.code for finding in findings}
+        for text_rule, phrase in detect_text_red_flags(*texts):
+            if text_rule.code in existing_codes:
+                continue
+            findings.append(
+                RedFlagFinding(
+                    code=text_rule.code,
+                    label=text_rule.label,
+                    matched_fields=[f"message:{phrase}"],
+                )
+            )
+            existing_codes.add(text_rule.code)
 
         return findings
 
