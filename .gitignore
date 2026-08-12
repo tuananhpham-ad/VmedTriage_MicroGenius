@@ -64,4 +64,4 @@ out/
 .ai-log/archive/
 
 
-_guidance/*
+# _guidance/*
