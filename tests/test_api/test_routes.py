@@ -51,7 +51,7 @@ async def test_unconfigured_mcp_tool_call_returns_503(client, nurse_headers):
 
 
 @pytest.mark.asyncio
-async def test_chat_routes_red_flag_to_nurse_queue(client, patient_headers):
+async def test_chat_routes_red_flag_alerts_patient_immediately(client, patient_headers):
     response = await client.post(
         "/api/v1/chat",
         json={"message": "Tôi đau ngực từ sáng, đi vài bước là hụt hơi."},
@@ -60,12 +60,13 @@ async def test_chat_routes_red_flag_to_nurse_queue(client, patient_headers):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["triage_proposal"]["priority"] == "Emergency"
-    assert data["status"] == "needs_nurse_review"
-    assert data["requires_human_approval"] is True
-    assert data["pipeline_trace"][-1]["stage"] == "response"
-    assert data["pipeline_trace"][-1]["output"]["response"] == data["response"]
-    assert "chuyển" in data["response"] or "chuyá»ƒn" in data["response"]
+    # Chỉ hiển thị hướng dẫn cấp cứu cố định; không lộ proposal/rule nội bộ.
+    assert data["triage_proposal"] is None
+    assert data["red_flags"] == []
+    assert data["status"] == "escalated"
+    assert data["requires_human_approval"] is False
+    assert data["pipeline_trace"] == []
+    assert "115" in data["response"]
 
 
 @pytest.mark.asyncio

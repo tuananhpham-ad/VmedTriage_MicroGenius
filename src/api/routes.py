@@ -13,9 +13,11 @@ from src.models.auth import (
     PasswordResetRequest,
     RegisterRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserResponse,
 )
 from src.models.schemas import (
+    CaseStatus,
     ChatRequest,
     ChatResponse,
     NurseReviewRequest,
@@ -149,34 +151,39 @@ def current_user(request: Request, db: Session = Depends(get_db_session)) -> Use
     return UserResponse.model_validate(user)
 
 
+@router.put("/me", response_model=UserResponse)
+def update_current_user(
+    request: Request, payload: UpdateProfileRequest, db: Session = Depends(get_db_session)
+) -> UserResponse:
+    user = auth_service.get_user_by_id(db, int(request.state.auth.sub))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không còn hoạt động")
+    try:
+        return UserResponse.model_validate(auth_service.update_profile(db, user=user, payload=payload))
+    except UserAlreadyExistsError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     """Receive a patient message and run the controlled triage pipeline."""
     try:
-        payload = {"query": request.message}
-        if request.case_id:
-            payload["case_id"] = request.case_id
+        patient_id = int(request.state.auth.sub)
+        if payload.case_id:
+            existing_case = case_store.get(payload.case_id)
+            if existing_case and existing_case.patient_id not in (None, patient_id):
+                raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
+        graph_payload = {"query": payload.message}
+        if payload.case_id:
+            graph_payload["case_id"] = payload.case_id
 
-        result = await agent.ainvoke(payload)
+        result = await agent.ainvoke(graph_payload)
         triage_case = result["triage_case"]
-        return ChatResponse(
-            case_id=triage_case.case_id,
-            response=result.get("response", ""),
-            status=triage_case.status,
-            analysis=result.get("analysis", ""),
-            structured_data=triage_case.structured_data,
-            validation=triage_case.validation,
-            red_flags=triage_case.red_flags,
-            triage_proposal=triage_case.triage_proposal,
-            summary=triage_case.summary,
-            pipeline_trace=_build_pipeline_trace(
-                message=request.message,
-                analysis=result.get("analysis", ""),
-                triage_case=triage_case,
-                response=result.get("response", ""),
-            ),
-            requires_human_approval=True,
-        )
+        triage_case.patient_id = patient_id
+        case_store.save(triage_case)
+        return _patient_chat_response(triage_case)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -210,20 +217,76 @@ async def nurse_queue() -> list[TriageCase]:
     return case_store.list_cases()
 
 
+@router.get("/patient/history", response_model=list[TriageCase])
+async def patient_history(request: Request) -> list[TriageCase]:
+    patient_id = int(request.state.auth.sub)
+    return sorted(
+        (_patient_case_view(case) for case in case_store.list_cases() if case.patient_id == patient_id),
+        key=lambda case: case.updated_at,
+        reverse=True,
+    )
+
+
 @router.get("/cases/{case_id}", response_model=TriageCase)
-async def get_case(case_id: str) -> TriageCase:
+async def get_case(case_id: str, request: Request) -> TriageCase:
     triage_case = case_store.get(case_id)
     if not triage_case:
         raise HTTPException(status_code=404, detail="Case not found")
+    if request.state.auth.role.value == "patient" and triage_case.patient_id != int(request.state.auth.sub):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem case này")
+    if request.state.auth.role.value == "patient":
+        return _patient_case_view(triage_case)
     return triage_case
 
 
 @router.post("/cases/{case_id}/review", response_model=NurseReviewResponse)
-async def review_case(case_id: str, request: NurseReviewRequest) -> NurseReviewResponse:
+async def review_case(
+    case_id: str,
+    payload: NurseReviewRequest,
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> NurseReviewResponse:
     try:
-        return human_review_service.review(case_id, request)
+        nurse = auth_service.get_user_by_id(db, int(request.state.auth.sub))
+        return human_review_service.review(
+            case_id,
+            payload,
+            nurse_id=int(request.state.auth.sub),
+            nurse_name=nurse.full_name if nurse else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+_PENDING_REVIEW_MESSAGE = "Thông tin của bạn đã được ghi nhận và đang chờ nhân viên y tế duyệt."
+_FINAL_PATIENT_STATUSES = {CaseStatus.APPROVED, CaseStatus.ESCALATED}
+
+
+def _patient_chat_response(triage_case: TriageCase) -> ChatResponse:
+    """Return a fixed emergency alert immediately; other guidance still needs review."""
+    is_patient_visible = triage_case.status in {
+        CaseStatus.COLLECTING_INFORMATION,
+        CaseStatus.ESCALATED,
+    }
+    response = triage_case.patient_visible_response if is_patient_visible else None
+    return ChatResponse(
+        case_id=triage_case.case_id,
+        response=response or _PENDING_REVIEW_MESSAGE,
+        status=triage_case.status,
+        requires_human_approval=triage_case.status != CaseStatus.ESCALATED,
+    )
+
+
+def _patient_case_view(triage_case: TriageCase) -> TriageCase:
+    """Redact internal rule output until a nurse has made a final decision."""
+    patient_case = triage_case.model_copy(deep=True)
+    if patient_case.status not in _FINAL_PATIENT_STATUSES:
+        patient_case.red_flags = []
+        patient_case.triage_proposal = None
+        patient_case.queue_item = None
+        if patient_case.status != CaseStatus.COLLECTING_INFORMATION:
+            patient_case.patient_visible_response = None
+    return patient_case
 
 
 def _dump(value):

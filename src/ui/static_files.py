@@ -6,5 +6,6 @@ from fastapi.staticfiles import StaticFiles
 
 
 def build_demo_static_app() -> StaticFiles:
-    static_dir = Path(__file__).resolve().parent / "static"
+    """Serve the feature-based VMedTriage frontend."""
+    static_dir = Path(__file__).resolve().parent / "new"
     return StaticFiles(directory=static_dir, html=True)
