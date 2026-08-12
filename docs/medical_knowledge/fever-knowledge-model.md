@@ -50,7 +50,7 @@ Toàn tài liệu dùng nhãn:
 | "Có thể là viêm màng não" | "Có dấu hiệu cần loại trừ tình trạng nguy hiểm — cần cấp cứu" |
 | "Nên uống kháng sinh" | "Bác sĩ sẽ quyết định thuốc phù hợp sau khi khám" |
 
-Rule engine trả về `reason_codes` (mã dấu hiệu), **không** trả về `disease_codes`. Lớp NLG chỉ được diễn giải từ `reason_codes`.
+Rule engine trả về `reason_codes` (mã dấu hiệu), **không** trả về `disease_codes`. Lớp NLG (tầng sinh văn bản tự nhiên) chỉ được diễn giải từ `reason_codes`.
 
 ### 0.5. Trạng thái pháp lý & an toàn **[EN]**
 
@@ -138,7 +138,7 @@ IF fever_reported == true AND temp_measured == null:
 
 **Bảng độ tin cậy [E/EN]:**
 
-| Phương pháp | Ưu | Nhược / nguồn sai số | `measurement_confidence` gợi ý |
+| Phương pháp | Ưu điểm | Nhược điểm / nguồn sai số | `measurement_confidence` gợi ý |
 |---|---|---|---|
 | Trực tràng | Sát thân nhiệt trung tâm nhất | Xâm lấn, khó chấp nhận, chống chỉ định tương đối ở trẻ giảm bạch cầu hạt / giảm tiểu cầu | high |
 | Điện tử nách | Rẻ, an toàn, phổ biến VN | Phụ thuộc thời gian giữ, mồ hôi, kẹp không kín; đọc thấp hơn thực tế | medium |
@@ -199,7 +199,7 @@ Nhóm khái niệm dưới đây là **ontology** để engineering đặt tên 
 | Mức độ tỉnh táo / đáp ứng | **Yếu tố tiên lượng mạnh nhất** trong mọi thang triage; li bì/khó đánh thức = red |
 | Đáp ứng xã hội ở trẻ (cười, giao tiếp mắt, khóc bình thường) | Cấu phần lõi của traffic light NICE; thay thế được cho khám thực thể trong remote assessment |
 | Lú lẫn mới xuất hiện / thay đổi hành vi | Ở người lớn & người cao tuổi, đây có thể là biểu hiện **duy nhất** của nhiễm khuẩn nặng |
-| Khả năng ăn/uống/bú | IMCI general danger sign: **không uống được/không bú được** → chuyển viện khẩn |
+| Khả năng ăn/uống/bú | IMCI general danger sign: **không uống được/không bú được** → khẩn |
 | Mức độ hoạt động so với ngày thường | Chuẩn hóa theo baseline cá nhân, quan trọng ở trẻ khuyết tật/người già |
 | **Mức độ lo lắng của người chăm sóc** | NICE ghi nhận "carer/clinician concern" là tín hiệu độc lập có giá trị — **phải mô hình hóa thành field** |
 
@@ -357,145 +357,150 @@ Nhóm khái niệm dưới đây là **ontology** để engineering đặt tên 
 
 1. **Tri-state cho mọi câu hỏi có/không:** `true` | `false` | `unknown`. **Cấm** map `unknown → false`. Đây là quyết định an toàn quan trọng nhất của mô hình dữ liệu: "chưa hỏi được" không đồng nghĩa "không có".
 2. **Xử lý `unknown` với red flag:** nếu một red flag critical còn `unknown` **và** người bệnh thuộc nhóm nguy cơ cao → rule engine **nâng** mức lên `EARLY_VISIT` tối thiểu và đánh dấu `data_gap = true` để điều dưỡng hỏi thêm ("Ask more").
-3. **Mandatory (M)** = không được kết luận triage nếu thiếu. **Conditional (C)** = bắt buộc khi điều kiện kích hoạt. **Optional (O)** = làm giàu thông tin.
+3. **Taxonomy 5 tier cho mức độ bắt buộc của field**:
+   - **`M0`** = bắt buộc để mở protocol hoặc phát hiện red flag ngay; thiếu thì **không chạy được rule chính xác / không loại trừ được `EMERGENCY`** — chặn **mọi** kết luận triage.
+   - **`M1` (hay `M1_SELF_CARE`)** = bắt buộc **chỉ khi** muốn kết luận `SELF_CARE`; nếu thiếu, hệ thống vẫn có thể kết luận `EARLY_VISIT` (hoặc tiếp tục hỏi tùy tier nguy cơ), nhưng **không được tự ý cho `SELF_CARE`**.
+   - **`C`** (Conditional) = bắt buộc **chỉ khi điều kiện kích hoạt** (tuổi, giới, route, triệu chứng khác) — ngoài điều kiện đó, field không chặn gì.
+   - **`H`** (Handoff-required) = cần cho **phiếu bàn giao điều dưỡng** nhưng **không chặn** kết luận triage.
+   - **`O`** (Optional) = làm giàu thông tin, không chặn gì cả.
 4. Mọi trường thời gian dùng ISO-8601; nhiệt độ dùng **°C**, một chữ số thập phân.
 5. Trường tự do (`*_note`) **không** được dùng làm đầu vào rule cứng; chỉ hiển thị cho người duyệt.
 
 ### 3.2. Nhóm PATIENT — Nhân khẩu & bối cảnh
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `patient_id` | Định danh nội bộ | Truy vết, audit | string (uuid) | — | M | `"9f3a…"` |
-| `reporter_type` | Ai đang khai báo | Độ tin cậy dữ liệu | enum | `self`, `parent_caregiver`, `other` | M | `"parent_caregiver"` |
-| `age_value` + `age_unit` | Tuổi | **Biến phân tầng chính**: <28 ngày, <3 tháng, 3–6 tháng, <5 tuổi, ≥65, ≥75 | number + enum | unit: `day`, `month`, `year` | M | `45` + `"day"` |
-| `sex` | Giới tính sinh học | Diễn giải nhánh sản khoa/tiết niệu | enum | `male`, `female`, `unknown` | M | `"female"` |
+| `patient_id` | Định danh nội bộ | Truy vết, audit | string (uuid) | — | — *(system metadata, sinh tự động — không phải field hội thoại/clinical M)* | `"9f3a…"` |
+| `reporter_type` | Ai đang khai báo | Độ tin cậy dữ liệu | enum | `self`, `parent_caregiver`, `other` | H | `"parent_caregiver"` |
+| `age_value` + `age_unit` | Tuổi | **Biến phân tầng chính**: <28 ngày, <3 tháng, 3–6 tháng, <5 tuổi, ≥65, ≥75 | number + enum | unit: `day`, `month`, `year` | M0 | `45` + `"day"` |
+| `sex` | Giới tính sinh học | Diễn giải nhánh sản khoa/tiết niệu | enum | `male`, `female`, `unknown` | M0 | `"female"` |
 | `weight_kg` | Cân nặng | Chỉ dùng để cảnh báo quá liều paracetamol; **không** dùng tính liều điều trị | number | 0.5–300 | O | `18.5` |
-| `lives_alone` | Sống một mình | Điều kiện an toàn của `SELF_CARE` | boolean/tri | true/false/unknown | M | `false` |
-| `caregiver_available` | Có người theo dõi 24h | Như trên | tri-state | — | M | `true` |
+| `lives_alone` | Sống một mình | Điều kiện an toàn của `SELF_CARE` | boolean/tri | true/false/unknown | M1 | `false` |
+| `caregiver_available` | Có người theo dõi 24h | Như trên | tri-state | — | M1 | `true` |
 | `access_to_care_minutes` | Thời gian tới cơ sở y tế gần nhất | Ảnh hưởng ngưỡng thận trọng | integer (phút) | 0–1440 | O | `20` |
-| `can_return_for_followup` | Có thể tái khám khi trở nặng | Tiền đề safety-netting | tri-state | — | C (khi hướng `SELF_CARE`) | `true` |
+| `can_return_for_followup` | Có thể tái khám khi trở nặng | Tiền đề safety-netting | tri-state | — | C (khi hướng `SELF_CARE`; **hiệu lực tương đương `M1`** khi đang hướng tới `SELF_CARE`) | `true` |
 
 ### 3.3. Nhóm FEVER — Đặc điểm sốt
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `fever_reported` | Người dùng khai có sốt | Cổng vào protocol | boolean | true/false | M | `true` |
-| `fever_status` | Loại sốt | Điều hướng nhánh xử lý dữ liệu thiếu | enum | `objective`, `subjective`, `none` | M | `"subjective"` |
-| `temp_c` | Nhiệt độ đo được | Đầu vào rule ngưỡng | number (1 dp) | 30.0–43.0 | C (khi `objective`) | `38.7` |
-| `temp_site` | Vị trí đo | **Quyết định ngưỡng áp dụng** | enum | `axillary`, `oral`, `rectal`, `tympanic`, `temporal`, `unknown` | C | `"axillary"` |
+| `fever_reported` | Người dùng khai có sốt | Cổng vào protocol | boolean | true/false | M0 | `true` |
+| `fever_status` | Loại sốt | Điều hướng nhánh xử lý dữ liệu thiếu | enum | `objective`, `subjective`, `none` | M0 | `"subjective"` |
+| `temp_c` | Nhiệt độ đo được | Đầu vào rule ngưỡng | number (1 dp) | 30.0–43.0 | M0 (khi `fever_status = objective`; ngoài điều kiện này = C) | `38.7` |
+| `temp_site` | Vị trí đo | **Quyết định ngưỡng áp dụng** | enum | `axillary`, `oral`, `rectal`, `tympanic`, `temporal`, `unknown` | M0 (khi `fever_status = objective`; ngoài điều kiện này = C) | `"axillary"` |
 | `temp_measured_at` | Thời điểm đo | Số đo cũ → độ tin cậy thấp | datetime | ISO-8601 | C | `"2026-08-10T07:20+07:00"` |
 | `temp_device_type` | Loại nhiệt kế | Gán `measurement_confidence` | enum | `digital`, `infrared_ear`, `infrared_forehead`, `mercury_glass`, `chemical_dot`, `unknown` | O | `"digital"` |
-| `measurement_confidence` | Độ tin cậy số đo (hệ thống tự gán) | Hiển thị cho điều dưỡng | enum | `high`, `medium`, `low`, `subjective` | M (derived) | `"medium"` |
+| `measurement_confidence` | Độ tin cậy số đo (hệ thống tự gán) | Hiển thị cho điều dưỡng | enum | `high`, `medium`, `low`, `subjective` | M0 (derived) | `"medium"` |
 | `temp_max_24h_c` | Nhiệt độ cao nhất 24 giờ qua | Bắt được đỉnh sốt bị che bởi thuốc | number | 30.0–43.0 | O | `39.4` |
-| `fever_onset_at` | Thời điểm bắt đầu sốt | Tính `fever_duration_days` | date | ISO-8601 | M | `"2026-08-07"` |
-| `fever_duration_days` | Số ngày sốt (derived) | Mốc 5 ngày / 7 ngày / 3–7 ngày | integer | 0–365 | M (derived) | `3` |
+| `fever_onset_at` | Thời điểm bắt đầu sốt | Tính `fever_duration_days` | date | ISO-8601 | M0 | `"2026-08-07"` |
+| `fever_duration_days` | Số ngày sốt (derived) | Mốc 5 ngày / 7 ngày / 3–7 ngày | integer | 0–365 | M0 (derived) | `3` |
 | `fever_pattern` | Kiểu sốt | Mô tả, giá trị hạn chế | enum | `continuous`, `intermittent`, `relapsing`, `unknown` | O | `"continuous"` |
-| `rigors` | Rét run dữ dội | Amber (NICE); gợi ý nhiễm khuẩn huyết/sốt rét | tri-state | — | M | `true` |
+| `rigors` | Rét run dữ dội | Amber (NICE); gợi ý nhiễm khuẩn huyết/sốt rét | tri-state | — | M0 | `true` |
 | `hypothermia_reported` | Nhiệt độ < 36 °C | **Red flag**, không phải cải thiện | tri-state | — | C (nhóm nguy cơ) | `false` |
-| `antipyretic_taken` | Đã dùng thuốc hạ sốt | Nhiệt độ hiện tại có thể bị che | tri-state | — | M | `true` |
+| `antipyretic_taken` | Đã dùng thuốc hạ sốt | Nhiệt độ hiện tại có thể bị che | tri-state | — | M0 | `true` |
 | `antipyretic_drug` | Tên hoạt chất | **Sàng lọc NSAID trong bối cảnh SXHD** | enum | `paracetamol`, `ibuprofen`, `aspirin`, `other`, `unknown` | C | `"ibuprofen"` |
 | `antipyretic_total_24h_mg` | Tổng liều 24h | Cảnh báo quá liều paracetamol | number | ≥0 | O | `3000` |
 | `antipyretic_response` | Có hạ sau khi uống | **Không dùng để loại trừ bệnh nặng** | enum | `resolved`, `partial`, `none`, `unknown` | O | `"partial"` |
-| `worse_after_defervescence` | Mệt/khó chịu hơn dù đã hạ sốt | **Dấu hiệu khám lại ngay (QĐ 2760)** | tri-state | — | M | `true` |
+| `worse_after_defervescence` | Mệt/khó chịu hơn dù đã hạ sốt | **Dấu hiệu khám lại ngay (QĐ 2760)** | tri-state | — | M0 | `true` |
 
 ### 3.4. Nhóm GENERAL — Tri giác & toàn trạng
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `consciousness_level` | Mức tỉnh táo | Yếu tố tiên lượng mạnh nhất | enum | `alert`, `drowsy_but_rousable`, `difficult_to_rouse`, `unresponsive`, `unknown` | M | `"alert"` |
-| `new_confusion` | Lú lẫn/thay đổi hành vi mới | Có thể là biểu hiện duy nhất ở người già | tri-state | — | M | `false` |
+| `consciousness_level` | Mức tỉnh táo | Yếu tố tiên lượng mạnh nhất | enum | `alert`, `drowsy_but_rousable`, `difficult_to_rouse`, `unresponsive`, `unknown` | M0 | `"alert"` |
+| `new_confusion` | Lú lẫn/thay đổi hành vi mới | Có thể là biểu hiện duy nhất ở người già | tri-state | — | C (tuổi ≥16 hoặc ≥65; có thể gộp vào câu hỏi `consciousness_level` thay vì hỏi riêng — xem CS Part 3) | `false` |
 | `social_response_child` | Đáp ứng xã hội của trẻ | Lõi traffic light NICE | enum | `normal`, `reduced`, `no_response`, `not_applicable` | C (tuổi < 5) | `"reduced"` |
-| `activity_vs_baseline` | Hoạt động so với thường ngày | Chuẩn hóa theo baseline | enum | `normal`, `reduced`, `markedly_reduced`, `unknown` | M | `"reduced"` |
-| `feeding_intake` | Ăn/uống/bú | IMCI danger sign | enum | `normal`, `reduced`, `unable`, `unknown` | M | `"reduced"` |
-| `caregiver_concern_level` | Mức lo lắng của người chăm sóc | Tín hiệu độc lập có giá trị (NICE) | integer | 0–10 | M | `8` |
-| `looks_very_unwell` | "Trông rất mệt/khác hẳn thường ngày" | Proxy cho ill-appearance khi không khám được | tri-state | — | M | `true` |
+| `activity_vs_baseline` | Hoạt động so với thường ngày | Chuẩn hóa theo baseline | enum | `normal`, `reduced`, `markedly_reduced`, `unknown` | M1 | `"reduced"` |
+| `feeding_intake` | Ăn/uống/bú | IMCI danger sign | enum | `normal`, `reduced`, `unable`, `unknown` | M0 | `"reduced"` |
+| `caregiver_concern_level` | Mức lo lắng của người chăm sóc | Tín hiệu độc lập có giá trị (NICE) | integer | 0–10 | M1 / H (không bắt buộc ép thang số 0–10 khi đã đạt kết luận mức cao hơn `SELF_CARE`) | `8` |
+| `looks_very_unwell` | "Trông rất mệt/khác hẳn thường ngày" | Proxy cho ill-appearance khi không khám được | tri-state | — | M1 | `true` |
 
 ### 3.5. Nhóm RESPIRATORY
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `breathing_difficulty` | Khó thở | Cấu phần red/amber | enum | `none`, `mild`, `severe`, `unknown` | M | `"none"` |
-| `rapid_breathing` | Thở nhanh hơn bình thường | Dấu hiệu nặng, dễ nhận biết từ xa | tri-state | — | M | `false` |
+| `breathing_difficulty` | Khó thở | Cấu phần red/amber | enum | `none`, `mild`, `severe`, `unknown` | M0 | `"none"` |
+| `rapid_breathing` | Thở nhanh hơn bình thường | Dấu hiệu nặng, dễ nhận biết từ xa | tri-state | — | M1 | `false` |
 | `chest_indrawing` | Rút lõm lồng ngực | Suy hô hấp ở trẻ → red | tri-state | — | C (tuổi < 5) | `false` |
 | `nasal_flaring_grunting` | Phập phồng cánh mũi / thở rên | Red ở trẻ | tri-state | — | C (tuổi < 5) | `false` |
-| `cyanosis` | Tím môi/đầu chi | Red tuyệt đối | tri-state | — | M | `false` |
-| `stridor_or_drooling` | Thở rít / chảy dãi, không nuốt được | Nghi tắc nghẽn đường thở trên | tri-state | — | M | `false` |
-| `chest_pain` | Đau ngực | Cross-protocol | tri-state | — | M | `false` |
+| `cyanosis` | Tím môi/đầu chi | Red tuyệt đối | tri-state | — | M0 | `false` |
+| `stridor_or_drooling` | Thở rít / chảy dãi, không nuốt được | Nghi tắc nghẽn đường thở trên | tri-state | — | M0 | `false` |
+| `chest_pain` | Đau ngực | Cross-protocol | tri-state | — | C (kích hoạt theo tuổi ≥12/route hô hấp — cross-protocol, không phải câu hỏi mặc định mọi ca) | `false` |
 | `hemoptysis` | Ho ra máu | Cần khám | tri-state | — | O | `false` |
 | `spo2_percent` | SpO₂ tự đo | Bổ trợ; ≤95% khí trời = amber ở trẻ | integer | 50–100 | O | `97` |
 
 ### 3.6. Nhóm CIRCULATION & HYDRATION
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `cold_clammy_skin` | Da lạnh, ẩm, nổi vân tím | Dấu hiệu sốc → red | tri-state | — | M | `false` |
-| `capillary_refill_ge_3s` | CRT ≥ 3 giây | Amber/red; người dùng tự làm được | tri-state | — | M | `false` |
-| `dizziness_on_standing` | Choáng khi đứng dậy | Giảm thể tích | tri-state | — | M | `true` |
-| `urine_output` | Lượng nước tiểu | Tưới máu thận | enum | `normal`, `reduced`, `none_gt_6h`, `unknown` | M | `"reduced"` |
+| `cold_clammy_skin` | Da lạnh, ẩm, nổi vân tím | Dấu hiệu sốc → red | tri-state | — | M0 | `false` |
+| `capillary_refill_ge_3s` | CRT ≥ 3 giây | Amber/red; người dùng tự làm được | tri-state | — | M0 | `false` |
+| `dizziness_on_standing` | Choáng khi đứng dậy | Giảm thể tích | tri-state | — | M1 | `true` |
+| `urine_output` | Lượng nước tiểu | Tưới máu thận | enum | `normal`, `reduced`, `none_gt_6h`, `unknown` | M0 | `"reduced"` |
 | `dehydration_signs` | Dấu mất nước | Đa dấu hiệu | array[enum] | `dry_mouth`, `sunken_eyes`, `no_tears`, `sunken_fontanelle`, `reduced_skin_turgor` | O | `["dry_mouth"]` |
-| `vomiting_severity` | Mức độ nôn | "Nôn tất cả" = danger sign; "nôn nhiều" = cảnh báo SXHD | enum | `none`, `occasional`, `frequent`, `unable_to_keep_fluids` | M | `"frequent"` |
+| `vomiting_severity` | Mức độ nôn | "Nôn tất cả" = danger sign; "nôn nhiều" = cảnh báo SXHD | enum | `none`, `occasional`, `frequent`, `unable_to_keep_fluids` | M0 | `"frequent"` |
 
 ### 3.7. Nhóm NEUROLOGICAL
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `seizure_occurred` | Có co giật trong đợt bệnh này | IMCI danger sign | tri-state | — | M | `false` |
+| `seizure_occurred` | Có co giật trong đợt bệnh này | IMCI danger sign | tri-state | — | M0 | `false` |
 | `seizure_active_now` | Đang co giật | Cấp cứu tối khẩn | tri-state | — | C | `false` |
 | `seizure_features` | Đặc điểm cơn | Phân biệt cơn phức tạp | array[enum] | `focal`, `duration_gt_5min`, `recurrent_24h`, `incomplete_recovery` | C | `["focal"]` |
-| `neck_stiffness` | Cứng gáy | Nghi nhiễm khuẩn TKTW | tri-state | — | M | `false` |
+| `neck_stiffness` | Cứng gáy | Nghi nhiễm khuẩn TKTW | tri-state | — | M0 | `false` |
 | `photophobia` | Sợ ánh sáng | Đi kèm cứng gáy | tri-state | — | O | `false` |
-| `severe_headache` | Đau đầu dữ dội/khác thường | Cross-protocol đau đầu | tri-state | — | M | `false` |
+| `severe_headache` | Đau đầu dữ dội/khác thường | Cross-protocol đau đầu | tri-state | — | M0 | `false` |
 | `bulging_fontanelle` | Thóp phồng | Red ở nhũ nhi | tri-state | — | C (tuổi < 18 tháng) | `false` |
-| `focal_neuro_deficit` | Yếu liệt/nói khó mới | Cross-protocol đột quỵ/viêm não | tri-state | — | M | `false` |
+| `focal_neuro_deficit` | Yếu liệt/nói khó mới | Cross-protocol đột quỵ/viêm não | tri-state | — | M0 | `false` |
 
 ### 3.8. Nhóm SKIN & BLEEDING
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `non_blanching_rash` | Ban không mất khi ấn kính | **Red flag kinh điển** | tri-state | — | M | `false` |
-| `rash_present` | Có ban | Định hướng | tri-state | — | M | `true` |
+| `non_blanching_rash` | Ban không mất khi ấn kính | **Red flag kinh điển** | tri-state | — | M0 | `false` |
+| `rash_present` | Có ban | Định hướng | tri-state | — | C (chỉ hỏi riêng khi `non_blanching_rash` dương tính/mơ hồ — field red-flag thật sự là `non_blanching_rash`, giữ `M0`) | `true` |
 | `rash_type` | Kiểu ban | Mô tả cho người duyệt | enum | `petechial`, `maculopapular`, `vesicular`, `urticarial`, `other`, `unknown` | C | `"petechial"` |
-| `mucosal_bleeding` | Chảy máu chân răng/mũi/âm đạo bất thường | **Dấu hiệu cảnh báo SXHD → nhập viện** | tri-state | — | M | `false` |
-| `gi_bleeding` | Nôn ra máu / phân đen | Xuất huyết nặng | tri-state | — | M | `false` |
+| `mucosal_bleeding` | Chảy máu chân răng/mũi/âm đạo bất thường | **Dấu hiệu cảnh báo SXHD → nhập viện** | tri-state | — | M0 | `false` |
+| `gi_bleeding` | Nôn ra máu / phân đen | Xuất huyết nặng | tri-state | — | M0 | `false` |
 | `jaundice_new` | Vàng da mới | Tổn thương gan/nhiễm khuẩn nặng | tri-state | — | O | `false` |
 | `localized_infection_signs` | Sưng nóng đỏ khu trú/áp xe/vết loét | Ổ nhiễm khuẩn | tri-state | — | O | `false` |
 
 ### 3.9. Nhóm ASSOCIATED SYMPTOMS
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `abdominal_pain_severity` | Mức độ đau bụng | Đau bụng nhiều = cảnh báo SXHD; bụng ngoại khoa | enum | `none`, `mild`, `moderate`, `severe` | M | `"severe"` |
+| `abdominal_pain_severity` | Mức độ đau bụng | Đau bụng nhiều = cảnh báo SXHD; bụng ngoại khoa | enum | `none`, `mild`, `moderate`, `severe` | M0 | `"severe"` |
 | `abdominal_pain_location` | Vị trí | Định hướng | enum | `diffuse`, `ruq`, `rlq`, `epigastric`, `other`, `unknown` | C | `"ruq"` |
 | `abdominal_guarding` | Bụng cứng/ấn rất đau | Nghi bụng ngoại khoa | tri-state | — | C | `false` |
-| `diarrhea` | Tiêu chảy | Mất nước, nguồn nhiễm | tri-state | — | M | `true` |
+| `diarrhea` | Tiêu chảy | Mất nước, nguồn nhiễm — mức độ nguy hiểm thực sự được carry bởi `dehydration_signs`/`vomiting_severity`/`bloody_stool`, không phải bản thân `diarrhea` | tri-state | — | M1 / O | `true` |
 | `bloody_stool` | Phân máu | Cần khám | tri-state | — | C | `false` |
-| `urinary_symptoms` | Tiểu buốt/rắt/đau hông lưng | **Bắt buộc hỏi ở trẻ <5 tuổi sốt không rõ ổ (NICE)** | tri-state | — | M | `false` |
+| `urinary_symptoms` | Tiểu buốt/rắt/đau hông lưng | **Bắt buộc hỏi ở trẻ <5 tuổi sốt không rõ ổ (NICE)** | tri-state | — | C (tuổi <5 VÀ chưa có ổ nhiễm khuẩn rõ) | `false` |
 | `sore_throat` / `ear_pain` / `cough` | Triệu chứng hô hấp trên | Định hướng ổ nhiễm khuẩn | tri-state | — | O | `true` |
-| `joint_limb_swelling` | Sưng đau khớp/chi | Amber NICE — nghi nhiễm khuẩn xương khớp | tri-state | — | M | `false` |
+| `joint_limb_swelling` | Sưng đau khớp/chi | Amber NICE — nghi nhiễm khuẩn xương khớp | tri-state | — | M1 | `false` |
 | `non_weight_bearing` | Không chịu đi/không dùng chi | Amber NICE | tri-state | — | C (tuổi < 16) | `false` |
 | `myalgia_retroorbital_pain` | Đau cơ, đau hốc mắt | Bộ triệu chứng gợi ý bệnh virus lưu hành VN | tri-state | — | O | `true` |
 
 ### 3.10. Nhóm RISK — Tiền sử, phơi nhiễm, thai kỳ, miễn dịch
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
-| `chronic_conditions` | Bệnh mạn tính | Lý do cân nhắc nhập viện (QĐ 2760); yếu tố nguy cơ sepsis | array[enum] | `cardiac`, `pulmonary`, `renal`, `hepatic`, `diabetes`, `hematologic_thalassemia`, `neurologic_epilepsy`, `malignancy`, `none`, `unknown` | M | `["diabetes"]` |
+| `chronic_conditions` | Bệnh mạn tính | Lý do cân nhắc nhập viện (QĐ 2760); yếu tố nguy cơ sepsis | array[enum] | `cardiac`, `pulmonary`, `renal`, `hepatic`, `diabetes`, `hematologic_thalassemia`, `neurologic_epilepsy`, `malignancy`, `none`, `unknown` | M1 | `["diabetes"]` |
 | `obesity_or_malnutrition` | Béo phì / suy dinh dưỡng | Tăng nặng, khó đánh giá | enum | `none`, `obesity`, `malnutrition`, `unknown` | O | `"obesity"` |
-| `immunocompromised` | Suy giảm miễn dịch | Nhóm nguy cơ cao nhất | tri-state | — | M | `false` |
+| `immunocompromised` | Suy giảm miễn dịch | Nhóm nguy cơ cao nhất | tri-state | — | M1 (câu hỏi sàng lọc ngắn — xem "route sàng lọc rủi ro gộp" ở CS §3.4) | `false` |
 | `immunocompromise_cause` | Nguyên nhân | Phân tầng nội bộ | array[enum] | `chemotherapy_6w`, `transplant`, `long_term_steroid`, `biologic_therapy`, `hiv_uncontrolled`, `asplenia`, `other` | C | `["chemotherapy_6w"]` |
 | `known_neutropenia` | Đã biết giảm bạch cầu hạt | Kích hoạt ngưỡng sốt 38,3 °C / 38,0 °C ≥1h | tri-state | — | C | `true` |
 | `is_pregnant` | Đang mang thai | Nhánh riêng | tri-state | — | C (nữ 10–60 tuổi) | `false` |
 | `gestational_weeks` | Tuần thai | 3 tháng cuối sinh lý khác | integer | 1–42 | C | `32` |
 | `postpartum_6w` | Sinh/sảy/nạo hút trong 6 tuần | Nhiễm khuẩn hậu sản | tri-state | — | C | `false` |
 | `obstetric_red_flags` | Đau bụng, ra máu/dịch, giảm cử động thai | Nâng mức khẩn | array[enum] | `abdominal_pain`, `vaginal_bleeding`, `fluid_leak`, `reduced_fetal_movement` | C | `[]` |
-| `recent_surgery_30d` | Phẫu thuật/thủ thuật ≤30 ngày | Nguy cơ nhiễm khuẩn vết mổ/sepsis | tri-state | — | M | `false` |
+| `recent_surgery_30d` | Phẫu thuật/thủ thuật ≤30 ngày | Nguy cơ nhiễm khuẩn vết mổ/sepsis | tri-state | — | M1 / C (có thể gộp với `indwelling_device` thành 1 câu sàng lọc "có can thiệp y tế/ống dẫn nào gần đây không") | `false` |
 | `surgical_site_signs` | Vết mổ sưng đỏ/chảy dịch/hở | Ổ nhiễm khuẩn rõ | tri-state | — | C | `false` |
-| `indwelling_device` | Thiết bị lưu | Đường vào nhiễm khuẩn | array[enum] | `central_line`, `urinary_catheter`, `drain`, `vp_shunt`, `prosthesis`, `none` | M | `["none"]` |
+| `indwelling_device` | Thiết bị lưu | Đường vào nhiễm khuẩn | array[enum] | `central_line`, `urinary_catheter`, `drain`, `vp_shunt`, `prosthesis`, `none` | M1 / C (gộp cùng `recent_surgery_30d`, xem trên) | `["none"]` |
 | `recent_wound_or_bite` | Vết thương hở/bỏng/động vật cắn | Nhiễm khuẩn mô mềm, uốn ván, dại | tri-state | — | O | `false` |
-| `travel_history_12m` | Du lịch 12 tháng | **Sốt sau vùng sốt rét = nguy cơ cao** | array[object: `place`, `return_date`] | — | M | `[{"place":"Bình Phước","return_date":"2026-07-25"}]` |
+| `travel_history_12m` | Du lịch **gần đây** (đổi từ cửa sổ 12 tháng sang màn hình sàng lọc ngắn ~3 tháng: vùng sốt rét lưu hành / rừng núi / biên giới) | **Sốt sau vùng sốt rét = nguy cơ cao** | array[object: `place`, `return_date`] | — | C (chỉ hỏi chi tiết khi câu sàng lọc gộp ở Stage 4 dương tính) | `[{"place":"Bình Phước","return_date":"2026-07-25"}]` |
 | `malaria_risk_area` | Vùng đến có sốt rét lưu hành | Rule cấp cứu tiềm tàng | tri-state | — | C | `true` |
-| `outbreak_exposure` | Ổ dịch quanh khu vực/gia đình | Thay đổi xác suất nền | array[enum] | `dengue`, `influenza`, `measles`, `hfmd`, `covid`, `other`, `none`, `unknown` | M | `["dengue"]` |
-| `mosquito_exposure` | Bị muỗi đốt/vùng có SXHD | Kích hoạt bộ câu hỏi cảnh báo SXHD **[LOCAL]** | tri-state | — | M | `true` |
+| `outbreak_exposure` | Ổ dịch quanh khu vực/gia đình | Thay đổi xác suất nền | array[enum] | `dengue`, `influenza`, `measles`, `hfmd`, `covid`, `other`, `none`, `unknown` | H / O, hoặc C theo mùa/vùng/dấu hiệu SXHD | `["dengue"]` |
+| `mosquito_exposure` | Bị muỗi đốt/vùng có SXHD | Kích hoạt bộ câu hỏi cảnh báo SXHD **[LOCAL]** | tri-state | — | C (vùng có SXHD lưu hành/nghi ngờ lâm sàng, hoặc trước khi tư vấn an toàn NSAID) | `true` |
 | `animal_water_exposure` | Tiếp xúc động vật/lội nước lũ | Bệnh lây từ động vật, Leptospira | array[enum] | `poultry`, `swine`, `rodent`, `dog_cat_bite`, `floodwater`, `none` | O | `["floodwater"]` |
 | `sick_contact` | Tiếp xúc người bệnh tương tự | Dịch tễ | tri-state | — | O | `true` |
 | `immunization_status` | Tiêm chủng | Nguy cơ bệnh phòng ngừa được; vắc-xin gần đây có thể gây sốt | enum | `up_to_date`, `incomplete`, `unknown` | C (tuổi <5) | `"up_to_date"` |
@@ -503,33 +508,33 @@ Nhóm khái niệm dưới đây là **ontology** để engineering đặt tên 
 
 ### 3.11. Nhóm MEDICATION
 
-| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | M/C/O | Ví dụ |
+| Field name | Mô tả | Ý nghĩa lâm sàng | Data type | Allowed values | Tier | Ví dụ |
 |---|---|---|---|---|---|---|
 | `current_medications` | Thuốc đang dùng | Sốt do thuốc; tương tác an toàn | array[string] | — | O | `["metformin"]` |
-| `nsaid_use` | Đang dùng NSAID/aspirin | **Cảnh báo an toàn bắt buộc trong bối cảnh SXHD [LOCAL]** | tri-state | — | M | `true` |
+| `nsaid_use` | Đang dùng NSAID/aspirin | **Cảnh báo an toàn bắt buộc trong bối cảnh SXHD [LOCAL]** — *lưu ý: đây là re-tier của MỨC HỎI, ràng buộc an toàn "cấm NSAID trong SXHD chưa loại trừ" (§4.9, Nhóm P) vẫn giữ nguyên hiệu lực tuyệt đối, không bị pha loãng* | tri-state | — | C / M1 (kích hoạt theo route dengue-context: `mosquito_exposure`/`outbreak_exposure` dương tính, hoặc trước khi tư vấn hạ sốt) | `true` |
 | `anticoagulant_use` | Đang dùng chống đông | Diễn giải chảy máu | tri-state | — | O | `false` |
-| `antibiotic_current` | Đang dùng kháng sinh | Sốt dai dẳng dù KS = cần khám | tri-state | — | M | `false` |
+| `antibiotic_current` | Đang dùng kháng sinh | Sốt dai dẳng dù KS = cần khám | tri-state | — | H / C (sốt ≥5 ngày hoặc đã khám bác sĩ trước đó) | `false` |
 | `new_medication_6w` | Thuốc mới trong 6 tuần | Sốt do thuốc | tri-state | — | O | `false` |
 | `drug_allergies` | Dị ứng thuốc | An toàn cho tuyến sau | array[string] | — | O | `[]` |
 
 ### 3.12. Nhóm SESSION & OUTPUT **[EN]**
 
-| Field name | Mô tả | Data type | Allowed values | M/C/O |
+| Field name | Mô tả | Data type | Allowed values | Tier |
 |---|---|---|---|---|
-| `session_id` | Định danh phiên | string (uuid) | — | M |
-| `started_at` / `completed_at` | Mốc thời gian | datetime | ISO-8601 | M |
-| `answered_fields_count` / `unknown_fields` | Độ đầy đủ dữ liệu | integer / array[string] | — | M |
-| `data_gap` | Có khoảng trống dữ liệu ảnh hưởng kết luận | boolean | — | M |
+| `session_id` | Định danh phiên | string (uuid) | — | — *(system metadata)* |
+| `started_at` / `completed_at` | Mốc thời gian | datetime | ISO-8601 | — *(system metadata)* |
+| `answered_fields_count` / `unknown_fields` | Độ đầy đủ dữ liệu | integer / array[string] | — | M0 (derived) |
+| `data_gap` | Có khoảng trống dữ liệu ảnh hưởng kết luận | boolean | — | M0 (derived) |
 | `contradiction_flags` | Mâu thuẫn phát hiện được | array[string] | — | O |
-| `triage_level` | Kết quả | enum | `EMERGENCY`, `EARLY_VISIT`, `SELF_CARE` | M |
-| `triage_distribution` | Phân bố % 3 mức (theo luồng đã chốt) | object{emergency, early_visit, self_care} | 0–1 | M |
-| `time_target` | Khung thời gian hành động | enum | `now`, `within_4h`, `within_24h`, `monitor` | M |
-| `reason_codes` | Mã dấu hiệu kích hoạt (**không** phải mã bệnh) | array[string] | `RF-01`… | M |
-| `triggered_rules` | Rule đã khớp | array[string] | `R-E-01`… | M |
-| `guideline_refs` | Nguồn trích dẫn cho phần giải thích | array[string] | — | M |
-| `safety_netting_items` | Danh sách dấu hiệu phải quay lại ngay | array[string] | — | M (khi `SELF_CARE`) |
-| `hitl_status` | Trạng thái duyệt | enum | `pending`, `approved`, `edited`, `rejected`, `ask_more` | M |
-| `reviewer_id` / `reviewer_note` | Người duyệt | string | — | C |
+| `triage_level` | Kết quả | enum | `EMERGENCY`, `EARLY_VISIT`, `SELF_CARE` | M0 (derived output, không phải câu hỏi) |
+| `triage_distribution` | Phân bố % 3 mức (theo luồng đã chốt) | object{emergency, early_visit, self_care} | 0–1 | M0 (derived) |
+| `time_target` | Khung thời gian hành động | enum | `now`, `within_4h`, `within_24h`, `monitor` | M0 (derived) |
+| `reason_codes` | Mã dấu hiệu kích hoạt (**không** phải mã bệnh) | array[string] | `RF-01`… | M0 (derived) |
+| `triggered_rules` | Rule đã khớp | array[string] | `R-E-01`… | M0 (derived) |
+| `guideline_refs` | Nguồn trích dẫn cho phần giải thích | array[string] | — | M0 (derived) |
+| `safety_netting_items` | Danh sách dấu hiệu phải quay lại ngay | array[string] | — | M0 (khi `SELF_CARE`, derived) |
+| `hitl_status` | Trạng thái duyệt | enum | `pending`, `approved`, `edited`, `rejected`, `ask_more` | M0 (derived) |
+| `reviewer_id` / `reviewer_note` | Người duyệt | string | — | H |
 
 ---
 
@@ -659,7 +664,7 @@ tier 2 (nguy cơ rất cao): MỌI kết quả          → tối thiểu EMERGE
 | **Trẻ 28 ngày – < 3 tháng** | Như trên, nguy cơ giảm dần nhưng vẫn cao | AAP 2021 phân 3 nhóm tuổi (8–21, 22–28, 29–60 ngày) với mức độ can thiệp khác nhau — nhưng **mọi nhóm đều cần đánh giá tại cơ sở y tế** | **2** | **Luôn `EMERGENCY`** (RF-22). Không `SELF_CARE`. |
 | **Trẻ 3–6 tháng** | Vẫn khó đánh giá; NICE đặt mốc nhiệt độ riêng | `temp ≥ 39 °C` → amber ngay cả khi không triệu chứng khác | **1** | `SELF_CARE` chỉ khi không có bất kỳ RF nào **và** nhiệt độ <39 °C **và** có người theo dõi. |
 | **Trẻ 6 tháng – 5 tuổi** | Ổ nhiễm khuẩn hay bị giấu (tiết niệu, xương khớp) | Bắt buộc hỏi triệu chứng tiết niệu và khớp/chi; dùng traffic light | **0–1** | `SELF_CARE` được phép nếu green hoàn toàn + safety-netting đầy đủ. |
-| **Người ≥ 65 tuổi (đặc biệt ≥ 75)** | Đáp ứng sốt bị cùn; ngưỡng nhiệt độ chuẩn có thể **không đạt** dù nhiễm khuẩn nặng; nhiều bệnh nền, nhiều thuốc | Trọng số chuyển từ nhiệt độ sang **thay đổi tri giác, té ngã, ăn kém, giảm hoạt động**. `new_confusion` được coi ngang một red flag chính | **1** (≥75: **1–2**) | Mặc định `EARLY_VISIT` (RF-37). `SELF_CARE` chỉ khi sốt ngắn, có ổ rõ ràng lành tính, hoàn toàn tỉnh táo, ăn uống bình thường, có người ở cùng. |
+| **Người ≥ 65 tuổi (đặc biệt ≥ 75)** | Đáp ứng sốt bị cùn; ngưỡng nhiệt độ chuẩn có thể **không đạt** dù nhiễm khuẩn nặng; nhiều bệnh nền, nhiều thuốc | Trọng số chuyển từ nhiệt độ sang **thay đổi tri giác, té ngã, ăn kém, giảm hoạt động**. `new_confusion` được coi ngang một red flag chính | **1** (65–74 tuổi, không RF khác: tier 1). **≥75 tuổi: tier 1 theo mặc định** — `R-V-13` chỉ tự sinh output `EARLY_VISIT / within_24h` (không tự nâng `EMERGENCY`). Tier lên **2** *chỉ khi* ≥75 tuổi **kết hợp thêm** ≥1 yếu tố nguy cơ khác (suy giảm miễn dịch, bệnh mạn nặng, `new_confusion`, hoặc bất kỳ RF nhóm A–E) — khi đó áp tier-2 escalation theo §5.1 (tối thiểu `EMERGENCY` hoặc `EARLY_VISIT ≤4h`), không phải do riêng tuổi ≥75. | **≥75 tuổi:** Mặc định `EARLY_VISIT` (RF-37, `R-V-13`). `SELF_CARE` **không bao giờ** áp dụng, không có ngoại lệ (ngưỡng lâm sàng không đổi) — kể cả khi sốt ngắn, có ổ rõ ràng lành tính, hoàn toàn tỉnh táo, ăn uống bình thường, có người ở cùng, mức tối thiểu đạt được chỉ là hạ khung thời gian trong nội bộ `EARLY_VISIT` (ví dụ trong 24h thay vì ≤4h), **không bao giờ** hạ xuống `SELF_CARE`. **65–74 tuổi (tier 1, không có RF khác):** `SELF_CARE` **có thể** được xét nếu đáp ứng đủ toàn bộ điều kiện: không RF nào ở nhóm A–E, hoàn toàn tỉnh táo (`consciousness_level = alert`), không `new_confusion`, ăn uống bình thường, có người theo dõi (`caregiver_available = true`) và có thể tái khám (`can_return_for_followup = true`) — nếu bất kỳ điều kiện nào `unknown`/âm tính, mặc định về `EARLY_VISIT`. |
 | **Người suy giảm miễn dịch (không giảm bạch cầu hạt)** | Phản ứng viêm bị ức chế → triệu chứng nghèo nàn; nhiễm trùng cơ hội | Không dựa vào "có ổ nhiễm khuẩn rõ hay không". Bất kỳ sốt nào cũng là tín hiệu | **1–2** | Tối thiểu `EARLY_VISIT ≤ 4h`; `EMERGENCY` nếu kèm bất kỳ dấu hiệu toàn thân. **Không bao giờ** `SELF_CARE`. |
 | **Người giảm bạch cầu hạt / hóa trị ≤ 6 tuần** | Không còn hàng rào bạch cầu → nhiễm khuẩn huyết tiến triển trong vài giờ | Ngưỡng sốt riêng: **≥38,3 °C một lần** hoặc **≥38,0 °C kéo dài ≥1 giờ** | **2** | **`EMERGENCY` tuyệt đối** (RF-30), escalate ngay. |
 | **Phụ nữ mang thai** | 3 tháng cuối: mạch nhanh hơn 10–15 l/ph, HA tâm thu thấp hơn 5–10 mmHg, Hct giảm → **dấu hiệu sốc bị che lấp và xuất hiện muộn**. Đau bụng dễ nhầm chuyển dạ | Không dùng mạch/HA để "yên tâm". Bổ sung bộ câu hỏi sản khoa (ra máu/dịch, cử động thai, cơn co) | **1–2** | Tối thiểu `EARLY_VISIT ≤ 4h` (RF-32). `EMERGENCY` nếu có red flag sản khoa hoặc bất kỳ RF nhóm A–E. Hướng người bệnh tới **cơ sở có sản khoa**. |
@@ -760,88 +765,97 @@ Kèm theo (NICE): kiểm tra người bệnh **cả trong đêm**, bảo đảm 
 | `R-V-19` | `chest_pain` OR `hemoptysis` | EARLY_VISIT / 4h | RF-12 |
 | `R-V-20` | `malaria_risk_area` AND về >1 tháng, không RF | EARLY_VISIT / 24h | RF-35 |
 | `R-G-01` | `lives_alone` OR `caregiver_available = false` | **Chặn** SELF_CARE → EARLY_VISIT | RF-38 |
-| `R-G-02` | Bất kỳ field mandatory nào `unknown` VÀ tier ≥1 | **Chặn** SELF_CARE, `data_gap = true` | §3.1 |
+| `R-G-02` | **Rule chuẩn hóa duy nhất cho unknown-handling**: (a) `M0` field còn `unknown` sau khi re-ask → **không kết luận triage nào cả**, `ask_more`, tối thiểu `EARLY_VISIT` nếu thuộc tier ≥1; (b) `M1_SELF_CARE` field còn `unknown` (bất kể tier) → **chặn `SELF_CARE`** (không chặn `EMERGENCY`/`EARLY_VISIT` đã có căn cứ), `data_gap = true`; (c) `H`/`O` field `unknown` → không chặn gì, chỉ ghi `unknown_fields` | Xem §3.1 điểm 3 và Part 6.4 | §3.1, §6.4 |
 | `R-G-03` | `nsaid_use` AND (`mosquito_exposure` OR `outbreak_exposure` chứa dengue) | Gắn cảnh báo an toàn + tối thiểu EARLY_VISIT | §4.9 |
 | `R-G-04` | `contradiction_flags ≠ ∅` | Kích hoạt câu hỏi làm rõ, không kết luận vội | Charter |
 | `R-S-01` | Không rule nào khớp VÀ checklist §5.4 đủ | SELF_CARE / monitor + safety-netting | — |
 
+### 6.1a. Chính sách xử lý `unknown` theo tier field **[EN] — quy tắc duy nhất, tham chiếu từ `R-G-02`**
+
+| Tier field còn `unknown` | Quy tắc |
+|---|---|
+| `M0` (sau khi đã re-ask theo Part 6 CS) | **Không được kết luận `SELF_CARE` lẫn `EARLY_VISIT`/`EMERGENCY` dựa trên phần thiếu này** — hệ thống phải tiếp tục hỏi thêm (`ask_more`); nếu buộc phải dừng (người dùng không thể tiếp tục), áp mức thận trọng nhất suy ra được từ dữ liệu đã có và đặt `data_gap = true`. |
+| `M1` / `M1_SELF_CARE`, khi đã đạt `EARLY_VISIT` trở lên | **Không cần hỏi tiếp** nếu câu trả lời không thể nâng kết luận lên `EMERGENCY` — field `M1` chỉ có giá trị chặn `SELF_CARE`, không có tác dụng gì thêm khi mức đã cao hơn `SELF_CARE`. |
+| `M1` / `M1_SELF_CARE`, khi đang hướng tới `SELF_CARE` | Chặn `SELF_CARE` (xem `R-G-02`b), nâng tối thiểu `EARLY_VISIT`, `data_gap = true`. |
+| `H` / `O` | Không chặn kết luận. Ghi vào `unknown_fields`, hiển thị cho điều dưỡng trên phiếu bàn giao nếu là `H`. |
+
 ### 6.2. Ma trận đối soát
 
-| Information (field) | Vì sao thu thập | Dùng bởi rule | Bắt buộc? |
+| Information (field) | Vì sao thu thập | Dùng bởi rule | Tier |
 |---|---|---|---|
-| `age_value` / `age_unit` | Phân tầng nguy cơ chính; quyết định ngưỡng nhiệt độ | `R-E-14`, `R-E-07`, `R-V-01`, `R-V-13`, `R-V-16`, toàn bộ tier | **M** |
-| `sex` | Điều hướng nhánh sản khoa | `R-E-21`, `R-V-10` | **M** |
-| `reporter_type` | Độ tin cậy dữ liệu; hiển thị cho người duyệt | `R-G-04` | **M** |
-| `fever_reported` | Cổng vào protocol | Mọi rule | **M** |
-| `fever_status` | Điều hướng khi thiếu số đo | `R-E-14`, `R-G-02` | **M** |
-| `temp_c` | Ngưỡng theo tuổi | `R-E-14`, `R-E-15`, `R-E-16`, `R-E-18`, `R-V-01` | **C** (khi objective) |
-| `temp_site` | Quyết định ngưỡng áp dụng (chênh 0,5 °C) | Cùng nhóm trên | **C** |
+| `age_value` / `age_unit` | Phân tầng nguy cơ chính; quyết định ngưỡng nhiệt độ | `R-E-14`, `R-E-07`, `R-V-01`, `R-V-13`, `R-V-16`, toàn bộ tier | **M0** |
+| `sex` | Điều hướng nhánh sản khoa | `R-E-21`, `R-V-10` | **M0** |
+| `reporter_type` | Độ tin cậy dữ liệu; hiển thị cho người duyệt | `R-G-04` | **H** |
+| `fever_reported` | Cổng vào protocol | Mọi rule | **M0** |
+| `fever_status` | Điều hướng khi thiếu số đo | `R-E-14`, `R-G-02` | **M0** |
+| `temp_c` | Ngưỡng theo tuổi | `R-E-14`, `R-E-15`, `R-E-16`, `R-E-18`, `R-V-01` | **M0** (khi objective) / **C** |
+| `temp_site` | Quyết định ngưỡng áp dụng (chênh 0,5 °C) | Cùng nhóm trên | **M0** (khi objective) / **C** |
 | `temp_measured_at` | Số đo cũ → giảm độ tin cậy | `measurement_confidence` | **C** |
 | `temp_device_type` | Gán độ tin cậy; loại bỏ nhiệt kế dán trán | `measurement_confidence` | O |
 | `temp_max_24h_c` | Bắt đỉnh sốt bị thuốc che | `R-V-01` (bổ trợ) | O |
-| `fever_onset_at` → `fever_duration_days` | Mốc 5/7 ngày | `R-V-02`, `R-V-03` | **M** |
-| `rigors` | Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét | `R-V-04` | **M** |
+| `fever_onset_at` → `fever_duration_days` | Mốc 5/7 ngày | `R-V-02`, `R-V-03` | **M0** |
+| `rigors` | Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét | `R-V-04` | **M0** |
 | `hypothermia_reported` | Dấu hiệu nặng ở nhóm nguy cơ | `R-E-15` | **C** |
-| `antipyretic_taken` / `antipyretic_drug` | Nhiệt độ bị che; sàng lọc NSAID | `R-G-03` | **M** / **C** |
+| `antipyretic_taken` / `antipyretic_drug` | Nhiệt độ bị che; sàng lọc NSAID | `R-G-03` | **M0** / **C** |
 | `antipyretic_total_24h_mg` | Cảnh báo quá liều paracetamol | Cảnh báo an toàn (không đổi mức) | O |
 | `antipyretic_response` | Ghi nhận mô tả; **không** dùng loại trừ | Không dùng trong rule cứng | O |
-| `worse_after_defervescence` | Dấu hiệu khám lại ngay (BYT) | `R-E-17` | **M** |
-| `consciousness_level` | Tiên lượng mạnh nhất | `R-E-01`, checklist §5.4 | **M** |
-| `new_confusion` | Biểu hiện duy nhất ở người già | `R-E-04` | **M** |
+| `worse_after_defervescence` | Dấu hiệu khám lại ngay (BYT) | `R-E-17` | **M0** |
+| `consciousness_level` | Tiên lượng mạnh nhất | `R-E-01`, checklist §5.4 | **M0** |
+| `new_confusion` | Biểu hiện duy nhất ở người già | `R-E-04` | **C** (tuổi ≥16 hoặc ≥65) |
 | `social_response_child` | Lõi traffic light | `R-V-18` (bổ trợ), tier | **C** (<5 tuổi) |
-| `activity_vs_baseline` | Chuẩn hóa theo baseline cá nhân | `R-V-18` | **M** |
-| `feeding_intake` | IMCI danger sign | `R-E-11`, `R-V-06` | **M** |
-| `caregiver_concern_level` | Tín hiệu độc lập có giá trị | `R-V-18` | **M** |
-| `looks_very_unwell` | Proxy ill-appearance khi không khám được | `R-V-18` | **M** |
-| `breathing_difficulty` | Cấu phần red | `R-E-06` | **M** |
-| `rapid_breathing` | Dấu hiệu nặng nhận biết từ xa | `R-V-05` | **M** |
+| `activity_vs_baseline` | Chuẩn hóa theo baseline cá nhân | `R-V-18` | **M1** |
+| `feeding_intake` | IMCI danger sign | `R-E-11`, `R-V-06` | **M0** |
+| `caregiver_concern_level` | Tín hiệu độc lập có giá trị | `R-V-18` | **M1** / **H** |
+| `looks_very_unwell` | Proxy ill-appearance khi không khám được | `R-V-18` | **M1** |
+| `breathing_difficulty` | Cấu phần red | `R-E-06` | **M0** |
+| `rapid_breathing` | Dấu hiệu nặng nhận biết từ xa | `R-V-05` | **M1** |
 | `chest_indrawing`, `nasal_flaring_grunting` | Suy hô hấp ở trẻ | `R-E-07` | **C** (<5 tuổi) |
-| `cyanosis` | Red tuyệt đối | `R-E-06` | **M** |
-| `stridor_or_drooling` | Tắc nghẽn đường thở trên | `R-E-06` | **M** |
-| `chest_pain`, `hemoptysis` | Cross-protocol | `R-V-19` | **M** / O |
+| `cyanosis` | Red tuyệt đối | `R-E-06` | **M0** |
+| `stridor_or_drooling` | Tắc nghẽn đường thở trên | `R-E-06` | **M0** |
+| `chest_pain`, `hemoptysis` | Cross-protocol | `R-V-19` | **C** / O |
 | `spo2_percent` | Bổ trợ hô hấp | `R-E-08`, `R-V-05` | O |
-| `cold_clammy_skin` | Dấu hiệu sốc | `R-E-09` | **M** |
-| `capillary_refill_ge_3s` | Giảm tưới máu | `R-E-09` | **M** |
-| `dizziness_on_standing` | Tiền sốc | `R-V-07` | **M** |
-| `urine_output` | Tưới máu thận; mốc 6 giờ của BYT | `R-E-10`, `R-V-06`, §5.4 | **M** |
+| `cold_clammy_skin` | Dấu hiệu sốc | `R-E-09` | **M0** |
+| `capillary_refill_ge_3s` | Giảm tưới máu | `R-E-09` | **M0** |
+| `dizziness_on_standing` | Tiền sốc | `R-V-07` | **M1** |
+| `urine_output` | Tưới máu thận; mốc 6 giờ của BYT | `R-E-10`, `R-V-06`, §5.4 | **M0** |
 | `dehydration_signs` | Mất nước | `R-V-06` | O |
-| `vomiting_severity` | Danger sign + cảnh báo SXHD | `R-E-11`, `R-V-14` | **M** |
-| `seizure_occurred`, `seizure_active_now`, `seizure_features` | Danger sign; cơn phức tạp | `R-E-02` | **M** / **C** |
-| `neck_stiffness`, `photophobia`, `bulging_fontanelle` | Nghi nhiễm khuẩn TKTW | `R-E-03` | **M** / O / **C** |
-| `severe_headache` | Cross-protocol | `R-E-03` (bổ trợ) | **M** |
-| `focal_neuro_deficit` | Cross-protocol | `R-E-05` | **M** |
-| `non_blanching_rash` | Red flag kinh điển | `R-E-12` | **M** |
-| `rash_present`, `rash_type` | Định hướng cho người duyệt | Hiển thị | **M** / **C** |
-| `mucosal_bleeding`, `gi_bleeding` | Cảnh báo SXHD / xuất huyết nặng | `R-E-13` | **M** |
+| `vomiting_severity` | Danger sign + cảnh báo SXHD | `R-E-11`, `R-V-14` | **M0** |
+| `seizure_occurred`, `seizure_active_now`, `seizure_features` | Danger sign; cơn phức tạp | `R-E-02` | **M0** / **C** |
+| `neck_stiffness`, `photophobia`, `bulging_fontanelle` | Nghi nhiễm khuẩn TKTW | `R-E-03` | **M0** / O / **C** |
+| `severe_headache` | Cross-protocol | `R-E-03` (bổ trợ) | **M0** |
+| `focal_neuro_deficit` | Cross-protocol | `R-E-05` | **M0** |
+| `non_blanching_rash` | Red flag kinh điển | `R-E-12` | **M0** |
+| `rash_present`, `rash_type` | Định hướng cho người duyệt | Hiển thị | **C** (chỉ khi `non_blanching_rash` dương tính/mơ hồ) |
+| `mucosal_bleeding`, `gi_bleeding` | Cảnh báo SXHD / xuất huyết nặng | `R-E-13` | **M0** |
 | `jaundice_new` | Tổn thương gan / bệnh nặng | `R-V-08` | O |
 | `localized_infection_signs` | Ổ nhiễm khuẩn | `R-V-17` | O |
-| `abdominal_pain_severity`, `abdominal_guarding` | Cảnh báo SXHD + bụng ngoại khoa | `R-E-20` | **M** / **C** |
+| `abdominal_pain_severity`, `abdominal_guarding` | Cảnh báo SXHD + bụng ngoại khoa | `R-E-20` | **M0** / **C** |
 | `abdominal_pain_location` | Định hướng cho người duyệt | Hiển thị | **C** |
-| `diarrhea`, `bloody_stool` | Mất nước, nguồn nhiễm | `R-V-06` (bổ trợ) | **M** / **C** |
-| `urinary_symptoms` | NICE: luôn cân nhắc NKTN ở trẻ <5 | `R-V-16` | **M** |
+| `diarrhea`, `bloody_stool` | Mất nước, nguồn nhiễm | `R-V-06` (bổ trợ) | **M1**/O / **C** |
+| `urinary_symptoms` | NICE: luôn cân nhắc NKTN ở trẻ <5 | `R-V-16` | **C** (tuổi <5 và không có ổ nhiễm khuẩn rõ) |
 | `sore_throat`, `ear_pain`, `cough` | Xác định ổ nhiễm khuẩn (ảnh hưởng `R-V-16`) | `R-V-16` | O |
-| `joint_limb_swelling`, `non_weight_bearing` | Amber NICE — nhiễm khuẩn xương khớp | `R-V-15` | **M** / **C** |
+| `joint_limb_swelling`, `non_weight_bearing` | Amber NICE — nhiễm khuẩn xương khớp | `R-V-15` | **M1** / **C** |
 | `myalgia_retroorbital_pain` | Bộ triệu chứng virus lưu hành VN | Hiển thị + `R-G-03` | O |
-| `chronic_conditions` | Lý do cân nhắc nhập viện (BYT) | `R-V-12`, tier | **M** |
+| `chronic_conditions` | Lý do cân nhắc nhập viện (BYT) | `R-V-12`, tier | **M1** |
 | `obesity_or_malnutrition` | Tăng nặng, khó đánh giá | tier | O |
-| `immunocompromised`, `immunocompromise_cause` | Nhóm nguy cơ cao nhất | `R-V-09`, `R-E-18`, tier | **M** / **C** |
+| `immunocompromised`, `immunocompromise_cause` | Nhóm nguy cơ cao nhất | `R-V-09`, `R-E-18`, tier | **M1** / **C** |
 | `known_neutropenia` | Ngưỡng sốt riêng, cấp cứu | `R-E-18` | **C** |
 | `is_pregnant`, `gestational_weeks`, `postpartum_6w`, `obstetric_red_flags` | Nhánh sản khoa | `R-E-21`, `R-V-10` | **C** |
-| `recent_surgery_30d`, `surgical_site_signs` | Nguy cơ nhiễm khuẩn vết mổ | `R-V-11` | **M** / **C** |
-| `indwelling_device` | Đường vào nhiễm khuẩn | `R-V-11` | **M** |
+| `recent_surgery_30d`, `surgical_site_signs` | Nguy cơ nhiễm khuẩn vết mổ | `R-V-11` | **M1** / **C** (có thể gộp thành 1 câu sàng lọc chung với `indwelling_device`) |
+| `indwelling_device` | Đường vào nhiễm khuẩn | `R-V-11` | **M1** / **C** |
 | `recent_wound_or_bite` | Nhiễm khuẩn mô mềm, dại, uốn ván | `R-V-17` | O |
-| `travel_history_12m`, `malaria_risk_area` | Sốt rét — cấp cứu tiềm tàng | `R-E-19`, `R-V-20` | **M** / **C** |
-| `outbreak_exposure`, `mosquito_exposure` | Xác suất nền SXHD; kích hoạt bộ câu hỏi cảnh báo | `R-G-03`, thứ tự hỏi | **M** |
+| `travel_history_12m`, `malaria_risk_area` | Sốt rét — cấp cứu tiềm tàng (màn hình sàng lọc rút gọn còn ~3 tháng thay vì 12 tháng) | `R-E-19`, `R-V-20` | **C** |
+| `outbreak_exposure`, `mosquito_exposure` | Xác suất nền SXHD; kích hoạt bộ câu hỏi cảnh báo | `R-G-03`, thứ tự hỏi | **H**/O, hoặc **C** theo mùa/vùng/dấu hiệu SXHD |
 | `animal_water_exposure`, `sick_contact` | Bệnh lây từ động vật / dịch tễ | Hiển thị | O |
 | `immunization_status`, `recent_vaccination_48h` | Nguy cơ bệnh phòng ngừa được; yếu tố nhiễu | Hiển thị + `R-V-16` (bổ trợ) | **C** (<5 tuổi) |
-| `nsaid_use` | **Ràng buộc an toàn SXHD** | `R-G-03` | **M** |
+| `nsaid_use` | **Ràng buộc an toàn SXHD** — mức hỏi hạ xuống C/M1 theo route dengue-context, nhưng bản thân ràng buộc "cấm NSAID khi chưa loại trừ SXHD" (§4.9) **giữ nguyên hiệu lực tuyệt đối** | `R-G-03` | **C** / **M1** |
 | `anticoagulant_use` | Diễn giải chảy máu | `R-E-13` (bổ trợ) | O |
-| `antibiotic_current` | Sốt dai dẳng dù KS | `R-V-02` (bổ trợ) | **M** |
+| `antibiotic_current` | Sốt dai dẳng dù KS | `R-V-02` (bổ trợ) | **H** / **C** (sốt ≥5 ngày hoặc đã khám bác sĩ) |
 | `new_medication_6w`, `current_medications`, `drug_allergies` | Sốt do thuốc; an toàn tuyến sau | Hiển thị | O |
-| `lives_alone`, `caregiver_available` | Điều kiện an toàn của self-care | `R-G-01`, §5.4 | **M** |
+| `lives_alone`, `caregiver_available` | Điều kiện an toàn của self-care | `R-G-01`, §5.4 | **M1** |
 | `access_to_care_minutes` | Ngưỡng thận trọng | `R-G-01` (bổ trợ) | O |
-| `can_return_for_followup` | Tiền đề safety-netting | §5.4 | **C** |
-| `unknown_fields`, `data_gap` | Chặn kết luận thiếu căn cứ | `R-G-02` | **M** |
+| `can_return_for_followup` | Tiền đề safety-netting | §5.4 | **C** (hiệu lực **M1** khi hướng `SELF_CARE`) |
+| `unknown_fields`, `data_gap` | Chặn kết luận thiếu căn cứ | `R-G-02` | **M0** (derived) |
 | `contradiction_flags` | Kích hoạt câu hỏi làm rõ | `R-G-04` | O |
 
 ### 6.3. Kiểm tra độ phủ (coverage checks) **[EN]**
@@ -850,7 +864,7 @@ Kèm theo (NICE): kiểm tra người bệnh **cả trong đêm**, bảo đảm 
 |---|---|
 | Mọi red flag có ít nhất 1 rule | 44/44 RF được ánh xạ ✔ |
 | Mọi rule có ít nhất 1 field đầu vào | ✔ |
-| Mọi field **M** được ít nhất 1 rule hoặc checklist dùng | ✔ (field chỉ hiển thị được đánh dấu O/C) |
+| Mọi field **M0**/**M1** được ít nhất 1 rule hoặc checklist dùng | ✔ (field chỉ hiển thị được đánh dấu O/C/H) |
 | Không có rule nào hạ mức | ✔ (chỉ có rule nâng và rule chặn) |
 | Mỗi RF có nguồn tham chiếu | ✔ (xem Part 4 + §9) |
 | Mọi nhánh kết thúc bằng 1 trong 3 mức | ✔ (mặc định `R-S-01`) |
@@ -872,7 +886,8 @@ Kèm theo (NICE): kiểm tra người bệnh **cả trong đêm**, bảo đảm 
   "description": "Structured clinical information model for fever triage. Output is a 3-level urgency classification only. This schema MUST NOT be used to represent or transmit a disease diagnosis.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "session", "patient", "fever", "general", "respiratory", "circulation", "neurological", "skin", "risk_factors"],
+  "required": ["schema_version", "session", "patient", "fever", "general", "respiratory", "circulation", "neurological", "skin", "associated_symptoms", "risk_factors", "medications"],
+  "$comment": "Root 'required' only enforces presence of the group OBJECTS + minimal technical/M0 fields inside each group's own 'required' list (see each group's 'required'). It does NOT by itself enforce full clinical field completeness — that is the rule engine's job (R-G-02 / KM §6.1a), applied per active route (ROUTE_INFANT_HIGH / ROUTE_HIGH_RISK / ROUTE_STANDARD / ROUTE_DENGUE_CONTEXT / ROUTE_LOCALIZED_SOURCE, see conversation spec Part 4). 'obstetric' is intentionally NOT in root 'required': it is a fully conditional group (activates on sex=female + age range, or is_pregnant/postpartum_6w), not a group gated by a broad sex check alone.",
   "properties": {
     "schema_version": { "type": "string", "const": "1.0.0" },
 
@@ -1033,6 +1048,8 @@ Kèm theo (NICE): kiểm tra người bệnh **cả trong đêm**, bảo đảm 
     "associated_symptoms": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["abdominal_pain_severity"],
+      "$comment": "Only the M0 field (abdominal_pain_severity) is schema-required. diarrhea/joint_limb_swelling/etc. are M1/C/O per KM §3.9/§6.2 and are enforced by the rule engine per route, not here.",
       "properties": {
         "abdominal_pain_severity": { "type": "string", "enum": ["none", "mild", "moderate", "severe", "unknown"] },
         "abdominal_pain_location": { "type": ["string", "null"], "enum": ["diffuse", "ruq", "rlq", "epigastric", "other", "unknown", null] },
@@ -1127,7 +1144,7 @@ Kèm theo (NICE): kiểm tra người bệnh **cả trong đêm**, bảo đảm 
     "medications": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nsaid_use", "antibiotic_current"],
+      "$comment": "nsaid_use/antibiotic_current are C/M1/H tier per KM §3.11 (route-triggered), not M0 — not schema-required at object level; enforced by rule engine per active route instead.",
       "properties": {
         "current_medications": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "default": [] },
         "nsaid_use": { "$ref": "#/$defs/triState" },

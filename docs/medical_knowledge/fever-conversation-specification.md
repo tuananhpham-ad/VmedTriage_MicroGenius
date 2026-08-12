@@ -1,13 +1,13 @@
 # CONVERSATION SPECIFICATION — TRIỆU CHỨNG: SỐT (FEVER)
 
 **Sản phẩm:** VMedTriage — AI Symptom Assessment & Triage
-**Loại tài liệu:** Conversation Design Specification (thiết kế cách AI hội thoại — HOW), dựa trên **Medical Knowledge Model** (WHAT/WHY đã chốt)
+**Loại tài liệu:** Conversation Design Specification (thiết kế cách AI hội thoại), dựa trên **Medical Knowledge Model**
 **Symptom group:** `FEVER`
-**Phiên bản:** v1.0 — DRAFT (chưa được hội đồng chuyên môn phê duyệt)
+**Phiên bản:** v1.0 — DRAFT
 **Ngày soạn:** 2026-08-11
-**Tài liệu nguồn bắt buộc tham chiếu:** `docs/medical_knowledge/fever-knowledge-model.md` (v1.0) — mọi field name, mã `RF-xx`, mã rule `R-x-xx`, ngưỡng số liệu trong tài liệu này **kế thừa nguyên trạng** từ knowledge model, không định nghĩa lại.
+**Tài liệu nguồn tham chiếu:** `docs/medical_knowledge/fever-knowledge-model.md` (v1.0) — mọi field name, mã `RF-xx`, mã rule `R-x-xx`, ngưỡng số liệu trong tài liệu này **kế thừa** từ knowledge model.
 
-> **Vai trò của tài liệu:** Knowledge model trả lời "cần biết gì và tại sao". Tài liệu này trả lời **"hỏi thế nào, hỏi khi nào, hỏi bao nhiêu là đủ"** — để AI hành xử như một điều dưỡng triage giàu kinh nghiệm (hỏi có trọng tâm, gộp câu hỏi liên quan, dừng đúng lúc) thay vì một bảng câu hỏi máy móc hỏi hết 100+ field theo thứ tự cố định.
+> **Vai trò của tài liệu:** Knowledge model trả lời "cần biết gì và tại sao". Tài liệu này trả lời **"hỏi thế nào, hỏi khi nào, hỏi bao nhiêu là đủ"** — để AI agent hành xử như một điều dưỡng triage giàu kinh nghiệm (hỏi có trọng tâm, gộp câu hỏi liên quan, dừng đúng lúc) thay vì một bảng câu hỏi máy móc theo thứ tự cố định.
 
 ---
 
@@ -16,10 +16,10 @@
 | # | Nguyên tắc | Áp dụng |
 |---|---|---|
 | P0-1 | **An toàn > hiệu quả.** Không bao giờ bỏ qua một câu hỏi an toàn (P0) để hội thoại ngắn gọn hơn. | Xuyên suốt Part 3–4 |
-| P0-2 | **Không chẩn đoán.** Câu hỏi và phản hồi của AI không bao giờ nêu tên bệnh, chỉ mô tả dấu hiệu (kế thừa §0.4 KM). | Toàn bộ script mẫu |
+| P0-2 | **Không chẩn đoán.** Câu hỏi và phản hồi của AI không bao giờ nêu tên bệnh, chỉ mô tả dấu hiệu. | Toàn bộ script mẫu |
 | P0-3 | **Gộp câu hỏi có liên quan lâm sàng** thay vì hỏi từng field rời rạc — giống cách điều dưỡng thật hỏi "có sốt, ớn lạnh, mệt mỏi gì không" trong một câu. | Part 3 |
 | P0-4 | **Tri-state luôn được tôn trọng ở tầng hội thoại:** AI không được diễn giải im lặng/né tránh thành "không có". Một câu chưa trả lời rõ = `unknown`, không phải `false`. | Part 5, 6 |
-| P0-5 | **Đỏ (red flag EMERGENCY) ngắt hội thoại ngay** — hiển thị cảnh báo tức thì, không chờ hỏi hết checklist, không chờ duyệt HITL (kế thừa §0.5, §4.1 KM). | Part 4 |
+| P0-5 | **Đỏ (red flag EMERGENCY) ngắt hội thoại ngay** — hiển thị cảnh báo tức thì, không chờ hỏi hết checklist, không chờ duyệt HITL. | Part 4 |
 | P0-6 | **Khi nghi ngờ giữa hai mức thận trọng, chọn mức thận trọng hơn** — cả ở việc diễn giải câu trả lời mơ hồ lẫn ở việc quyết định hỏi thêm hay dừng. | Part 5, 6 |
 | P0-7 | **Ngôn ngữ hội thoại:** tiếng Việt, giọng điệu điều dưỡng — ấm áp, rõ ràng, không thuật ngữ y khoa khó hiểu, câu hỏi ngắn (≤2 ý/câu). | Toàn bộ script mẫu |
 
@@ -29,26 +29,35 @@
 
 ### 1.1. Thông tin luôn phải thu thập (trước khi kết luận triage)
 
-Đây là tập field `M` (Mandatory) trong KM §3, không phụ thuộc nhánh tuổi/quần thể — nếu bất kỳ field nào trong nhóm này còn `unknown` khi kết thúc hội thoại, hệ thống **không được kết luận triage**, phải đặt `data_gap = true` và tối thiểu nâng lên `EARLY_VISIT` (theo `R-G-02`).
+Chia 5 tier: `M0`, `M1`/`M1_SELF_CARE`, `C`, `H`, `O` (xem KM §3.1 điểm 3). Ý nghĩa vận hành cho hội thoại:
 
-| Nhóm | Field bắt buộc |
-|---|---|
-| Định danh & tuổi | `age_value`, `age_unit`, `sex`, `reporter_type` |
-| Cổng sốt | `fever_reported`, `fever_status`, `fever_onset_at`→`fever_duration_days` |
-| Đặc điểm sốt an toàn | `rigors`, `antipyretic_taken`, `worse_after_defervescence` |
-| Toàn trạng | `consciousness_level`, `activity_vs_baseline`, `feeding_intake`, `caregiver_concern_level`, `looks_very_unwell` |
-| Hô hấp | `breathing_difficulty`, `rapid_breathing`, `cyanosis`, `stridor_or_drooling`, `chest_pain` |
-| Tuần hoàn | `cold_clammy_skin`, `capillary_refill_ge_3s`, `dizziness_on_standing`, `urine_output`, `vomiting_severity` |
-| Thần kinh | `seizure_occurred`, `neck_stiffness`, `severe_headache`, `focal_neuro_deficit` |
-| Da/xuất huyết | `non_blanching_rash`, `rash_present`, `mucosal_bleeding`, `gi_bleeding` |
-| Triệu chứng kèm | `abdominal_pain_severity`, `diarrhea`, `urinary_symptoms`(C: <5 tuổi), `joint_limb_swelling` |
-| Nguy cơ | `chronic_conditions`, `immunocompromised`, `recent_surgery_30d`, `indwelling_device`, `travel_history_12m`/`malaria_risk_area`, `outbreak_exposure`, `mosquito_exposure` |
-| Thuốc an toàn | `nsaid_use`, `antibiotic_current` |
-| Bối cảnh an toàn | `lives_alone`, `caregiver_available`, `can_return_for_followup`(C: khi hướng `SELF_CARE`) |
+- **Kết luận triage nói chung** (bất kỳ mức nào trong 3 mức) chỉ cần **`M0` đầy đủ** (+ quét red flag ở Stage 3A) — đây là điều kiện tối thiểu để hệ thống "biết nói gì".
+- **Kết luận `SELF_CARE`** cần thêm **`M1`/`M1_SELF_CARE` đầy đủ** cho route đang áp dụng (xem Part 4/6 — routing). Thiếu `M1` không chặn `EARLY_VISIT`/`EMERGENCY`, chỉ chặn `SELF_CARE`.
+- **`H` (handoff)** không bao giờ chặn kết luận — chỉ cần có trên phiếu bàn giao điều dưỡng trước khi đóng phiên.
+- **`O` (optional)** không chặn gì, chỉ hỏi khi còn ngân sách.
 
-### 1.2. Thông tin tùy chọn (làm giàu, không chặn kết luận)
+Nếu một field `M0` còn `unknown` khi kết thúc hội thoại, hệ thống **không được kết luận triage nào cả**, phải đặt `data_gap = true`, `ask_more`, và tối thiểu nâng `EARLY_VISIT` nếu tier ≥1 (theo `R-G-02`, KM §6.1a). Nếu chỉ field `M1` còn `unknown`, hệ thống **vẫn có thể** kết luận `EARLY_VISIT`/`EMERGENCY` bình thường — chỉ riêng `SELF_CARE` bị chặn.
 
-`fever_pattern`, `temp_device_type`, `temp_max_24h_c`, `antipyretic_total_24h_mg`, `antipyretic_response`, `dehydration_signs`, `hemoptysis`, `spo2_percent`, `jaundice_new`, `localized_infection_signs`, `abdominal_pain_location`, `bloody_stool`, `sore_throat`/`ear_pain`/`cough`, `myalgia_retroorbital_pain`, `obesity_or_malnutrition`, `current_medications`, `new_medication_6w`, `drug_allergies`, `anticoagulant_use`, `animal_water_exposure`, `sick_contact`, `access_to_care_minutes`, `weight_kg`.
+| Nhóm | Field `M0` (chặn mọi kết luận) | Field `M1`/`M1_SELF_CARE` (chỉ chặn `SELF_CARE`) |
+|---|---|---|
+| Định danh & tuổi | `age_value`, `age_unit`, `sex` | — |
+| Cổng sốt | `fever_reported`, `fever_status`, `fever_onset_at`→`fever_duration_days` | — |
+| Đặc điểm sốt an toàn | `rigors`, `antipyretic_taken`, `worse_after_defervescence` | — |
+| Toàn trạng | `consciousness_level`, `feeding_intake` | `activity_vs_baseline`, `caregiver_concern_level`, `looks_very_unwell` |
+| Hô hấp | `breathing_difficulty`, `cyanosis`, `stridor_or_drooling` | `rapid_breathing`; `chest_pain` là `C` (cross-protocol) |
+| Tuần hoàn | `cold_clammy_skin`, `capillary_refill_ge_3s`, `urine_output`, `vomiting_severity` | `dizziness_on_standing` |
+| Thần kinh | `seizure_occurred`, `neck_stiffness`, `severe_headache`, `focal_neuro_deficit` | — |
+| Da/xuất huyết | `non_blanching_rash`, `mucosal_bleeding`, `gi_bleeding` | `rash_present` là `C` (chỉ khi `non_blanching_rash` dương/mơ hồ) |
+| Triệu chứng kèm | `abdominal_pain_severity` | `diarrhea`, `joint_limb_swelling`; `urinary_symptoms` là `C` (<5 tuổi, không có ổ rõ) |
+| Nguy cơ | — | `chronic_conditions`, `immunocompromised`, `recent_surgery_30d`+`indwelling_device` (có thể gộp 1 câu); `travel_history_12m`/`malaria_risk_area`, `outbreak_exposure`, `mosquito_exposure` là `C`/`H` (kích hoạt theo câu sàng lọc gộp — xem 3.4) |
+| Thuốc an toàn | — | `nsaid_use` là `C`/`M1` (route dengue-context); `antibiotic_current` là `H`/`C` |
+| Bối cảnh an toàn | — | `lives_alone`, `caregiver_available`, `can_return_for_followup` (hiệu lực `M1` khi hướng `SELF_CARE`) |
+
+`reporter_type` là `H` (cho phiếu bàn giao, không chặn kết luận).
+
+### 1.2. Thông tin tùy chọn (làm giàu, không chặn kết luận) — tier `O`, và `H` khi không kích hoạt điều kiện `C`
+
+`fever_pattern`, `temp_device_type`, `temp_max_24h_c`, `antipyretic_total_24h_mg`, `antipyretic_response`, `dehydration_signs`, `hemoptysis`, `spo2_percent`, `jaundice_new`, `localized_infection_signs`, `abdominal_pain_location`, `bloody_stool`, `sore_throat`/`ear_pain`/`cough`, `myalgia_retroorbital_pain`, `obesity_or_malnutrition`, `current_medications`, `new_medication_6w`, `drug_allergies`, `anticoagulant_use`, `animal_water_exposure`, `sick_contact`, `access_to_care_minutes`, `weight_kg`, `reporter_type`(H), `outbreak_exposure`(H/O ngoài điều kiện `C`), `antibiotic_current`(H ngoài điều kiện `C`).
 
 → Chỉ hỏi nếu còn "ngân sách câu hỏi" (xem Part 6) và chưa có kết luận đủ căn cứ.
 
@@ -57,7 +66,7 @@
 Áp dụng **điều kiện nào đến trước thì dừng theo điều kiện đó**:
 
 1. **Chốt đỏ:** một red flag `EMERGENCY` được xác nhận → dừng thu thập thường quy, chuyển thẳng Stage 6 (nhánh cấp cứu) — xem Part 4.
-2. **Đủ căn cứ:** toàn bộ field `M` liên quan (bao gồm field `C` được kích hoạt theo tuổi/quần thể) đã có giá trị xác định (không còn `unknown` ảnh hưởng rule) → dừng, sang Stage 6.
+2. **Đủ căn cứ:** toàn bộ field `M0` (và `M1`/`M1_SELF_CARE` nếu đang hướng `SELF_CARE`), bao gồm field `C` được kích hoạt theo tuổi/quần thể, đã có giá trị xác định (không còn `unknown` ảnh hưởng rule) → dừng, sang Stage 6.
 3. **Hết ngân sách câu hỏi** mà phần còn thiếu chỉ là field `O`: dừng, ghi nhận `unknown_fields`, sang Stage 6.
 4. **Người dùng không thể tiếp tục** (mất kết nối, quá hoảng loạn, từ chối trả lời): dừng ngay, áp dụng mức thận trọng nhất có thể suy ra từ dữ liệu đã có, đặt `data_gap = true`, `hitl_status = ask_more`.
 
@@ -70,12 +79,13 @@
 | **0** | Xác định đối tượng | Biết đang hỏi cho ai, tuổi bao nhiêu — vì tuổi quyết định toàn bộ ngưỡng & nhánh hỏi phía sau | `age_value`, `age_unit`, `sex`, `reporter_type` | Không có — luôn chạy đủ, chỉ 1–2 câu |
 | **1** | Phát hiện sốt | Xác nhận có sốt, sốt khách quan hay chủ quan, số đo/vị trí/thời điểm nếu có | `fever_reported`, `fever_status`, `temp_c`, `temp_site`, `temp_measured_at` | Nếu `fever_reported = false` → ra ngoài phạm vi protocol sốt (bàn giao sang luồng khác, không thuộc spec này) |
 | **2** | Đặc điểm sốt | Thời gian sốt, rét run, đáp ứng hạ sốt, dấu hiệu "khó chịu hơn dù đã hạ sốt" | `fever_onset_at`, `rigors`, `antipyretic_*`, `worse_after_defervescence` | Không có — đây là input bắt buộc cho mọi rule |
-| **3** | Phát hiện red flag | Quét nhanh toàn bộ dấu hiệu nguy hiểm theo cụm (tri giác → thần kinh → hô hấp → tuần hoàn → da/xuất huyết → bụng → gut-check người chăm sóc) | 14 câu hỏi tổ hợp, xem Part 3 | **Dừng ngay** tại câu đầu tiên xác nhận 1 red flag `EMERGENCY` (Part 4) |
+| **3A** | Phát hiện red flag — Emergency scan | Quét các field `M0` red-flag: tri giác, co giật, khó thở/tím/thở rít, sốc/không tiểu, không uống/nôn tất cả, ban không mất khi ấn, xuất huyết nặng, đau bụng dữ/bụng cứng, tuổi <3 tháng | ~8-10 câu hỏi tổ hợp `P0`, xem Part 3.3A | **Dừng ngay** tại câu đầu tiên xác nhận 1 red flag `EMERGENCY` (Part 4) |
+| **3B** | Phát hiện red flag — Early/self-care scan | Quét các field `M1`: thở nhanh, ăn giảm, hoạt động giảm, lo lắng caregiver, đau đầu/cứng gáy mơ hồ, khớp/chi | ~4-6 câu hỏi tổ hợp `P1`, xem Part 3.3B | Chỉ chạy nếu Stage 3A âm tính; bỏ qua nếu đã hướng `EARLY_VISIT`/`EMERGENCY` và các field này không thể đổi kết luận |
 | **4** | Đánh giá quần thể nguy cơ | Thai kỳ, suy giảm miễn dịch, bệnh mạn tính, phẫu thuật/thiết bị, du lịch/sốt rét, dịch tễ SXHD, hoàn cảnh sống | Field nhóm RISK (§3.10 KM) | Bỏ các nhánh không áp dụng theo tuổi/giới (điều kiện `C` tự skip) |
 | **5** | Thu thập phần còn lại | Triệu chứng kèm theo cơ quan, thuốc an toàn (NSAID), làm giàu thông tin | Field nhóm G, N (một phần), MEDICATION | Bỏ toàn bộ nếu đã vào nhánh cấp cứu ở Stage 3 |
 | **6** | Kết thúc đánh giá | Rà soát mâu thuẫn, tóm tắt, hiển thị safety-netting (nếu `SELF_CARE`), bàn giao HITL hoặc escalate cấp cứu | `contradiction_flags`, `triage_level`, `hitl_status` | — |
 
-**Lưu ý về Stage 0:** không phải là stage tách biệt theo yêu cầu đề bài (đề chỉ định 6 stage bắt đầu từ "Phát hiện sốt"), nhưng về mặt vận hành, tuổi phải được biết **trước** khi hỏi bất kỳ câu nào về sốt — vì ngưỡng nhiệt độ, cách diễn giải "trông mệt" đều lệ thuộc tuổi. Do đó Stage 0 được gộp làm **bước mở đầu của Stage 1** trong luồng thực tế, nhưng tách bảng riêng ở đây để rõ ràng.
+**Lưu ý về Stage 0:** không phải là stage tách biệt, về mặt vận hành, tuổi phải được biết **trước** khi hỏi bất kỳ câu nào về sốt — vì ngưỡng nhiệt độ, cách diễn giải "trông mệt" đều lệ thuộc tuổi. Do đó Stage 0 được gộp làm **bước mở đầu của Stage 1** trong luồng thực tế, nhưng tách bảng riêng ở đây để rõ ràng.
 
 ---
 
@@ -86,6 +96,8 @@
 - **Priority:** `P0` = an toàn tối khẩn, không được bỏ qua trừ khi đã chốt `EMERGENCY`; `P1` = bắt buộc cho triage; `P2` = bắt buộc có điều kiện (theo tuổi/giới/nhóm nguy cơ); `P3` = làm giàu, hỏi nếu còn ngân sách.
 - Nhiều field liên quan lâm sàng được **gộp vào một câu hỏi tổ hợp** (giống cách điều dưỡng thật hỏi) — cột "Field" liệt kê tất cả field mà một câu trả lời có thể phủ.
 - "Follow-up" là câu hỏi làm rõ được kích hoạt **chỉ khi** câu trả lời đầu mơ hồ hoặc dương tính cần chi tiết hơn — không phải hỏi mặc định.
+- **Không hỏi lại field đã có giá trị xác định.** Nếu một câu trả lời tự do (kể cả trả lời cho câu hỏi khác, hoặc mô tả chủ động ngay từ đầu hội thoại) đã phủ được nhiều field cùng lúc — kể cả field thuộc câu hỏi ở stage sau — hệ thống phải **ghi nhận ngay các field đó** và **bỏ qua câu hỏi tương ứng** khi tới lượt, không hỏi lại để "xác nhận cho chắc". Chỉ hỏi lại nếu giá trị còn mơ hồ (theo Part 5) hoặc thuộc field an toàn `P0` cần xác nhận rõ ràng theo cách hỏi chuẩn (vd red flag ở Stage 3A vẫn hỏi đúng script dù đã có gợi ý, để tránh bỏ sót do suy diễn).
+- **Khi người dùng chủ động sửa lại một câu trả lời trước đó** (vd "à không, không phải 3 ngày, là 5 ngày rồi"), hệ thống phải **lấy giá trị mới nhất** ghi đè giá trị cũ cho field đó, không giữ giá trị ban đầu và không hỏi lại các câu đã hỏi dựa trên giá trị cũ trừ khi giá trị mới làm thay đổi điều kiện kích hoạt của những câu đó (vd sửa tuổi từ người lớn thành trẻ nhũ nhi → phải chạy lại các nhánh `C` phụ thuộc tuổi).
 
 ### 3.0. Stage 0 — Xác định đối tượng
 
@@ -114,38 +126,58 @@
 | Q2-04 | "Sau khi hạ sốt (hoặc hết sốt), [bé/anh chị] có thấy mệt hơn, lừ đừ hơn, hay là đỡ hơn hẳn ạ?" | **Dấu hiệu khám lại ngay theo QĐ 2760 — RF-29, có thể đơn độc đẩy thẳng lên `EMERGENCY`** | `worse_after_defervescence` | P0 | Sau khi đã có ít nhất 1 lần hạ sốt/cắt sốt; nếu đang sốt liên tục chưa từng hạ → đánh dấu N/A, không phải unknown | Chưa từng hạ sốt lần nào | Nếu câu trả lời chung chung ("cũng bình thường") → so sánh cụ thể mức hoạt động trước/sau | 1 |
 | Q2-05 | "Có lúc nào đo hoặc cảm thấy người lạnh bất thường, dưới mức bình thường không?" | Hạ thân nhiệt = red flag tương đương sốt ở nhóm nguy cơ | `hypothermia_reported` | P1 | `age < 3 tháng` HOẶC `age ≥ 65` HOẶC `immunocompromised = true` (biết trước từ Stage 0/4) | Ngoài các điều kiện trên | — | 1 |
 
-### 3.3. Stage 3 — Phát hiện red flag (quét theo cụm lâm sàng)
+### 3.3A. Stage 3A — Emergency scan (field `M0`)
 
-> **Toàn bộ câu hỏi trong bảng này là `P0`.** Nguyên tắc vận hành: hỏi tuần tự Q3-01 → Q3-14; **ngay khi một câu trả lời xác nhận điều kiện `EMERGENCY`**, dừng bảng này lập tức và chuyển Part 4 (Optimization).
+> **Toàn bộ câu hỏi trong bảng này có độ ưu tiên hỏi `P0`** (hỏi sớm nhất, không được hoãn) — phần lớn ánh xạ tới field tier `M0` trong KM §3, nhưng một số câu cũng gom kèm field tier `C` liên quan cùng cụm lâm sàng (vd `seizure_active_now`/`seizure_features`, `chest_indrawing`, `nasal_flaring_grunting`, `bulging_fontanelle`, `rash_present`/`rash_type`, `abdominal_pain_location`, `abdominal_guarding`) để tránh hỏi rời rạc. **`P0` là độ ưu tiên hỏi, không đồng nhất với tier `M0`** — field `C` trong bảng này vẫn chỉ bắt buộc khi điều kiện kích hoạt của nó đúng. Nguyên tắc vận hành: hỏi tuần tự Q3-01 → Q3-13; **ngay khi một câu trả lời xác nhận điều kiện `EMERGENCY`**, dừng bảng này lập tức và chuyển Part 4 (Optimization). Đây là "minimum scan" bắt buộc cho **mọi** route (kể cả `ROUTE_LOCALIZED_SOURCE`) — không được rút gọn thêm.
+
+> **Kỹ thuật hỏi gộp-phủ-định-cả-cụm (batch negation), áp dụng cho cả Stage 3A và 3B:** để tiết kiệm lượt hỏi, mỗi câu tổ hợp trong hai bảng scan có thể diễn đạt dưới dạng liệt kê rồi hỏi phủ định gộp — ví dụ Q3-06 hỏi "Có khó thở không? Môi/đầu ngón tay có tím tái không? Ngực có rút lõm, cánh mũi phập phồng, thở rên không?" rồi chốt bằng "— có dấu hiệu nào trong số này không ạ?". Cách xử lý câu trả lời:
+> - Nếu người dùng trả lời **phủ định tường minh cho cả cụm** ("không có gì cả", "không, hoàn toàn bình thường") → gán `false` cho **toàn bộ field trong cụm đó cùng lúc**, không hỏi lại từng field riêng. 
+> - Nếu người dùng chọn **"có"** cho một hoặc vài ý trong cụm → chỉ hỏi làm rõ (follow-up) riêng cho (các) field đó, các field còn lại trong cụm mà người dùng phủ định vẫn gán `false` bình thường.
+> - Nếu người dùng trả lời **"không chắc"/mơ hồ** cho một ý cụ thể trong cụm → chỉ field đó đi vào quy trình làm rõ mơ hồ (Part 5, tối đa 2 lần), các field khác trong cụm đã được phủ định rõ ràng vẫn gán `false`, không kéo cả cụm thành `unknown`.
+> - Kỹ thuật này không áp dụng cho các câu hỏi bắt buộc phải xác nhận riêng lẻ theo script chuẩn dù đã có phủ định gộp trước đó (vd Q3-01 tri giác, Q3-03 co giật) — nếu ngữ cảnh cho thấy câu phủ định gộp có thể che lấp một dấu hiệu an toàn tối khẩn, vẫn hỏi lại đúng câu chuẩn thay vì suy diễn từ phủ định gộp.
 
 | ID | Câu hỏi | Mục đích | Field | Ask condition | Skip condition | Follow-up | Max follow-up |
 |---|---|---|---|---|---|---|---|
-| Q3-01 | "[Bé/Anh chị] hiện có tỉnh táo bình thường không — dễ đánh thức, phản ứng gọi hỏi bình thường không? So với ngày thường, mức độ chơi/hoạt động có giảm nhiều không? [<5 tuổi: bé có cười, giao tiếp mắt, phản ứng khi gọi tên không?]" | Yếu tố tiên lượng mạnh nhất mọi thang triage (RF-01) + toàn trạng | `consciousness_level`, `activity_vs_baseline`, `social_response_child`(C: <5t) | Luôn hỏi đầu Stage 3 | Không skip | Nếu "khó đánh thức" không rõ do mệt hay do lơ mơ bệnh lý → hỏi cụ thể "gọi to có mở mắt/phản ứng ngay không" | 2 |
-| Q3-02 | "Gần đây có ai nhận thấy [tên] nói lẫn, không nhận ra người quen, hoặc hành vi khác lạ hẳn không?" | Ở người lớn tuổi/suy giảm miễn dịch có thể là **biểu hiện duy nhất** của nhiễm khuẩn nặng (RF-05) | `new_confusion` | `age ≥ 16` (ưu tiên hỏi kỹ nếu `age ≥ 65`) | `age < 16` | — | 1 |
+| Q3-01 | "[Bé/Anh chị] hiện có tỉnh táo bình thường không — dễ đánh thức, phản ứng gọi hỏi bình thường không? [<5 tuổi: bé có cười, giao tiếp mắt, phản ứng khi gọi tên không?]" | Yếu tố tiên lượng mạnh nhất mọi thang triage (RF-01) | `consciousness_level`, `social_response_child`(C: <5t) | Luôn hỏi đầu Stage 3A | Không skip | Nếu "khó đánh thức" không rõ do mệt hay do lơ mơ bệnh lý → hỏi cụ thể "gọi to có mở mắt/phản ứng ngay không" | 2 |
 | Q3-03 | "Trong đợt sốt này có bị co giật không — tay chân giật, mắt trợn, cứng người? Có đang co giật ngay lúc này không?" | IMCI general danger sign (RF-02); co giật đang diễn ra là cấp cứu tối khẩn | `seizure_occurred`, `seizure_active_now` | Luôn hỏi | Không skip | Nếu `occurred = true` và không active → hỏi đặc điểm cơn (khu trú một bên? kéo dài >5 phút? tái diễn trong 24h? chưa tỉnh hẳn sau cơn?) | 2 |
-| Q3-04 | "Có bị cứng gáy (khó cúi cổ chạm cằm ngực), sợ ánh sáng, hoặc đau đầu dữ dội khác thường không? [trẻ nhũ nhi: thóp có phồng lên không?]" | Bộ ba nghi nhiễm khuẩn màng não — cửa sổ điều trị tính bằng giờ (RF-04) | `neck_stiffness`, `photophobia`, `severe_headache`, `bulging_fontanelle`(C: <18 tháng) | Luôn hỏi | Không skip | Nếu "đau đầu dữ dội" không rõ mức độ → so sánh với đau đầu thông thường của người đó | 1 |
+| Q3-04 | "Có bị cứng gáy (khó cúi cổ chạm cằm ngực), sợ ánh sáng, hoặc đau đầu dữ dội khác thường không? [trẻ nhũ nhi: thóp có phồng lên không?]" | Bộ ba nghi nhiễm khuẩn màng não — cửa sổ điều trị tính bằng giờ (RF-04) | `neck_stiffness`, `photophobia`, `severe_headache`, `bulging_fontanelle`(C: <18 tháng) | Luôn hỏi | Không skip | Nếu "đau đầu dữ dội" không rõ mức độ → so sánh với đau đầu thông thường của người đó (đau đầu **mơ hồ**, không dữ dội → không tính là dương tính ở đây, có thể ghi nhận thêm ở Stage 3B) | 1 |
 | Q3-05 | "Có bị yếu tay/chân một bên, méo miệng, hoặc nói khó/nói ngọng mới xuất hiện không?" | Cross-protocol viêm não/đột quỵ (RF-06) | `focal_neuro_deficit` | Luôn hỏi | Không skip | — | 0 |
-| Q3-06 | "Có khó thở không? Thở có nhanh hơn/gắng sức hơn bình thường không? Môi hoặc đầu ngón tay có tím tái không? [<5 tuổi: ngực có rút lõm khi thở, cánh mũi có phập phồng, có thở rên không?]" | Cấu phần red/amber hô hấp (RF-07, 08, 09) | `breathing_difficulty`, `rapid_breathing`, `cyanosis`, `chest_indrawing`(C:<5t), `nasal_flaring_grunting`(C:<5t) | Luôn hỏi | Không skip | Nếu "khó thở nhẹ" mơ hồ → hỏi có ảnh hưởng nói chuyện/bú/ăn không | 1 |
+| Q3-06 | "Có khó thở không? Môi hoặc đầu ngón tay có tím tái không? [<5 tuổi: ngực có rút lõm khi thở, cánh mũi có phập phồng, có thở rên không?]" | Cấu phần red hô hấp (RF-07, 08, 09) | `breathing_difficulty`, `cyanosis`, `chest_indrawing`(C:<5t), `nasal_flaring_grunting`(C:<5t) | Luôn hỏi | Không skip | Nếu "khó thở nhẹ" mơ hồ → hỏi có ảnh hưởng nói chuyện/bú/ăn không | 1 |
 | Q3-07 | "Có thở rít khi hít vào, chảy nước dãi liên tục không nuốt được, hoặc phải ngồi chồm người ra trước mới dễ thở không?" | Nghi tắc nghẽn đường thở trên — **không được yêu cầu người nhà há miệng khám họng** (RF-10) | `stridor_or_drooling` | Luôn hỏi (câu ngắn) | Đã xác nhận `cyanosis`/`breathing_difficulty=severe` (đã đủ căn cứ EMERGENCY, hỏi thêm không đổi kết luận) | — | 0 |
 | Q3-08 | "Da có lạnh, ẩm, hoặc nổi vân tím (nổi bông) không? Nếu ấn vào đầu ngón tay/chân rồi thả ra, màu hồng trở lại có chậm hơn khoảng 3 giây không?" | Dấu hiệu sốc — tương ứng giai đoạn sốc trong SXHD (RF-13) | `cold_clammy_skin`, `capillary_refill_ge_3s` | Luôn hỏi | Không skip | Hướng dẫn cách tự đo CRT nếu chưa từng làm | 1 |
-| Q3-09 | "Trong 6 giờ qua có đi tiểu không ạ? Lượng nước tiểu (hoặc số tã ướt ở trẻ) có ít hơn bình thường không?" | Chỉ dấu tưới máu thận; mốc 6 giờ của BYT (RF-14) | `urine_output` | Luôn hỏi | Không skip | Nếu "không nhớ" → hỏi lần đi vệ sinh gần nhất là mấy giờ | 1 |
-| Q3-10 | "Có ăn uống/bú được bình thường không? Có nôn nhiều không — nôn xong có giữ được nước/sữa sau đó không?" | IMCI danger sign "không uống được", "nôn tất cả" (RF-15) | `feeding_intake`, `vomiting_severity` | Luôn hỏi | Không skip | Nếu "nôn vài lần" mơ hồ → hỏi tần suất cụ thể trong khoảng thời gian nào | 1 |
-| Q3-11 | "Trên da có nổi ban đỏ/tím không ạ? Nếu có, lấy cốc thủy tinh (hoặc ngón tay) ấn vào vết ban — màu có mất đi không hay vẫn còn?" | **Ban không mất khi ấn kính = red flag kinh điển nghi não mô cầu** (RF-18) | `rash_present`, `non_blanching_rash`, `rash_type` | Luôn hỏi | Không skip | Hướng dẫn từng bước cách làm "glass test" nếu người dùng chưa hiểu | 2 |
+| Q3-09 | "Trong 6 giờ qua có đi tiểu không ạ? Có ăn uống/bú được bình thường không? Có nôn nhiều không — nôn xong có giữ được nước/sữa sau đó không?" | Chỉ dấu tưới máu thận (RF-14); IMCI danger sign "không uống được", "nôn tất cả" (RF-15) | `urine_output`, `feeding_intake`, `vomiting_severity` | Luôn hỏi | Không skip | Nếu "không nhớ"/"nôn vài lần" mơ hồ → hỏi cụ thể tần suất/thời điểm | 1 |
+| Q3-11 | "Trên da có nổi ban đỏ/tím không ạ? Nếu có, lấy cốc thủy tinh (hoặc ngón tay) ấn vào vết ban — màu có mất đi không hay vẫn còn?" | **Ban không mất khi ấn kính = red flag kinh điển nghi não mô cầu** (RF-18); `rash_present` chỉ hỏi tiếp khi có ban để làm rõ | `non_blanching_rash`, `rash_present`(C), `rash_type`(C) | Luôn hỏi | Không skip | Hướng dẫn từng bước cách làm "glass test" nếu người dùng chưa hiểu | 2 |
 | Q3-12 | "Có chảy máu bất thường không — chảy máu chân răng, chảy máu mũi không rõ nguyên nhân, nôn ra máu/dịch nâu, đi ngoài phân đen, hoặc [nữ] ra máu âm đạo bất thường?" | Dấu hiệu cảnh báo SXHD → chỉ định nhập viện (RF-19, 20) | `mucosal_bleeding`, `gi_bleeding` | Luôn hỏi | Không skip | — | 0 |
 | Q3-13 | "Có đau bụng không ạ? Nếu có, đau mức nào — âm ỉ, hay đau nhiều đến mức không cử động được, hoặc bụng cứng khi ấn vào?" | Cảnh báo SXHD + nghi bụng ngoại khoa (RF-39) | `abdominal_pain_severity`, `abdominal_pain_location`(C), `abdominal_guarding` | Luôn hỏi | Không skip | Dùng thang so sánh nếu "đau bụng" mơ hồ (xem Part 5) | 2 |
-| Q3-14 | "Trên thang 0–10, [anh/chị] lo lắng đến mức nào về tình trạng hiện tại? Và so với ngày thường, [bé/anh chị] có trông khác hẳn, mệt rõ rệt hơn không?" | Tín hiệu độc lập có giá trị (NICE); proxy "ill-appearance" khi không khám trực tiếp được (RF-44) | `caregiver_concern_level`, `looks_very_unwell` | Luôn hỏi — đặt cuối Stage 3 như "gut-check" tổng kết | Không skip | Nếu điểm lo lắng ≥8 nhưng chưa tìm ra RF nào khác → hỏi cụ thể "điều gì khiến anh/chị lo nhất" — có thể lộ ra chi tiết bị bỏ sót | 1 |
+
+Tuổi <3 tháng được biết từ Stage 0 và tự nâng `EMERGENCY` ngay (RF-22) mà không cần chờ hết Stage 3A.
+
+### 3.3B. Stage 3B — Early/self-care scan (field `M1`)
+
+> Chỉ chạy khi Stage 3A **âm tính toàn bộ**. Các câu hỏi trong bảng này là `P1`, ánh xạ tới field tier `M1` trong KM §3 — cần thiết để mở khả năng kết luận `SELF_CARE`, nhưng **không** chặn `EARLY_VISIT`/`EMERGENCY` nếu bị bỏ qua. Nếu đã có căn cứ `EARLY_VISIT` từ nơi khác (vd Stage 4) và các field này không thể đổi kết luận, có thể bỏ qua bảng này (xem Part 4.2/Part 6 routing).
+
+| ID | Câu hỏi | Mục đích | Field | Ask condition | Skip condition | Follow-up | Max follow-up |
+|---|---|---|---|---|---|---|---|
+| Q3-01b | "So với ngày thường, mức độ chơi/hoạt động có giảm nhiều không? Thở có nhanh hơn/gắng sức hơn bình thường không?" | Chuẩn hóa theo baseline (RF liên quan hoạt động) + dấu hiệu nặng hô hấp nhận biết từ xa (RF-11 nhẹ) | `activity_vs_baseline`, `rapid_breathing` | Sau Stage 3A âm tính | Đã chốt `EMERGENCY`/`EARLY_VISIT` từ nơi khác và câu này không đổi kết luận | — | 1 |
+| Q3-08b | "Khi đứng dậy đột ngột có thấy choáng váng, hoa mắt, hoặc muốn ngất không?" | Dấu hiệu giảm thể tích tuần hoàn/tiền sốc, bổ sung cho cụm tuần hoàn ở Q3-08 (RF-13 mức nhẹ) | `dizziness_on_standing` | Sau Stage 3A âm tính; ưu tiên hỏi cùng cụm với Q3-01b | Đã chốt `EMERGENCY`/`EARLY_VISIT` từ nơi khác và câu này không đổi kết luận; hoặc bệnh nhân không tự đứng được (đã có căn cứ nặng hơn từ Q3-08/Q3-09) | — | 0 |
+| Q3-02 | "Gần đây có ai nhận thấy [tên] nói lẫn, không nhận ra người quen, hoặc hành vi khác lạ hẳn không?" | Ở người lớn tuổi/suy giảm miễn dịch có thể là **biểu hiện duy nhất** của nhiễm khuẩn nặng (RF-05) | `new_confusion` | `age ≥ 16` (ưu tiên hỏi kỹ nếu `age ≥ 65`) | `age < 16` | — | 1 |
+| Q3-13b | "Bé/anh chị có sưng, đau khớp hoặc chi nào không? Có chịu đi lại, dùng tay chân bình thường không?" | Amber NICE — nghi nhiễm khuẩn xương khớp, dễ bỏ sót (RF-41) | `joint_limb_swelling`, `non_weight_bearing`(C: <16t) | Sau Stage 3A âm tính | Không skip | — | 0 |
+| Q3-14 | "Trên thang 0–10, [anh/chị] lo lắng đến mức nào về tình trạng hiện tại? Và so với ngày thường, [bé/anh chị] có trông khác hẳn, mệt rõ rệt hơn không?" | Tín hiệu độc lập có giá trị (NICE); proxy "ill-appearance" khi không khám trực tiếp được (RF-44) | `caregiver_concern_level`, `looks_very_unwell` | Đặt cuối Stage 3B như "gut-check" tổng kết | Có thể rút gọn thành câu quan sát ngắn (bỏ thang 0–10) nếu đã có kết luận cao hơn `SELF_CARE` — xem KM §3.4 field `caregiver_concern_level` | Nếu điểm lo lắng ≥8 nhưng chưa tìm ra RF nào khác → hỏi cụ thể "điều gì khiến anh/chị lo nhất" — có thể lộ ra chi tiết bị bỏ sót | 1 |
+
+**Mọi tham chiếu "Stage 3" ở các phần khác của tài liệu này** (Part 2, Part 4, Part 6, Part 7 sơ đồ, Part 8 ví dụ) hiểu là **Stage 3A + Stage 3B**, trừ khi ghi rõ chỉ 3A hoặc chỉ 3B.
 
 ### 3.4. Stage 4 — Đánh giá quần thể nguy cơ
 
 | ID | Câu hỏi | Mục đích | Field | Priority | Ask condition | Skip condition | Follow-up | Max follow-up |
 |---|---|---|---|---|---|---|---|---|
-| Q4-01 | "Hiện có đang mang thai không ạ? Nếu có, được khoảng bao nhiêu tuần rồi?" | Nhánh sản khoa riêng — sinh lý che lấp sốc (RF-32) | `is_pregnant`, `gestational_weeks` | P1 | `sex = female` AND `10 ≤ age ≤ 60` | Nam giới, hoặc ngoài khoảng tuổi | Nếu `is_pregnant = true` → Q4-01b | 1 |
+| Q4-00 | "Cho em hỏi thêm để đánh giá đầy đủ hơn: hiện có đang mang thai/mới sinh, đang hóa trị/dùng thuốc ức chế miễn dịch, có bệnh mạn tính nặng (tim/phổi/gan/thận/tiểu đường/máu), mới phẫu thuật hoặc đang có ống thông/catheter trên người, hoặc vừa đi vùng rừng núi/biên giới/sốt rét trong 1–3 tháng gần đây không?" | Câu sàng lọc rủi ro gộp — chỉ branch chi tiết khi dương tính, tránh hỏi 5-6 câu `M1` riêng lẻ cho ca nguy cơ thấp | Sơ bộ cho `is_pregnant`, `immunocompromised`, `chronic_conditions`, `recent_surgery_30d`/`indwelling_device`, `malaria_risk_area` | P1 | Luôn hỏi 1 lần, dạng câu hỏi kép | Không skip | Nếu **bất kỳ** ý nào được xác nhận dương tính/mơ hồ → hỏi tiếp câu chi tiết tương ứng (Q4-01…Q4-06 bên dưới) cho đúng nhóm đó; nếu toàn bộ âm tính rõ ràng → bỏ qua Q4-01…Q4-06, chỉ giữ Q4-07/Q4-08 | 1 |
+| Q4-01 | "Hiện có đang mang thai không ạ? Nếu có, được khoảng bao nhiêu tuần rồi?" | Nhánh sản khoa riêng — sinh lý che lấp sốc (RF-32) | `is_pregnant`, `gestational_weeks` | P1 | `sex = female` AND `10 ≤ age ≤ 60` AND Q4-00 dương tính (ý thai kỳ) | Nam giới, ngoài khoảng tuổi, hoặc Q4-00 âm tính rõ ràng | Nếu `is_pregnant = true` → Q4-01b | 1 |
 | Q4-01b | "Có ra máu/dịch bất thường ở âm đạo, đau bụng từng cơn, hoặc thấy thai cử động ít hơn hẳn không?" | Nâng mức khẩn cấp sản khoa | `obstetric_red_flags` | P0 | `is_pregnant = true` hoặc `postpartum_6w = true` | Ngoài điều kiện trên | — | 0 |
-| Q4-02 | "Trong 6 tuần gần đây có sinh nở, sảy thai, hoặc nạo hút thai không?" | Nguy cơ nhiễm khuẩn hậu sản (RF-32) | `postpartum_6w` | P1 | `sex = female` AND `15 ≤ age ≤ 55` AND chưa xác nhận đang mang thai | Nam giới, hoặc đã xác nhận đang mang thai | — | 0 |
-| Q4-03 | "Có đang hóa trị ung thư, ghép tạng, dùng thuốc ức chế miễn dịch/corticoid kéo dài, hoặc biết mình bị suy giảm miễn dịch (HIV, đã cắt lách...) không?" | **Nhóm nguy cơ cao nhất — sốt giảm bạch cầu hạt là cấp cứu nội khoa** (RF-30, 31) | `immunocompromised`, `immunocompromise_cause`, `known_neutropenia` | P0 | Luôn hỏi | Không skip | Nếu đang hóa trị → hỏi thời điểm gần nhất (≤6 tuần?) và có biết đang giảm bạch cầu hạt không | 2 |
-| Q4-04 | "Có đang mắc bệnh mạn tính nào không — bệnh tim, phổi, gan, thận, tiểu đường, hoặc bệnh về máu như thalassemia?" | Lý do cân nhắc nhập viện theo BYT dù chưa có dấu hiệu cảnh báo (RF-36) | `chronic_conditions` | P1 | Luôn hỏi | Không skip | — | 1 |
-| Q4-05 | "Trong 30 ngày gần đây có phẫu thuật, thủ thuật xâm lấn nào không? Hiện có đang mang ống thông tiểu, catheter, hay dẫn lưu nào trên người không?" | Đường vào nhiễm khuẩn trực tiếp (RF-33, 34) | `recent_surgery_30d`, `surgical_site_signs`(C), `indwelling_device` | P1 | Luôn hỏi | Không skip | Nếu có phẫu thuật → hỏi vết mổ hiện có sưng đỏ/chảy dịch không | 1 |
-| Q4-06 | "Trong 1–3 tháng gần đây có đi đến vùng nào có sốt rét lưu hành không (vùng núi, biên giới, đi nước ngoài)?" | Sốt rét ác tính — cấp cứu tiềm tàng, không loại trừ được nếu không xét nghiệm (RF-35) | `travel_history_12m`, `malaria_risk_area` | P0 | Luôn hỏi | Không skip | Hỏi ngày trở về cụ thể để phân định ≤1 tháng vs >1 tháng | 1 |
+| Q4-02 | "Trong 6 tuần gần đây có sinh nở, sảy thai, hoặc nạo hút thai không?" | Nguy cơ nhiễm khuẩn hậu sản (RF-32) | `postpartum_6w` | P1 | `sex = female` AND `15 ≤ age ≤ 55` AND chưa xác nhận đang mang thai AND Q4-00 dương tính (ý thai kỳ/hậu sản) | Nam giới, đã xác nhận đang mang thai, hoặc Q4-00 âm tính rõ ràng | — | 0 |
+| Q4-03 | "Có đang hóa trị ung thư, ghép tạng, dùng thuốc ức chế miễn dịch/corticoid kéo dài, hoặc biết mình bị suy giảm miễn dịch (HIV, đã cắt lách...) không?" | **Nhóm nguy cơ cao nhất — sốt giảm bạch cầu hạt là cấp cứu nội khoa** (RF-30, 31) | `immunocompromised`, `immunocompromise_cause`, `known_neutropenia` | P1 | Q4-00 dương tính (ý miễn dịch/hóa trị) hoặc mơ hồ | Q4-00 âm tính rõ ràng cho ý này | Nếu đang hóa trị → hỏi thời điểm gần nhất (≤6 tuần?) và có biết đang giảm bạch cầu hạt không | 2 |
+| Q4-04 | "Có đang mắc bệnh mạn tính nào không — bệnh tim, phổi, gan, thận, tiểu đường, hoặc bệnh về máu như thalassemia?" | Lý do cân nhắc nhập viện theo BYT dù chưa có dấu hiệu cảnh báo (RF-36) | `chronic_conditions` | P1 | Q4-00 dương tính (ý bệnh mạn tính) hoặc mơ hồ | Q4-00 âm tính rõ ràng cho ý này | — | 1 |
+| Q4-05 | "Trong 30 ngày gần đây có phẫu thuật, thủ thuật xâm lấn nào không? Hiện có đang mang ống thông tiểu, catheter, hay dẫn lưu nào trên người không?" | Đường vào nhiễm khuẩn trực tiếp (RF-33, 34) | `recent_surgery_30d`, `surgical_site_signs`(C), `indwelling_device` | P1 | Q4-00 dương tính (ý phẫu thuật/thiết bị) hoặc mơ hồ | Q4-00 âm tính rõ ràng cho ý này | Nếu có phẫu thuật → hỏi vết mổ hiện có sưng đỏ/chảy dịch không | 1 |
+| Q4-06 | "Trong 1–3 tháng gần đây có đi đến vùng nào có sốt rét lưu hành không (vùng núi, biên giới, đi nước ngoài)?" | Sốt rét ác tính — cấp cứu tiềm tàng, không loại trừ được nếu không xét nghiệm (RF-35) | `travel_history_12m`, `malaria_risk_area` | P1 | Q4-00 dương tính (ý du lịch/sốt rét) hoặc mơ hồ | Q4-00 âm tính rõ ràng cho ý này | Hỏi ngày trở về cụ thể để phân định ≤1 tháng vs >1 tháng | 1 |
 | Q4-07 | "Xung quanh nhà/nơi làm việc gần đây có ai bị sốt xuất huyết, cúm, sởi, tay chân miệng không? Gần đây có bị muỗi đốt nhiều, hoặc ở khu vực có sốt xuất huyết không?" | Thay đổi xác suất nền; kích hoạt bộ câu hỏi cảnh báo SXHD (§Nhóm K KM) | `outbreak_exposure`, `mosquito_exposure` | P1 | Luôn hỏi | Không skip | — | 0 |
 | Q4-08 | "Hiện [bé/anh chị] sống một mình hay có người ở cùng theo dõi được? Từ nhà đến cơ sở y tế gần nhất mất khoảng bao lâu?" | Điều kiện an toàn tiên quyết của `SELF_CARE` — self-care an toàn phụ thuộc người theo dõi (RF-38) | `lives_alone`, `caregiver_available`, `access_to_care_minutes`(O) | P1 | Luôn hỏi trước khi có thể kết luận `SELF_CARE` | Có thể hoãn tới Stage 6 nếu đã xác định `EMERGENCY`/`EARLY_VISIT` ở Stage 3 (không ảnh hưởng kết luận nữa, chỉ cần cho phiếu bàn giao) | — | 0 |
 
@@ -157,7 +189,8 @@
 | Q5-02 | "Có sưng, đau khớp hoặc chi nào không? [trẻ] Bé có chịu đi lại, dùng tay chân bình thường không?" | Amber NICE — nghi nhiễm khuẩn xương khớp, dễ bỏ sót (RF-41) | `joint_limb_swelling`, `non_weight_bearing`(C: <16t) | P1 | Luôn hỏi (rẻ, giá trị cao) | Không skip | — | 0 |
 | Q5-03 | "Có đau họng, đau tai, ho, sổ mũi không?" | Định hướng ổ nhiễm khuẩn lành tính hơn, hỗ trợ kết luận `SELF_CARE` | `sore_throat`, `ear_pain`, `cough` | P3 | Còn ngân sách VÀ chưa xác định rõ ổ nhiễm khuẩn | Đã chốt `EMERGENCY`/`EARLY_VISIT`, hoặc hết ngân sách | — | 0 |
 | Q5-04 | "Có tiêu chảy không ạ? Phân có lẫn máu không?" | Mất nước, nguồn nhiễm; cảnh báo SXHD | `diarrhea`, `bloody_stool`(C) | P1 | Luôn hỏi | Không skip | — | 0 |
-| Q5-05 | "Hiện có đang dùng thuốc giảm đau/hạ sốt nào khác ngoài paracetamol không — ví dụ ibuprofen, aspirin? Có đang dùng kháng sinh nào không?" | **Ràng buộc an toàn bắt buộc:** cấm gợi ý NSAID khi chưa loại trừ SXHD (§4.9 KM, R-G-03) | `nsaid_use`, `antibiotic_current` | P0 | Luôn hỏi — kể cả khi đã ở nhánh cấp cứu (hỏi nhanh, không trì hoãn escalate) | Không bao giờ skip | Nếu `nsaid_use = true` → hiển thị cảnh báo an toàn ngay trong hội thoại | 0 |
+| Q5-05a | "Hiện có đang dùng thuốc giảm đau/hạ sốt nào khác ngoài paracetamol không — ví dụ ibuprofen, aspirin?" | **Ràng buộc an toàn:** cấm gợi ý NSAID khi chưa loại trừ SXHD (§4.9 KM, R-G-03) — bản thân ràng buộc an toàn này **không đổi**, chỉ đổi cách/thời điểm hỏi | `nsaid_use` | C/M1 (route dengue-context, hoặc trước khi đưa lời khuyên hạ sốt) | Nếu `EMERGENCY` **đã** được xác nhận: **hoãn câu hỏi này tới sau khi đã hiển thị cảnh báo cấp cứu** — không bao giờ là bước chặn trước khi hiển thị cảnh báo; nếu chưa rõ EMERGENCY, hỏi bình thường trong Stage 5 | Route không phải dengue-context và không hướng tới tư vấn hạ sốt cụ thể → có thể rút gọn thành 1 câu ghi chú "nhớ nói với điều dưỡng thuốc đã dùng" thay vì hỏi trực tiếp | Nếu `nsaid_use = true` → hiển thị cảnh báo an toàn ngay trong hội thoại (nhưng không chặn/trì hoãn cảnh báo `EMERGENCY` nếu đã có) | 0 |
+| Q5-05b | "Có đang dùng kháng sinh nào không ạ?" | Sốt dai dẳng dù dùng KS = tín hiệu cần khám; dùng cho phiếu bàn giao | `antibiotic_current` | H / C (sốt ≥5 ngày hoặc đã khám bác sĩ trước đó) | Còn ngân sách, hoặc điều kiện `C` kích hoạt | Đã chốt `EMERGENCY`, hoặc hết ngân sách và điều kiện `C` không kích hoạt | — | 0 |
 | Q5-06 | "Bé đã tiêm chủng đầy đủ theo lịch chưa ạ? Có tiêm vắc-xin nào trong 48 giờ gần đây không?" | Nguy cơ bệnh phòng ngừa được; vắc-xin gần đây là yếu tố nhiễu khi diễn giải sốt | `immunization_status`, `recent_vaccination_48h` | P2 | `age < 5` VÀ còn ngân sách | `age ≥ 5` | — | 0 |
 | Q5-07 | "Có đau nhức người, đau cơ, hoặc đau nhức phía sau hốc mắt không?" | Bộ triệu chứng gợi ý bệnh virus lưu hành tại VN; hỗ trợ ghi chú cho điều dưỡng | `myalgia_retroorbital_pain` | P3 | Còn ngân sách, đặc biệt nếu `outbreak_exposure` chứa `dengue` | Đã chốt `EMERGENCY`/`EARLY_VISIT`, hoặc hết ngân sách | — | 0 |
 
@@ -173,22 +206,40 @@ Không sinh field mới; thực hiện: (a) kiểm tra `contradiction_flags`, ch
 
 Ngay khi **một** điều kiện `EMERGENCY` được xác nhận (bất kỳ rule `R-E-xx` nào trong KM §6.1, ví dụ: `consciousness_level` giảm, co giật đang diễn ra, cứng gáy/thóp phồng, khó thở nặng/tím tái/thở rít, dấu hiệu sốc, không tiểu >6h, không uống được/nôn tất cả, ban không mất khi ấn kính, xuất huyết niêm mạc/tiêu hóa, trẻ <3 tháng có sốt, hạ thân nhiệt ở nhóm nguy cơ, nghi hyperthermia, khó chịu hơn dù đã hạ sốt, sốt giảm bạch cầu hạt, sốt rét vùng dịch ≤1 tháng, đau bụng dữ dội/bụng cứng, hoặc sản khoa có red flag):
 
-1. **Dừng ngay bảng Stage 3** — không cần hỏi hết 14 câu, vì theo nguyên tắc bất biến của KM (§0.2): mức triage = mức cao nhất trong các rule khớp, **không rule nào được hạ mức đã đặt**. Hỏi thêm red flag khác không thay đổi kết luận `EMERGENCY`.
+1. **Dừng ngay bảng Stage 3A/3B** — không cần hỏi hết các câu còn lại, vì theo nguyên tắc bất biến của KM (§0.2): mức triage = mức cao nhất trong các rule khớp, **không rule nào được hạ mức đã đặt**. Hỏi thêm red flag khác không thay đổi kết luận `EMERGENCY`.
 2. **Hiển thị cảnh báo cấp cứu ngay lập tức**, không chờ hỏi hết, không chờ duyệt HITL (kế thừa §0.5 KM).
 3. **Bỏ toàn bộ Stage 4 (trừ những gì thay đổi cách hướng dẫn escalate):** vẫn hỏi nhanh `immunocompromised`/`known_neutropenia` nếu chưa biết (ảnh hưởng thông điệp "cần kháng sinh trong giờ đầu" cho điều dưỡng), và `is_pregnant` nếu là nữ trong độ tuổi sinh sản (ảnh hưởng việc hướng tới cơ sở có sản khoa) — còn lại (du lịch, dịch tễ, sống một mình...) **bỏ hoàn toàn**, điều dưỡng sẽ đánh giá trực tiếp.
 4. **Bỏ toàn bộ Stage 5** — triệu chứng kèm theo, làm giàu thông tin không còn giá trị khi đã cần cấp cứu ngay.
-5. **Vẫn hỏi nhanh Q5-05 (NSAID)** nếu chưa biết — 1 câu, không trì hoãn việc hiển thị cảnh báo cấp cứu (có thể hỏi song song/sau khi đã hiển thị cảnh báo).
+5. **Q5-05a (NSAID) không bao giờ chặn bước hiển thị cảnh báo cấp cứu.** Nếu chưa biết `nsaid_use`, có thể hỏi nhanh 1 câu **sau khi** cảnh báo đã hiển thị, hoặc rút gọn thành ghi chú "nhớ nói với điều dưỡng thuốc đã dùng" trên phiếu bàn giao. **Q5-05b (kháng sinh) là `H`, bỏ qua hoàn toàn** ở nhánh cấp cứu — không có giá trị thay đổi hành động cấp cứu.
 6. Chuyển thẳng Stage 6 — nhánh cấp cứu: thông điệp an toàn (theo §0.4 KM, không nêu tên bệnh), hướng dẫn gọi 115/đến cấp cứu, escalate cho điều dưỡng ngay lập tức.
 
 ### 4.2. Khi `SELF_CARE` đã "có vẻ" rõ ràng — bỏ những câu hỏi nào?
 
-**Không được bỏ Stage 3.** `SELF_CARE` chỉ được kết luận khi **toàn bộ checklist §5.4 KM** (mọi red flag `EMERGENCY`/`EARLY_VISIT` đều âm tính) đã được xác nhận rõ ràng — không thể suy luận tắt "chắc là nhẹ" mà bỏ qua câu hỏi an toàn. Đây là khác biệt cốt lõi so với việc rút ngắn khi `EMERGENCY`: rút ngắn vì đã đủ căn cứ nâng mức là an toàn; rút ngắn để hạ mức là **không bao giờ được phép**.
+**Không được bỏ "minimum scan" an toàn — tức Stage 3A (toàn bộ field `M0`) cộng với các field `M1` liên quan tới route đang áp dụng.** Điều này **không** có nghĩa là phải hỏi đủ toàn bộ danh sách câu hỏi trong bảng Part 3/ma trận Part 6 KM cho mọi ca — với route nguy cơ thấp (`ROUTE_LOCALIZED_SOURCE`), phần enrichment (`H`/`O`) có thể bỏ qua ngay cả khi đang hướng `SELF_CARE`. `SELF_CARE` chỉ được kết luận khi Stage 3A âm tính toàn bộ **và** các field `M1`/`M1_SELF_CARE` liên quan tới route đã có giá trị xác định (không `unknown` ảnh hưởng rule) — không thể suy luận tắt "chắc là nhẹ" mà bỏ qua câu hỏi `M0`/`M1` an toàn. Đây là khác biệt cốt lõi so với việc rút ngắn khi `EMERGENCY`: rút ngắn vì đã đủ căn cứ nâng mức là an toàn; rút ngắn để hạ mức xuống `SELF_CARE` mà bỏ qua `M0`/`M1` là **không bao giờ được phép**.
 
 Những gì **có thể** bỏ khi xu hướng đang rất rõ là lành tính (đã qua hết Stage 3 sạch, không red flag, `caregiver_concern_level` thấp):
 
 - Toàn bộ field `P3` ở Stage 5: `fever_pattern`, `myalgia_retroorbital_pain`, `sore_throat`/`ear_pain`/`cough` (nếu đã xác định ổ nhiễm khuẩn lành tính rõ qua câu khác), `temp_device_type`, `antipyretic_total_24h_mg` (trừ khi có dấu hiệu nghi quá liều), `animal_water_exposure`, `sick_contact`, `drug_allergies`, chi tiết `current_medications`.
 - Các nhánh điều kiện `C` tự nhiên không áp dụng (ví dụ hỏi sản khoa cho nam giới) — đây không phải "tối ưu" mà là skip condition mặc định.
 - Một khi checklist §5.4 đã **toàn bộ xanh** và không còn `unknown` ảnh hưởng rule → dừng ngay, không cố hỏi thêm cho "chắc" — sang Stage 6 hiển thị safety-netting.
+
+### 4.3. Routing theo mức nguy cơ (named routes) — quy tắc dừng/hỏi theo route
+
+Để tránh hỏi đều một bộ câu hỏi cho mọi ca, hội thoại xác định "route" ngay khi đủ dữ liệu (thường sau Stage 0 + đầu Stage 4) và áp quy tắc dừng tương ứng:
+
+| Route | Điều kiện kích hoạt | Mục tiêu hỏi |
+|---|---|---|
+| `ROUTE_INFANT_HIGH` | Tuổi < 3 tháng | Xác nhận tuổi + sốt là đủ để `EMERGENCY` (RF-22); hỏi thêm 1–2 câu tối thiểu cho phiếu bàn giao, không cố "chứng minh" mức nào khác |
+| `ROUTE_HIGH_RISK` | `conservatism_tier ≥ 1` (thai kỳ/hậu sản, suy giảm miễn dịch/hóa trị, ≥75 tuổi kèm yếu tố khác, bệnh mạn nặng, sốt rét vùng dịch, sống một mình…) | **Mục tiêu là loại trừ `EMERGENCY`, không phải chứng minh `SELF_CARE`** — `SELF_CARE` không tồn tại ở tier 2 theo KM §5.2/§6.3 |
+| `ROUTE_STANDARD` | Không thuộc route trên, tuổi ≥6 tháng, không dấu hiệu định hướng ổ nhiễm khuẩn rõ | Hỏi đủ Stage 3A + 3B + Q4-00 sàng lọc; hướng tới `SELF_CARE` nếu đủ điều kiện §5.4 KM |
+| `ROUTE_DENGUE_CONTEXT` | `mosquito_exposure`/`outbreak_exposure` (dengue) dương tính, hoặc có ≥1 trong: đau bụng, xuất huyết, `worse_after_defervescence`, đang dùng/định dùng NSAID | Đào sâu bộ câu hỏi cảnh báo SXHD (Nhóm K, Nhóm P — đặc biệt `nsaid_use`) trước khi tư vấn hạ sốt |
+| `ROUTE_LOCALIZED_SOURCE` | Stage 3A âm tính, có ổ nhiễm khuẩn lành tính rõ (vd viêm họng) qua các field `O` đã trả lời tự nhiên | Bỏ qua toàn bộ enrichment (`H`/`O`) còn lại, chỉ tập trung xác nhận an toàn `SELF_CARE` (`M0` + `M1` liên quan) |
+
+**Quy tắc dừng theo route (kế thừa Part 4.1/4.2, áp dụng cụ thể theo route):**
+
+1. **`EMERGENCY` đã xác nhận** → dừng hỏi thường quy ngay, hiển thị cảnh báo ngay lập tức (bất kể route nào).
+2. **`EARLY_VISIT` đã đạt được** → chỉ tiếp tục hỏi các field còn có thể **nâng** lên `EMERGENCY` hoặc **đổi** cơ sở/khung thời gian trong vòng 4 giờ; bỏ qua toàn bộ field `H`/`O` thuần làm giàu.
+3. **Đang hướng `SELF_CARE`** → phải hoàn thành `M0` + `M1`/`M1_SELF_CARE` cho route đang áp dụng, nhưng **không** cần hỏi hết ma trận đầy đủ ở Part 6 KM — chỉ phần liên quan route đó (vd `ROUTE_LOCALIZED_SOURCE` bỏ qua gần hết Stage 4 chi tiết vì Q4-00 đã âm tính).
 
 ---
 
@@ -217,12 +268,23 @@ Những gì **có thể** bỏ khi xu hướng đang rất rõ là lành tính (
 
 | Tình huống | Quyết định | Điều kiện áp dụng |
 |---|---|---|
-| **Hỏi lại (re-ask)** | Field `M`/`C` (đã kích hoạt) còn `unknown` sau lượt hỏi đầu, VÀ field đó cấp dữ liệu trực tiếp cho 1 rule có thể thay đổi mức triage | Tối đa 1 lần làm rõ (theo Part 5) cho field thường; tối đa **2 lần** cho field `P0` (hậu quả của việc bỏ sót cao hơn giá trị của việc rút ngắn hội thoại) |
+| **Hỏi lại (re-ask)** | Field `M0`/`M1`/`C` (đã kích hoạt) còn `unknown` sau lượt hỏi đầu, VÀ field đó cấp dữ liệu trực tiếp cho 1 rule có thể thay đổi mức triage | Field `M0`: tối đa **2 lần** làm rõ (hậu quả bỏ sót cao hơn giá trị rút ngắn hội thoại); field `M1`/`C`: tối đa 1 lần — nếu vẫn `unknown` và đã có `EARLY_VISIT`/`EMERGENCY` từ nơi khác thì dừng, chỉ chặn riêng kết luận `SELF_CARE` (xem KM §6.1a) |
 | **Ước lượng (estimate)** | **Chỉ** áp dụng cho field **derived** đã khai báo rõ trong KM (`fever_duration_days` tính từ `fever_onset_at`; `measurement_confidence` suy ra từ `temp_device_type` + `temp_site` + thời điểm đo) | Không bao giờ ước lượng thay người dùng cho field `*_reported`/tri-state gốc — cấm tuyệt đối theo §3.1 KM (`unknown ≠ false`) |
 | **Tiếp tục (không hỏi lại)** | Field `O`, hoặc field `C` mà điều kiện kích hoạt không thỏa, hoặc field đã bị field khác "bao hàm" (vd đã xác nhận `non_blanching_rash = true` thì không cần hỏi riêng `rash_present`) | Ghi vào `unknown_fields` nếu có, không chặn tiến trình |
-| **Dừng hẳn** | (a) Đã chốt 1 red flag `EMERGENCY` (Part 4); (b) đạt giới hạn ngân sách câu hỏi mà phần còn lại chỉ là field `O`; (c) người dùng không thể tiếp tục (mất kết nối, quá hoảng loạn, từ chối) | (b) Ngân sách gợi ý: nhóm `conservatism_tier 2` (đã chắc chắn `EMERGENCY` từ Stage 1 do tuổi/ngưỡng riêng) ≤ 6 câu; nhóm chung ≤ 20–25 câu tổng cộng qua các stage. (c) Áp dụng ngay mức thận trọng nhất suy ra được từ dữ liệu đã có, đặt `data_gap = true`, `hitl_status = ask_more` — **không bao giờ mặc định về `SELF_CARE`** khi dừng giữa chừng |
+| **Dừng hẳn** | (a) Đã chốt 1 red flag `EMERGENCY` (Part 4); (b) đạt giới hạn ngân sách câu hỏi mà phần còn lại chỉ là field `O`/`H`; (c) người dùng không thể tiếp tục (mất kết nối, quá hoảng loạn, từ chối) | (b) Ngân sách theo route/kết luận (thay cho ngân sách phẳng "20–25 câu tổng cộng" của bản thiết kế trước — xem bảng ngân sách §6.5 bên dưới). (c) Áp dụng ngay mức thận trọng nhất suy ra được từ dữ liệu đã có, đặt `data_gap = true`, `hitl_status = ask_more` — **không bao giờ mặc định về `SELF_CARE`** khi dừng giữa chừng |
 
 **Trường hợp đặc biệt — mâu thuẫn (`contradiction_flags`):** không thuộc 4 nhánh trên. Khi phát hiện hai câu trả lời trái ngược (ví dụ: "bé vẫn chơi ngoan" ở Q3-01 nhưng "bé li bì khó đánh thức" ở chỗ khác), **không kết luận vội** — chạy đúng 1 vòng câu hỏi làm rõ trực tiếp nêu rõ điểm mâu thuẫn, rồi mới tiếp tục hoặc dừng theo bảng trên.
+
+### 6.5. Ngân sách câu hỏi theo route/kết luận **[EN]** 
+
+| Tình huống | Ngân sách câu hỏi (cụm câu hỏi tổ hợp, không phải field đơn lẻ) |
+|---|---|
+| `EMERGENCY` rõ ràng (chốt sớm ở Stage 3A hoặc do tuổi/ngưỡng riêng — `ROUTE_INFANT_HIGH`) | **3–6 câu** |
+| `EARLY_VISIT` rõ ràng | **8–12 câu** |
+| `SELF_CARE` — ứng viên (`ROUTE_STANDARD`/`ROUTE_LOCALIZED_SOURCE`) | **12–16 câu** |
+| Nguy cơ cao nhưng ổn định (`ROUTE_HIGH_RISK`, mục tiêu loại trừ `EMERGENCY`) | **8–12 câu** |
+
+Vượt ngân sách mà phần còn thiếu chỉ là field `O`/`H` → dừng theo bảng Part 6 (mục "Dừng hẳn").
 
 ---
 
@@ -311,6 +373,8 @@ graph TD
     CHECK -->|thiếu| EARLY
 ```
 
+> **Áp dụng trong các cụm Q3a–Q3d (Stage 3A) và Q3e/nhánh Stage 3B ở trên:** mỗi cụm là một câu hỏi tổ hợp theo kỹ thuật batch negation (§3.3A) — "không có dấu hiệu nào" đưa toàn bộ field trong cụm về `false` cùng lúc và đi thẳng sang cụm kế tiếp; chỉ khi có ít nhất 1 ý "có"/"không chắc" mới rẽ vào follow-up riêng cho (các) field đó trước khi sang cụm kế tiếp. Đồng thời, tại **bất kỳ điểm nào** trên đồ thị, nếu field của một node phía sau đã được suy ra từ câu trả lời tự do trước đó (§3, quy ước "không hỏi lại field đã có giá trị xác định") thì node đó được **bỏ qua**, đi thẳng tới node kế tiếp còn field `unknown`; nếu người dùng sửa lại giá trị đã cho ở một node đã đi qua, hệ thống ghi đè giá trị tại node đó và chỉ quay lại các node có điều kiện kích hoạt phụ thuộc giá trị vừa đổi (vd sửa tuổi ở Q0 buộc đánh giá lại các nhánh `C` theo tuổi dọc theo đồ thị).
+
 ---
 
 ## PART 8 — HỘI THOẠI MẪU
@@ -355,7 +419,7 @@ graph TD
 
 ---
 
-#### E3 — Ban không mất khi ấn kính
+#### E3 — Ban không mất khi ấn
 
 **User:** "Cháu sốt 2 ngày nay, sáng nay thấy nổi mấy chấm tím ở chân, ấn vào không mất."
 **Assistant:** "Dạ em ghi nhận. Dấu hiệu ban tím không mất khi ấn là dấu hiệu **cần đưa cháu đi cấp cứu ngay bây giờ**, không chờ thêm. Trong lúc di chuyển, cô/chú theo dõi thêm giúp em: cháu có tỉnh táo, có cứng gáy hay sợ ánh sáng không ạ?"
@@ -594,8 +658,53 @@ graph TD
 
 ---
 
-## PHỤ LỤC — TRUY VẾT NGUỒN
+### 8.4. Minh hoạ tối ưu hoá hội thoại (batch negation, không hỏi lại field đã có, xử lý sửa câu trả lời)
 
-Tài liệu này không tự tạo field, ngưỡng, hay rule mới — mọi tham chiếu `RF-xx`, `R-x-xx`, field name đều trỏ về `fever-knowledge-model.md` v1.0. Khi knowledge model được cập nhật (thêm/sửa red flag, đổi ngưỡng), tài liệu conversation spec này **phải được rà soát lại** đồng bộ, đặc biệt các bảng Part 3 (câu hỏi có thể lệch khỏi field mới) và Part 8 (ví dụ có thể không còn khớp rule).
+#### O1 — Batch negation ở Stage 3A + không hỏi lại field đã trả lời sớm
 
-**Trạng thái:** DRAFT — chưa qua thẩm định của hội đồng chuyên môn hoặc review UX hội thoại thực tế với điều dưỡng. Cần kiểm thử với bộ ≥20 test case chuẩn theo `docs/planning/` trước khi đưa vào luồng Agent chính thức, theo quy ước testing trong `CLAUDE.md`.
+**User:** "Con em 3 tuổi, sốt 2 ngày 38,5 độ, bé vẫn tỉnh táo, chơi đùa bình thường, ăn uống tốt, không có gì bất thường khác cả."
+**Assistant:** *(đã ghi nhận `consciousness_level = alert`, `feeding_intake = normal`, `fever_duration_days = 2`, `temp_c = 38.5` ngay từ câu mô tả tự do đầu tiên — bỏ qua lại Q3-01 phần tri giác và Q3-09 phần ăn uống khi tới lượt)* "Dạ em cảm ơn chị. Cho em hỏi thêm một loạt để chắc chắn an toàn cho bé: bé có bị co giật, cứng gáy, sợ ánh sáng, hay yếu tay chân/méo miệng không ạ? Có khó thở, tím môi, ngực rút lõm không? Da có lạnh ẩm, nổi vân tím không? Có nổi ban tím không mất khi ấn, hay chảy máu bất thường không? — chị thấy có dấu hiệu nào trong số này không ạ?"
+**User:** "Dạ không, không có gì trong số đó cả."
+**Assistant:** *(gán `false` cho toàn bộ field trong cụm vừa hỏi: `seizure_occurred`, `neck_stiffness`, `photophobia`, `focal_neuro_deficit`, `breathing_difficulty`, `cyanosis`, `chest_indrawing`, `cold_clammy_skin`, `capillary_refill_ge_3s`, `non_blanching_rash`, `mucosal_bleeding`, `gi_bleeding` — không hỏi lại từng ý) — chuyển sang cụm Stage 3A còn lại (đau bụng, tiểu tiện)* "Dạ, bé có đau bụng nhiều hay đi tiểu ít hơn bình thường trong 6 giờ qua không ạ?"
+
+```json
+{
+  "patient": {"age_value": 3, "age_unit": "year"},
+  "fever": {"temp_c": 38.5, "fever_duration_days": 2},
+  "general": {"consciousness_level": "alert", "feeding_intake": "normal"},
+  "neurological": {"seizure_occurred": false, "neck_stiffness": false, "photophobia": false, "focal_neuro_deficit": false},
+  "respiratory": {"breathing_difficulty": false, "cyanosis": false, "chest_indrawing": false},
+  "circulatory": {"cold_clammy_skin": false, "capillary_refill_ge_3s": false},
+  "skin": {"non_blanching_rash": false, "mucosal_bleeding": false, "gi_bleeding": false}
+}
+```
+
+**Reasoning:** Hai nguyên tắc tối ưu hoá cùng áp dụng: (1) `consciousness_level`/`feeding_intake`/`fever_duration_days`/`temp_c` đã có giá trị xác định từ câu mô tả mở đầu → Q3-01 (phần tri giác) và Q3-09 (phần ăn uống) không được hỏi lại, đúng quy ước §3; (2) câu phủ định tường minh "không, không có gì trong số đó cả" cho cả cụm hỏi gộp → gán `false` đồng loạt cho toàn bộ field trong cụm, không lặp lại từng ý — đúng kỹ thuật batch negation §3.3A. Đây **không** vi phạm `unknown ≠ false` vì là phủ định rõ ràng cho câu hỏi đã hỏi tường minh, không phải suy diễn từ im lặng.
+
+---
+
+#### O2 — Người dùng sửa lại câu trả lời giữa hội thoại
+
+**User:** "Bé nhà em 2 tuổi, sốt 3 ngày rồi."
+**Assistant:** *(ghi `age_value=2, age_unit=year`, `fever_duration_days=3`)* "Dạ em cảm ơn chị. Bé có bị co giật, cứng gáy, khó thở, tím tái, hay nổi ban tím không mất khi ấn không ạ?"
+**User:** "À khoan, em nhớ nhầm, không phải 3 ngày, là 6 ngày rồi mới đúng. Còn mấy cái chị hỏi thì không có."
+**Assistant:** *(ghi đè `fever_duration_days = 6` thay cho 3, đồng thời gán `false` cho cụm red flag vừa hỏi theo batch negation; vì thay đổi thời gian sốt không đổi điều kiện kích hoạt của các câu đã hỏi ở Stage 0/3A nên không cần hỏi lại các câu đó, chỉ ghi nhận mốc mới cho rule ngưỡng ≥5 ngày)* "Dạ em đã cập nhật lại là bé sốt 6 ngày rồi ạ. Với thời gian sốt kéo dài như vậy, dù các dấu hiệu khác hiện chưa thấy, em vẫn khuyên nên cho bé đi khám sớm để tìm nguyên nhân."
+
+```json
+{
+  "patient": {"age_value": 2, "age_unit": "year"},
+  "fever": {"fever_duration_days": 6},
+  "neurological": {"seizure_occurred": false, "neck_stiffness": false},
+  "respiratory": {"breathing_difficulty": false, "cyanosis": false},
+  "skin": {"non_blanching_rash": false},
+  "session": {"triage_level": "EARLY_VISIT", "time_target": "within_24h", "reason_codes": ["RF-26"], "triggered_rules": ["R-V-02"]}
+}
+```
+
+**Reasoning:** `fever_duration_days` bị ghi đè từ 3 → 6 theo giá trị mới nhất người dùng cung cấp, đúng quy ước "lấy giá trị sửa lại" ở §3. Vì `age_value/age_unit` không đổi, không có nhánh `C` phụ thuộc tuổi nào cần chạy lại. Mốc mới `≥5 ngày` kích hoạt `R-V-02` → `EARLY_VISIT`, khác với kết luận đáng lẽ có nếu vẫn dùng giá trị cũ (3 ngày, chưa đạt ngưỡng) — minh hoạ vì sao bắt buộc phải dùng giá trị đã sửa, không giữ giá trị ban đầu.
+
+---
+
+## PHỤ LỤC — NGUỒN
+
+Tài liệu này không tự tạo field, ngưỡng, hay rule mới — mọi tham chiếu `RF-xx`, `R-x-xx`, field name đều trỏ về `fever-knowledge-model.md` v1.0. 
