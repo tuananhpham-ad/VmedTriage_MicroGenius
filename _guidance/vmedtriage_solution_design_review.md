@@ -33,15 +33,61 @@ Gemma 3 4B nên được đặt ở vai trò **Semantic Mapper**, không nên đ
 
 ## 3. Solution Design
 
+> **Cập nhật 2026-08-07.** Mục này đã được viết lại để khớp với code thực tế. Hai sai lệch lớn của
+> bản cũ đã được sửa: (a) bản cũ mô tả **Gemma 3 4B** là thành phần AI chính, nhưng kiểm tra code cho
+> thấy Gemma **chưa từng được nối** - chỉ tồn tại trong docstring của `RuleBackedSemanticMapper`;
+> (b) bản cũ chỉ có một luồng, trong khi hệ thống hiện có **hai luồng song song**. Lịch sử thay đổi
+> nằm ở mục 9.
+
 ### 3.1. Kiến trúc tổng thể
 
-VMedTriage được thiết kế theo kiến trúc **Single-Agent Hybrid** với cơ chế **Human-in-the-Loop (HITL)** bắt buộc nhằm đảm bảo an toàn trong môi trường y tế.
+VMedTriage được thiết kế theo kiến trúc **Single-Agent Hybrid** với cơ chế **Human-in-the-Loop (HITL)**
+bắt buộc nhằm đảm bảo an toàn trong môi trường y tế.
 
-Kiến trúc mục tiêu sử dụng **Gemma 3 4B** để hiểu ngôn ngữ tự nhiên của bệnh nhân và chuyển đổi mô tả triệu chứng thành dữ liệu có cấu trúc theo checklist chuẩn. Runtime MVP hiện dùng rule-backed semantic mapper làm deterministic fallback; adapter Gemma thật chưa được nối. Sau khi dữ liệu được chuẩn hóa, hệ thống kiểm tra tính đầy đủ, phát hiện red-flag, tra protocol triage, đề xuất mức độ ưu tiên, tạo phiếu tóm tắt và chuyển cho điều dưỡng/bác sĩ xác nhận trước khi gửi kết quả cho bệnh nhân.
+Hệ thống hiện có **hai luồng song song**, phục vụ hai mục đích khác nhau:
 
-Trong toàn bộ quy trình, AI chỉ đóng vai trò **Clinical Decision Support**. Hệ thống không chẩn đoán bệnh, không kê đơn, không thay thế bác sĩ/điều dưỡng và không tự động đưa ra hướng xử trí cuối cùng.
+| | **Luồng A — Triage pipeline** | **Luồng B — Intake conversation (demo)** |
+|---|---|---|
+| Code | `src/services/triage_pipeline.py` | `src/services/intake_session.py` |
+| Mapping | `RuleBackedSemanticMapper` — **100% rule-based**, không gọi LLM | `IntakeAgent` — **gọi LLM thật** để trích xuất + sinh câu hỏi |
+| Checklist | Theo nhóm bệnh (`REQUIRED_FIELDS_BY_SYMPTOM_GROUP`) | Bộ trường chung, mock (`INTAKE_CHECKLIST`) |
+| Đầu ra | Đề xuất mức ưu tiên + phiếu bàn giao → hàng đợi điều dưỡng | Phiếu tóm tắt → **bệnh nhân tự xác nhận** (chưa nối sang điều dưỡng) |
+| Trạng thái | Đường quyết định chính | Demo phần hỏi-đáp, chưa có auth |
+
+**Về thành phần AI:** có **hai cơ chế chọn provider song song** trong code, không dùng chung:
+
+- `src/services/llm.py` — dựa trên LangChain, chỉ hỗ trợ 3 provider (openai/deepseek/gemini), đọc key
+  qua `Settings` (pydantic-settings). Hiện **không thấy nơi nào gọi** module này trong luồng sống
+  (kiểm tra lại thấy mô tả cũ ở đây là sai).
+- `src/services/provider_router.py` — **đây là cơ chế đang thực sự chạy**, dùng cho `IntakeAgent`
+  (Luồng B). Đọc thứ tự ưu tiên từ `Settings.llm_provider_order` (mặc định
+  `"gemini,deepseek,openai,anthropic,openrouter"`; đặt `Settings.llm_provider` khác `"auto"` để ép
+  dùng đúng 1 provider), duyệt qua 5 provider theo thứ tự đó, provider nào có API key hợp lệ (không
+  rỗng, không phải giá trị placeholder như `sk-your-key-here`) thì dùng, gọi vào đúng adapter tương ứng
+  trong `src/providers/` (`anthropic_provider.py`, `deepseek_provider.py`, `gemini_provider.py`,
+  `openai_provider.py`, `openrouter_provider.py`) qua `make_provider(name)`. Nếu provider đầu lỗi (hết
+  quota, lỗi mạng, model sai tên) tự rơi xuống provider tiếp theo còn key (`max_attempts=3`), không phải
+  hỏng cả tính năng. Module này còn vá một lỗ hổng: `src/providers/*` đọc key bằng `os.getenv(...)`
+  nhưng project nạp `.env` qua pydantic-settings (không ghi vào `os.environ`) — `provider_router` đồng
+  bộ `Settings.<key>` sang `os.environ[<ENV_VAR>]` ngay trước khi build provider để adapter đọc được.
+  Nếu không có provider nào có key, raise `NoProviderConfiguredError` và nơi gọi (`intake_agent`) tự
+  rơi về nhánh deterministic — không im lặng dùng key rác.
+
+⚠️ Lưu ý vận hành: `.env` hiện tại có `LLM_PROVIDER=DEEPSEEK_MODEL_NAME` — đây là giá trị **không hợp
+lệ** so với `Literal["auto","openai","deepseek","gemini","anthropic","openrouter"]` khai ở
+`src/config.py:24`, cần sửa thành `auto` (để dùng thứ tự ưu tiên) hoặc `deepseek` (ép cứng 1 provider)
+trước khi chạy, nếu không `get_settings()` sẽ raise lỗi validation lúc khởi động.
+
+Kiến trúc **không phụ thuộc một model cụ thể** - việc bản cũ gọi tên "Gemma 3 4B" là mô tả một dự
+định chưa triển khai, không phải hiện trạng. Nếu sau này nối Gemma, nó thay vào đúng vị trí adapter
+này mà không đổi kiến trúc.
+
+Trong toàn bộ quy trình, AI chỉ đóng vai trò **Clinical Decision Support**. Hệ thống không chẩn đoán
+bệnh, không kê đơn, không thay thế bác sĩ/điều dưỡng và không tự động đưa ra hướng xử trí cuối cùng.
 
 ### 3.2. Workflow
+
+**Luồng A — Triage pipeline (đường quyết định chính):**
 
 ```text
 Patient
@@ -54,15 +100,16 @@ Tool Orchestration Preflight
 (Normalize / Language / Safety / Risk Extraction)
     |
     v
-Gemma 3 4B Semantic Mapper
+Semantic Mapper
 (Natural Language -> Structured Data)
+[hiện tại: rule-backed; điểm nối LLM adapter trong tương lai]
     |
     v
 Checklist Validator
 (Schema / Missing Fields / Contradiction Check)
     |
     v
-Red-Flag Safety Layer
+Red-Flag Safety Layer            <-- chạy MỖI LƯỢT, không đợi checklist đủ
 (Emergency Escalation Detection)
     |
     v
@@ -73,14 +120,46 @@ Protocol-Grounded Triage Decision Engine
 Summary Generator
     |
     v
+Quality Guard  --(low_quality VÀ không có red-flag)--> không đẩy vào hàng đợi
+    |
+    v
 Nurse Dashboard
-(Review / Edit / Approve / Reject)
+(Approve / Override / Escalate / Reject / Ask more)
     |
     v
 Approved Response
     |
     v
 Patient
+```
+
+**Luồng B — Intake conversation (demo hỏi-đáp):**
+
+```text
+Patient message
+    |
+    v
+Red-Flag Scan (rule thuần, KHÔNG LLM)   <-- bước ĐẦU TIÊN mỗi lượt
+    |                                        cảnh báo hiện ngay, không chờ duyệt
+    v
+LLM Extraction -> điền checklist
+(chỉ trích xuất, không suy diễn, không ghi đè giá trị cũ)
+    |
+    v
+Red-Flag Scan lần 2 trên field vừa trích xuất
+(LLM có thể chuẩn hoá "li bi" -> "li bì", quét lại để không bỏ sót)
+    |
+    v
+Completeness Check
+    |
+    +--(< 85% trường bắt buộc)--> LLM sinh câu hỏi tiếp theo tự nhiên --> quay lại
+    |
+    +--(>= 85%, tức 6/7 trường)--> Phiếu tóm tắt
+                                        |
+                                        v
+                            Bệnh nhân xác nhận
+                            "Đúng rồi" -> chốt phiên
+                            "Chưa đúng" + đính chính -> quay lại thu thập
 ```
 
 ### 3.3. Thành phần hệ thống
@@ -100,26 +179,20 @@ Chức năng chính:
 
 Conversation Agent không tự kết luận chẩn đoán và không tự gửi hướng xử trí cuối cùng cho bệnh nhân.
 
-#### 2. Gemma 3 4B Semantic Mapper
+#### 2. Semantic Mapper / Intake Extraction
 
-Gemma 3 4B là thành phần AI chính dùng cho hiểu ngôn ngữ tự nhiên và trích xuất thông tin.
+Thành phần chuyển ngôn ngữ tự nhiên thành dữ liệu có cấu trúc. Hiện có **hai bản triển khai** ứng
+với hai luồng ở mục 3.1:
 
-Nhiệm vụ:
+**2a. `RuleBackedSemanticMapper`** (`src/services/semantic_mapper.py`) — dùng trong Luồng A.
 
-- Hiểu mô tả triệu chứng bằng ngôn ngữ tự nhiên.
-- Chuẩn hóa cách diễn đạt của bệnh nhân.
-- Mapping thông tin sang các trường checklist.
-- Nhận diện từ đồng nghĩa, lỗi chính tả phổ biến và mô tả không chuẩn.
-- Xác định thông tin còn thiếu.
-- Sinh output theo JSON schema cố định.
+- Rule-based thuần bằng so khớp từ khoá, **không gọi LLM**.
+- Ưu điểm: deterministic, test được, chạy offline, không tốn chi phí API.
+- Hạn chế đã biết: không hiểu từ đồng nghĩa/lỗi chính tả ngoài danh sách từ khoá cứng.
+- Đây là chỗ để nối LLM adapter sau này (interface `SemanticMapper` trong `src/models/protocols.py`
+  đã tách sẵn, `TriagePipeline.__init__` nhận `mapper` qua tham số nên thay được mà không sửa pipeline).
 
-Ví dụ input:
-
-```text
-Tôi bị đau ngực từ sáng, đi vài bước là thấy hụt hơi.
-```
-
-Ví dụ output:
+Ví dụ output (`StructuredSymptomData`):
 
 ```json
 {
@@ -129,15 +202,29 @@ Ví dụ output:
     "shortness_of_breath": true,
     "onset": "this_morning"
   },
-  "missing_fields": [
-    "pain_severity",
-    "pain_radiation"
-  ],
+  "missing_fields": ["pain_severity", "pain_radiation"],
   "confidence": 0.86
 }
 ```
 
-Gemma không đưa ra chẩn đoán, không kết luận bệnh và không trả lời trực tiếp cho bệnh nhân.
+**2b. `IntakeAgent`** (`src/services/intake_agent.py`) — dùng trong Luồng B, **có gọi LLM thật**.
+
+Ba tác vụ, mỗi tác vụ một prompt riêng:
+
+| Tác vụ | Ràng buộc trong prompt |
+|---|---|
+| `extract()` | Chỉ trích xuất thông tin đã có trong tin nhắn; không suy diễn; không ghi đè trường đã có |
+| `extract_correction()` | Chỉ trả về trường bệnh nhân đang chủ động sửa; **cấm** diễn đạt lại trường không được nhắc tới |
+| `next_question()` | Sinh 1 câu hỏi tự nhiên cho tối đa 2 trường thiếu; cấm chẩn đoán/nhận định nguy hiểm |
+
+Tách `extract_correction()` khỏi `extract()` là bắt buộc: nếu dùng chung, LLM sẽ trích lại cả trường
+không được sửa và có thể **làm nghèo dữ liệu đã có** (đã quan sát thật: `"đau bụng"` bị ghi đè thành
+`"đau"` khi bệnh nhân chỉ đang sửa tuổi).
+
+Khi LLM lỗi hoặc chưa cấu hình, cả hai luồng đều rơi về fallback deterministic. Việc này **không im
+lặng**: API trả cờ `llm_used`/`llm_available` và UI hiển thị rõ đang chạy chế độ nào.
+
+LLM ở cả hai vị trí đều không đưa ra chẩn đoán, không kết luận bệnh và không tự quyết mức ưu tiên.
 
 #### 3. Checklist Validator
 
@@ -537,3 +624,90 @@ queue, persistence và patient-safe response. Ngôn ngữ có nguy cơ tự hạ
 - MCP endpoint cũ vẫn yêu cầu URL server được cấu hình; không âm thầm giả lập external call thành công.
 - Trước production y tế cần authentication, RBAC gắn với identity thật, encryption, persistent database,
   secret management, terminology license, provider credentials và clinical validation.
+
+---
+
+## 9. Framework Update - Chốt workflow: Structured Multi-Step Reasoning trong Single-Agent (không phải Multi-Agent)
+
+Ngày 2026-08-07. Mục này chốt lại workflow sau khi thảo luận một hướng mở rộng (SLM checklist →
+conversation graph → GNN triage classifier → nurse feedback scoring). Kết luận: **giữ nguyên khung
+Single-Agent Hybrid + Protocol-Grounded Tools + HITL đã chốt ở mục 2** — không tách thành nhiều agent
+độc lập ra quyết định song song. Mọi ý tưởng mới được đưa vào làm **tool/service bổ sung trong
+Conversation Agent + tool catalog hiện có** (`src/tool/catalog/`, nhóm A-L ở mục 8), không phải agent
+riêng. Chi tiết implementation nằm ở `ARCHITECTURE.md` (mục "Framework Update 2026-08-07"); mục này
+chỉ ghi lại **lý do thiết kế**.
+
+### 9.1. Vì sao bẻ lại từ "multi-agent" sang "single-agent + tool catalog"
+
+Đề xuất ban đầu mô tả pipeline dưới dạng nhiều "agent" độc lập (Red-Flag Guard, Quality Guard,
+Checklist Extraction Agent, Graph Builder, Decision Arbiter, Feedback/Calibration Agent...). Về mặt kỹ
+thuật, các bước này đúng và cần thiết, nhưng khung "multi-agent" mâu thuẫn với nguyên tắc đã chốt ở
+mục 2 của tài liệu này: một agent chính điều phối, quyết định do engine có kiểm soát sinh ra. Đã đổi
+tên khung tư duy: **các "agent" đó thực chất là tool/bước xử lý deterministic**, chạy tuần tự dưới
+`TriagePipeline`/`ToolOrchestrator` hiện có — không có tranh chấp quyền quyết định giữa nhiều tác nhân.
+
+### 9.2. Red-flag mỗi turn — đã đúng từ trước, không cần sửa
+
+Một lo ngại nêu ra là "red-flag phải chạy mỗi turn, không đợi checklist đủ mới check". Sau khi đọc lại
+`src/services/triage_pipeline.py`: `RedFlagSafetyLayer.detect()` **đã** chạy vô điều kiện mỗi turn
+trên `structured_data` gộp luỹ kế (không phụ thuộc `validation.is_valid`), và `_derive_case_status`
+trả `NEEDS_NURSE_REVIEW` ngay khi có `red_flags` bất kể checklist đã đủ hay chưa. Tức là yêu cầu
+"phát hiện red-flag ngay từ lượt đầu" (đặc tả #1) đã được đáp ứng đúng trong code hiện tại — **không
+có thay đổi nào cần làm ở đây**, chỉ xác nhận lại bằng cách đọc code thay vì giả định.
+
+### 9.3. Checklist theo từng bệnh + dataset có nhãn
+
+5 bộ dataset `data/triage_*.csv` (đau bụng, đau đầu, đau ngực, khó thở, sốt — 609 dòng) là **nhãn tự
+sinh (silver-label)**, không phải bác sĩ gán, và lệch nhãn nặng theo từng slug triệu chứng (ví dụ
+`shortness_of_breath` xuất hiện ở cả 3 mức nhãn). Vì vậy dataset này **không** được dùng để huấn luyện
+trực tiếp một classifier tự quyết định mức triage — chỉ dùng để: (a) mở rộng eval set sau khi
+dedupe/quy đổi nhãn, (b) audit coverage của `RED_FLAG_RULES` hiện tại, (c) làm corpus case tương tự
+cho phần GNN advisory (mục 9.5, vẫn ở dạng #TODO).
+
+Đã phát hiện và vá một gap thật: `REQUIRED_FIELDS_BY_SYMPTOM_GROUP` (`src/config.py`) trước đó không
+có nhóm nào khớp `triage_daudau.csv` (đau đầu) — đã bổ sung nhóm `headache` cùng red-flag rule
+`thunderclap_headache` và protocol rule tương ứng.
+
+### 9.4. Quality Guard và HITL mở rộng (reject/ask_more)
+
+- Quality Guard chỉ được phép **gắn nhãn quan sát** (`quality_flag`), không có quyền tự đổi trạng
+  thái case. Quyết định suppress case "vớ vẩn" khỏi hàng đợi nằm ở đúng một chỗ
+  (`case_approval.list_queue`) và luôn kiểm tra `not red_flags` trước — an toàn luôn thắng.
+- `reject`/`ask_more` được thêm vào `case_approval.py` (luồng Gen2 khớp đặc tả #2), không phải vào
+  `hitl_review.py` (Gen1, legacy demo, đã bị deprecate — xem `ARCHITECTURE.md`). `reject` bắt buộc
+  `reason_code` để tách tín hiệu: chỉ lý do "AI sai" mới được tính vào thống kê đồng thuận
+  AI–điều dưỡng, lý do "đã xử lý offline" hoặc khác không được lẫn vào phép đo.
+
+### 9.5. GNN Advisory Signal — tách riêng, đánh dấu #TODO cho người khác phụ trách
+
+> **[SUPERSEDED 2026-08-07, cùng ngày]** — Quyết định "tách riêng, không nối" ở mục này đã bị **đảo
+> ngược** ở mục 10. Giữ lại nguyên văn bên dưới làm lịch sử quyết định (lý do ban đầu vẫn đúng và vẫn
+> là ràng buộc bắt buộc ở thiết kế mới — xem 10.2), không xoá.
+
+Phần dual-embedding (text summary + conversation graph) → GNN → gợi ý mức ưu tiên **không được thay
+thế** `ProtocolTriageEngine`/`RedFlagSafetyLayer` — lý do: GNN là black-box, không tra bảng phân độ,
+vi phạm trực tiếp nguyên tắc "chống bịa" và "grounded trên protocol" ở mục 2-3.4. Toàn bộ phần này đã
+được tách vào file riêng `src/services/graph_triage_advisor.py`, chưa có logic thật
+(`NotImplementedError`), không được gọi ở bất kỳ pipeline nào hiện tại, kèm checklist việc cần làm chi
+tiết trong docstring (schema graph, dual embedding, ingest dataset đã dedupe, explainability bắt buộc
+trước khi hiển thị cho nurse, calibration offline loại trừ lý do reject không liên quan accuracy).
+Người phụ trách phần này chỉ cần đọc docstring của file đó, không cần đọc lại toàn bộ ngữ cảnh hội
+thoại thiết kế.
+
+### 9.6. File/thư mục đã thay đổi trong đợt cập nhật này
+
+| File | Thay đổi |
+|---|---|
+| `src/config.py` | Thêm nhóm checklist `headache` (fields, follow-up questions, red-flag rule, protocol rule) |
+| `src/models/schemas.py` | Thêm `CaseStatus.NEEDS_MORE_INFO`/`WITHDRAWN`, `RejectReasonCode`, `ConversationQualityFlag`, `TriageCase.quality_flag` |
+| `src/services/approval_store.py` | Thêm field `reason` vào `AuditLogEntry` |
+| `src/services/case_approval.py` | Thêm `reject()`, `ask_more()`; `list_queue()` lọc thêm theo `quality_flag` |
+| `src/services/case_flow.py` | Gọi `quality_guard.assess()` mỗi turn; xử lý status `NEEDS_MORE_INFO` khi bệnh nhân trả lời tiếp |
+| `src/services/quality_guard.py` | **Mới** — heuristic rule-based, không LLM |
+| `src/services/graph_triage_advisor.py` | **Mới** — #TODO, chưa implement, tách riêng khỏi luồng quyết định |
+| `src/models/case_api.py` | Thêm `RejectRequest`, `AskMoreRequest`, `AuditActionResponse` |
+| `src/api/routers/queue.py` | Thêm route `POST /cases/{id}/reject`, `POST /cases/{id}/ask_more` |
+| `ARCHITECTURE.md` | Mục "Framework Update 2026-08-07": tài liệu hoá Gen2 REST API, flag trùng lặp Gen1/Gen2 |
+
+Đã chạy `pytest` (30/30 pass) và `ruff check` (pass) trên toàn bộ file thay đổi, không phá vỡ hành vi
+hiện có.

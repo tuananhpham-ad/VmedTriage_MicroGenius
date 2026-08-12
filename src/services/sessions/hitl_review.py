@@ -9,7 +9,7 @@ from src.models.schemas import (
     NurseReviewResponse,
     TriageCase,
 )
-from src.services.case_store import case_store
+from src.services.stores.case_store import case_store
 
 
 class HumanReviewService:
@@ -26,9 +26,6 @@ class HumanReviewService:
             case HITLAction.REJECT:
                 triage_case.status = CaseStatus.REJECTED
                 triage_case.patient_visible_response = None
-            case HITLAction.ESCALATE:
-                triage_case.status = CaseStatus.ESCALATED
-                triage_case.patient_visible_response = request.approved_response
             case HITLAction.ASK_MORE:
                 self._ask_more(triage_case, request)
 

@@ -1,0 +1,29 @@
+{
+  "disease_id": "disease_x",
+  "disease_label": "Disease X (mock test)",
+  "completion_threshold": 0.85,
+  "fields": [
+    {
+      "key": "name",
+      "label": "Tên",
+      "required": true,
+      "hint": "Họ và tên người bệnh.",
+      "value": null
+    },
+    {
+      "key": "condition",
+      "label": "Tình trạng bệnh",
+      "required": true,
+      "hint": "Mô tả triệu chứng / tình trạng hiện tại của người bệnh.",
+      "accumulate": true,
+      "value": null
+    },
+    {
+      "key": "onset",
+      "label": "Thời gian phát bệnh",
+      "required": true,
+      "hint": "Thời điểm triệu chứng bắt đầu xuất hiện (vd 'sáng nay', '3 ngày trước').",
+      "value": null
+    }
+  ]
+}

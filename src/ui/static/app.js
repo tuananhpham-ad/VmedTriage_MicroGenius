@@ -2,6 +2,7 @@ const state = {
   role: null,
   selectedRole: null,
   authMode: "login",
+  pendingVerificationEmail: "",
   accessToken: sessionStorage.getItem("vmed_access_token"),
   user: readStoredUser(),
   caseId: null,
@@ -82,6 +83,7 @@ const elements = {
   nurseView: document.querySelector("#nurseView"),
   homeButton: document.querySelector("#homeButton"),
   switchRoleButton: document.querySelector("#switchRoleButton"),
+  changePasswordButton: document.querySelector("#changePasswordButton"),
   systemStatus: document.querySelector("#systemStatus"),
   roleChoices: document.querySelector("#roleChoices"),
   roleButtons: document.querySelectorAll("[data-role]"),
@@ -93,13 +95,58 @@ const elements = {
   authForm: document.querySelector("#authForm"),
   fullNameField: document.querySelector("#fullNameField"),
   authFullName: document.querySelector("#authFullName"),
+  usernameField: document.querySelector("#usernameField"),
+  authUsername: document.querySelector("#authUsername"),
   authEmail: document.querySelector("#authEmail"),
+  phoneField: document.querySelector("#phoneField"),
+  authPhone: document.querySelector("#authPhone"),
+  birthDateField: document.querySelector("#birthDateField"),
+  authBirthDate: document.querySelector("#authBirthDate"),
+  genderField: document.querySelector("#genderField"),
+  authGender: document.querySelector("#authGender"),
+  avatarField: document.querySelector("#avatarField"),
+  authAvatar: document.querySelector("#authAvatar"),
   authPassword: document.querySelector("#authPassword"),
+  confirmPasswordField: document.querySelector("#confirmPasswordField"),
+  authConfirmPassword: document.querySelector("#authConfirmPassword"),
   nurseCodeField: document.querySelector("#nurseCodeField"),
   nurseRegistrationCode: document.querySelector("#nurseRegistrationCode"),
   authError: document.querySelector("#authError"),
+  authEmailLabel: document.querySelector("#authEmailLabel"),
+  demoHint: document.querySelector("#demoHint"),
   authSubmitButton: document.querySelector("#authSubmitButton"),
   authBackButton: document.querySelector("#authBackButton"),
+  nurseDetails: document.querySelector("#nurseDetails"),
+  professionalLicense: document.querySelector("#professionalLicense"),
+  workplace: document.querySelector("#workplace"),
+  department: document.querySelector("#department"),
+  nurseBio: document.querySelector("#nurseBio"),
+  termsField: document.querySelector("#termsField"),
+  termsAccepted: document.querySelector("#termsAccepted"),
+  forgotPasswordButton: document.querySelector("#forgotPasswordButton"),
+  emailVerificationPanel: document.querySelector("#emailVerificationPanel"),
+  emailVerificationForm: document.querySelector("#emailVerificationForm"),
+  verificationCode: document.querySelector("#verificationCode"),
+  emailVerificationError: document.querySelector("#emailVerificationError"),
+  resendVerificationButton: document.querySelector("#resendVerificationButton"),
+  forgotPasswordPanel: document.querySelector("#forgotPasswordPanel"),
+  forgotPasswordForm: document.querySelector("#forgotPasswordForm"),
+  forgotPasswordEmail: document.querySelector("#forgotPasswordEmail"),
+  forgotPasswordError: document.querySelector("#forgotPasswordError"),
+  forgotPasswordBackButton: document.querySelector("#forgotPasswordBackButton"),
+  resetPasswordPanel: document.querySelector("#resetPasswordPanel"),
+  resetPasswordForm: document.querySelector("#resetPasswordForm"),
+  newPassword: document.querySelector("#newPassword"),
+  confirmPassword: document.querySelector("#confirmPassword"),
+  resetPasswordError: document.querySelector("#resetPasswordError"),
+  resetPasswordBackButton: document.querySelector("#resetPasswordBackButton"),
+  changePasswordPanel: document.querySelector("#changePasswordPanel"),
+  changePasswordForm: document.querySelector("#changePasswordForm"),
+  currentPassword: document.querySelector("#currentPassword"),
+  changeNewPassword: document.querySelector("#changeNewPassword"),
+  changeConfirmPassword: document.querySelector("#changeConfirmPassword"),
+  changePasswordError: document.querySelector("#changePasswordError"),
+  changePasswordCancelButton: document.querySelector("#changePasswordCancelButton"),
   acceptDisclaimerButton: document.querySelector("#acceptDisclaimerButton"),
   backToRolesButton: document.querySelector("#backToRolesButton"),
   emergencyBanner: document.querySelector("#emergencyBanner"),
@@ -163,8 +210,28 @@ elements.authModeButtons.forEach((button) => {
 
 elements.homeButton.addEventListener("click", returnToRoleSelection);
 elements.switchRoleButton.addEventListener("click", logout);
+elements.changePasswordButton.addEventListener("click", openChangePasswordForm);
 elements.authBackButton.addEventListener("click", returnToRoleSelection);
 elements.authForm.addEventListener("submit", submitAuthForm);
+
+// Bấm chip tài khoản demo -> điền sẵn để khỏi phải gõ.
+elements.demoHint?.querySelectorAll(".demo-fill").forEach((button) => {
+  button.addEventListener("click", () => {
+    const account = button.dataset.user;
+    elements.authEmail.value = account;
+    elements.authPassword.value = account;
+    elements.authPassword.focus();
+  });
+});
+elements.forgotPasswordButton.addEventListener("click", openForgotPasswordForm);
+elements.emailVerificationForm.addEventListener("submit", submitEmailVerification);
+elements.resendVerificationButton.addEventListener("click", resendVerificationCode);
+elements.forgotPasswordForm.addEventListener("submit", submitForgotPasswordForm);
+elements.forgotPasswordBackButton.addEventListener("click", returnToLogin);
+elements.resetPasswordForm.addEventListener("submit", submitResetPasswordForm);
+elements.resetPasswordBackButton.addEventListener("click", returnToLogin);
+elements.changePasswordForm.addEventListener("submit", submitChangePasswordForm);
+elements.changePasswordCancelButton.addEventListener("click", closeChangePasswordForm);
 elements.backToRolesButton.addEventListener("click", returnToRoleSelection);
 elements.acceptDisclaimerButton.addEventListener("click", openPatientWorkspace);
 elements.chatForm.addEventListener("submit", submitPatientMessage);
@@ -205,6 +272,7 @@ function enterRole(role) {
   stopQueuePolling();
   state.role = role;
   elements.switchRoleButton.hidden = false;
+  elements.changePasswordButton.hidden = false;
 
   if (role === "patient") {
     showView(elements.disclaimerView);
@@ -223,8 +291,12 @@ function returnToRoleSelection() {
   state.selectedRole = null;
   elements.roleChoices.hidden = false;
   elements.authPanel.hidden = true;
+  elements.emailVerificationPanel.hidden = true;
+  elements.forgotPasswordPanel.hidden = true;
+  elements.resetPasswordPanel.hidden = true;
   elements.authError.textContent = "";
   elements.switchRoleButton.hidden = !state.accessToken;
+  elements.changePasswordButton.hidden = !state.accessToken;
   showView(elements.accessView);
   document.querySelector('[data-role="patient"]').focus();
 }
@@ -233,6 +305,9 @@ function showAuthForRole(role) {
   state.role = null;
   elements.roleChoices.hidden = true;
   elements.authPanel.hidden = false;
+  elements.emailVerificationPanel.hidden = true;
+  elements.forgotPasswordPanel.hidden = true;
+  elements.resetPasswordPanel.hidden = true;
   elements.authRoleLabel.textContent = role === "nurse" ? "Không gian điều dưỡng" : "Khu vực bệnh nhân";
   elements.authHelp.textContent =
     role === "nurse"
@@ -245,6 +320,7 @@ function showAuthForRole(role) {
 function setAuthMode(mode) {
   state.authMode = mode;
   const isRegister = mode === "register";
+  const needsNurseDetails = isRegister && state.selectedRole === "nurse";
   elements.authModeButtons.forEach((button) => {
     const isActive = button.dataset.authMode === mode;
     button.classList.toggle("is-active", isActive);
@@ -253,11 +329,36 @@ function setAuthMode(mode) {
   elements.authTitle.textContent = isRegister ? "Tạo tài khoản mới" : "Đăng nhập để tiếp tục";
   elements.fullNameField.hidden = !isRegister;
   elements.authFullName.required = isRegister;
-  elements.nurseCodeField.hidden = !(isRegister && state.selectedRole === "nurse");
-  elements.nurseRegistrationCode.required = isRegister && state.selectedRole === "nurse";
+  elements.usernameField.hidden = !isRegister;
+  elements.authUsername.required = isRegister;
+  elements.phoneField.hidden = !isRegister;
+  elements.authPhone.required = isRegister;
+  elements.birthDateField.hidden = !isRegister;
+  elements.authBirthDate.required = isRegister;
+  elements.genderField.hidden = !isRegister;
+  elements.authGender.required = isRegister;
+  elements.avatarField.hidden = !isRegister;
+  elements.authAvatar.required = isRegister;
+  elements.confirmPasswordField.hidden = !isRegister;
+  elements.authConfirmPassword.required = isRegister;
+  elements.termsField.hidden = !isRegister;
+  elements.termsAccepted.required = isRegister;
+  elements.nurseCodeField.hidden = !needsNurseDetails;
+  elements.nurseRegistrationCode.required = needsNurseDetails;
+  elements.nurseDetails.hidden = !needsNurseDetails;
+  [elements.professionalLicense, elements.workplace, elements.department, elements.nurseBio].forEach((field) => {
+    field.required = needsNurseDetails;
+  });
   elements.authPassword.autocomplete = isRegister ? "new-password" : "current-password";
+  elements.forgotPasswordButton.hidden = isRegister;
   elements.authSubmitButton.textContent = isRegister ? "Tạo tài khoản và tiếp tục" : "Đăng nhập";
   elements.authError.textContent = "";
+
+  // Đăng nhập nhận cả tên đăng nhập nên phải là type="text"; đăng ký thì bắt buộc email hợp lệ.
+  elements.authEmail.type = isRegister ? "email" : "text";
+  elements.authEmail.autocomplete = isRegister ? "email" : "username";
+  elements.authEmailLabel.textContent = isRegister ? "Email" : "Email hoặc tên đăng nhập";
+  elements.demoHint.hidden = isRegister;
 }
 
 async function submitAuthForm(event) {
@@ -272,19 +373,33 @@ async function submitAuthForm(event) {
 
   try {
     if (state.authMode === "register") {
+      const avatarDataUrl = await readAvatarDataUrl();
       const registerPayload = {
         email,
         password,
         full_name: elements.authFullName.value.trim(),
+        username: elements.authUsername.value.trim(),
+        phone_number: elements.authPhone.value.trim(),
+        date_of_birth: elements.authBirthDate.value,
+        gender: elements.authGender.value,
+        avatar_data_url: avatarDataUrl,
+        confirm_password: elements.authConfirmPassword.value,
+        terms_accepted: elements.termsAccepted.checked,
         role: state.selectedRole,
       };
       if (state.selectedRole === "nurse") {
         registerPayload.nurse_registration_code = elements.nurseRegistrationCode.value;
+        registerPayload.professional_license = elements.professionalLicense.value.trim();
+        registerPayload.workplace = elements.workplace.value.trim();
+        registerPayload.department = elements.department.value.trim();
+        registerPayload.bio = elements.nurseBio.value.trim();
       }
       await fetchJson("/api/v1/register", {
         method: "POST",
         body: JSON.stringify(registerPayload),
       });
+      openEmailVerificationForm(email);
+      return;
     }
 
     const session = await fetchJson("/api/v1/login", {
@@ -300,11 +415,150 @@ async function submitAuthForm(event) {
     saveSession(session.access_token, session.user);
     enterRole(session.user.role);
   } catch (error) {
+    if (error?.message?.includes("chưa được xác thực")) openEmailVerificationForm(email);
     elements.authError.textContent = readableError(error, "Không thể xác thực tài khoản.");
   } finally {
     elements.authSubmitButton.disabled = false;
     elements.authSubmitButton.textContent = state.authMode === "register" ? "Tạo tài khoản và tiếp tục" : "Đăng nhập";
   }
+}
+
+function openEmailVerificationForm(email) {
+  state.pendingVerificationEmail = email;
+  elements.authPanel.hidden = true;
+  elements.emailVerificationPanel.hidden = false;
+  elements.emailVerificationError.textContent = "";
+  elements.verificationCode.value = "";
+  elements.verificationCode.focus();
+}
+
+async function submitEmailVerification(event) {
+  event.preventDefault();
+  if (!state.pendingVerificationEmail || !elements.emailVerificationForm.reportValidity()) return;
+  try {
+    const result = await fetchJson("/api/v1/auth/email-verification/confirm", {
+      method: "POST",
+      body: JSON.stringify({ email: state.pendingVerificationEmail, code: elements.verificationCode.value.trim() }),
+    });
+    showToast(result.message);
+    elements.authEmail.value = state.pendingVerificationEmail;
+    returnToLogin();
+  } catch (error) {
+    elements.emailVerificationError.textContent = readableError(error, "Không thể xác thực email.");
+  }
+}
+
+async function resendVerificationCode() {
+  if (!state.pendingVerificationEmail) return;
+  try {
+    const result = await fetchJson("/api/v1/auth/email-verification/resend", {
+      method: "POST",
+      body: JSON.stringify({ email: state.pendingVerificationEmail }),
+    });
+    elements.emailVerificationError.textContent = result.message;
+  } catch (error) {
+    elements.emailVerificationError.textContent = readableError(error, "Không thể gửi lại mã.");
+  }
+}
+
+function openForgotPasswordForm() {
+  elements.authPanel.hidden = true;
+  elements.forgotPasswordPanel.hidden = false;
+  elements.forgotPasswordEmail.value = elements.authEmail.value.trim();
+  elements.forgotPasswordError.textContent = "";
+  elements.forgotPasswordEmail.focus();
+}
+
+function returnToLogin() {
+  history.replaceState({}, "", window.location.pathname);
+  elements.emailVerificationPanel.hidden = true;
+  elements.forgotPasswordPanel.hidden = true;
+  elements.resetPasswordPanel.hidden = true;
+  if (!state.selectedRole) {
+    returnToRoleSelection();
+    return;
+  }
+  elements.authPanel.hidden = false;
+  setAuthMode("login");
+  elements.authEmail.focus();
+}
+
+async function submitForgotPasswordForm(event) {
+  event.preventDefault();
+  if (!elements.forgotPasswordForm.reportValidity()) return;
+  try {
+    const result = await fetchJson("/api/v1/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email: elements.forgotPasswordEmail.value.trim() }),
+    });
+    elements.forgotPasswordError.textContent = result.message;
+  } catch (error) {
+    elements.forgotPasswordError.textContent = readableError(error, "Không thể gửi yêu cầu.");
+  }
+}
+
+async function submitResetPasswordForm(event) {
+  event.preventDefault();
+  if (!elements.resetPasswordForm.reportValidity()) return;
+  try {
+    const result = await fetchJson("/api/v1/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        token: elements.resetPasswordPanel.dataset.token,
+        new_password: elements.newPassword.value,
+        confirm_new_password: elements.confirmPassword.value,
+      }),
+    });
+    showToast(result.message);
+    returnToLogin();
+  } catch (error) {
+    elements.resetPasswordError.textContent = readableError(error, "Không thể đặt lại mật khẩu.");
+  }
+}
+
+function openChangePasswordForm() {
+  elements.changePasswordPanel.hidden = false;
+  elements.changePasswordError.textContent = "";
+  elements.changePasswordForm.reset();
+  elements.currentPassword.focus();
+}
+
+function closeChangePasswordForm() {
+  elements.changePasswordPanel.hidden = true;
+}
+
+async function submitChangePasswordForm(event) {
+  event.preventDefault();
+  if (!elements.changePasswordForm.reportValidity()) return;
+  try {
+    const result = await fetchJson("/api/v1/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: elements.currentPassword.value,
+        new_password: elements.changeNewPassword.value,
+        confirm_new_password: elements.changeConfirmPassword.value,
+      }),
+    });
+    closeChangePasswordForm();
+    logout();
+    showToast(result.message);
+  } catch (error) {
+    elements.changePasswordError.textContent = readableError(error, "Không thể đổi mật khẩu.");
+  }
+}
+
+function readAvatarDataUrl() {
+  const file = elements.authAvatar.files?.[0];
+  if (!file) return Promise.reject(new Error("Vui lòng chọn ảnh đại diện."));
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 1_000_000) {
+    return Promise.reject(new Error("Ảnh đại diện phải là PNG, JPEG hoặc WebP và không quá 1 MB."));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Không thể đọc ảnh đại diện."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function saveSession(accessToken, user) {
@@ -313,6 +567,7 @@ function saveSession(accessToken, user) {
   sessionStorage.setItem("vmed_access_token", accessToken);
   sessionStorage.setItem("vmed_user", JSON.stringify(user));
   elements.switchRoleButton.hidden = false;
+  elements.changePasswordButton.hidden = false;
 }
 
 function clearSession() {
@@ -320,6 +575,7 @@ function clearSession() {
   state.user = null;
   sessionStorage.removeItem("vmed_access_token");
   sessionStorage.removeItem("vmed_user");
+  elements.changePasswordButton.hidden = true;
 }
 
 function logout() {
@@ -838,10 +1094,15 @@ async function reviewCase(requestedAction) {
     return;
   }
 
-  const selectedPriority = elements.editedPriority.value;
   const originalPriority = currentCase.triage_proposal?.priority;
+  let selectedPriority = elements.editedPriority.value;
   let action = requestedAction;
-  if (requestedAction === "approve" && selectedPriority !== originalPriority) action = "edit";
+  if (action === "escalate") {
+    action = "edit";
+    selectedPriority = "Emergency";
+  } else if (action === "approve" && selectedPriority !== originalPriority) {
+    action = "edit";
+  }
 
   const payload = {
     action,
@@ -873,7 +1134,7 @@ async function reviewCase(requestedAction) {
     }
 
     await refreshQueue({ silent: true, force: true });
-    showToast(reviewSuccessMessage(result.status));
+    showToast(requestedAction === "escalate" ? "Đã chuyển ca sang mức cấp cứu." : reviewSuccessMessage(result.status));
   } catch (error) {
     elements.reviewError.textContent = readableError(error, "Không thể lưu quyết định. Vui lòng thử lại.");
   } finally {
@@ -982,16 +1243,19 @@ async function fetchJson(url, options = {}) {
 
   if (!response.ok) {
     let message = `Yêu cầu thất bại (${response.status}).`;
+    // Body của Response chỉ đọc được MỘT lần. Đọc ra text trước rồi mới thử parse JSON -
+    // nếu gọi response.json() rồi fallback sang response.text() thì lần đọc thứ hai ném
+    // "body stream already read", và lỗi giả đó che mất lỗi thật của server.
+    const raw = await response.text().catch(() => "");
     try {
-      const payload = await response.json();
+      const payload = JSON.parse(raw);
       if (Array.isArray(payload.detail)) {
         message = payload.detail.map((item) => item.msg).join("; ") || message;
-      } else {
-        message = payload.detail || message;
+      } else if (payload.detail) {
+        message = payload.detail;
       }
     } catch {
-      const text = await response.text();
-      if (text) message = text;
+      if (raw) message = raw.slice(0, 500);
     }
     throw new Error(message);
   }
@@ -1034,3 +1298,12 @@ function setSystemStatus(label, variant) {
 
 checkSystemStatus();
 restoreSession();
+
+const resetToken = new URLSearchParams(window.location.search).get("reset_token");
+if (resetToken) {
+  elements.roleChoices.hidden = true;
+  elements.authPanel.hidden = true;
+  elements.resetPasswordPanel.hidden = false;
+  elements.resetPasswordPanel.dataset.token = resetToken;
+  elements.newPassword.focus();
+}

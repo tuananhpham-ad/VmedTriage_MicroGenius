@@ -396,6 +396,12 @@ main {
   color: var(--accent);
 }
 
+a.text-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .text-button:hover:not(:disabled) {
   background: var(--accent-soft);
 }
@@ -561,10 +567,86 @@ main {
   margin: 0;
 }
 
+/* Gợi ý tài khoản demo - chỉ hiện ở chế độ đăng nhập, JS ẩn khi chuyển sang đăng ký. */
+.demo-hint {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted, #5b7079);
+}
+
+.demo-fill {
+  border: 1px dashed currentColor;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+
+.demo-fill:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
 .auth-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.registration-extra,
+.terms-field,
+.auth-forgot-button {
+  grid-column: 1 / -1;
+}
+
+.registration-extra {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.nurse-bio-field {
+  grid-column: 1 / -1;
+}
+
+.terms-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.terms-field input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.auth-forgot-button {
+  justify-self: start;
+  min-height: 36px;
+  padding-inline: 0;
+}
+
+.account-dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(11 29 27 / 0.52);
+}
+
+.account-dialog .auth-panel {
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
 }
 
 .demo-notice {

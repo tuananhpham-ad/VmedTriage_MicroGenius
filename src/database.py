@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -51,11 +51,50 @@ def configure_database(database_url: str | None = None) -> Engine:
     return _engine
 
 
+class SchemaDriftError(RuntimeError):
+    """Bảng đã tồn tại trong DB nhưng thiếu cột so với ORM model."""
+
+
+def _check_schema_drift(engine: Engine) -> None:
+    """Phát hiện bảng cũ thiếu cột so với model hiện tại.
+
+    `create_all` chỉ chạy `CREATE TABLE IF NOT EXISTS` - bảng đã tồn tại thì nó BỎ QUA hoàn toàn,
+    không thêm cột mới. Khi model thêm cột (vd `users.username`), file SQLite cũ vẫn giữ schema cũ và
+    mọi truy vấn sẽ chết bằng `OperationalError: no such column` ở tầng route, hiện ra ngoài thành
+    HTTP 500 với body plain-text - rất khó lần ra nguyên nhân.
+
+    Kiểm tra ngay lúc khởi động để báo lỗi đúng chỗ, kèm hướng xử lý.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    problems: list[str] = []
+
+    for table_name, table in Base.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue  # create_all vừa tạo mới -> chắc chắn đúng schema
+        actual = {column["name"] for column in inspector.get_columns(table_name)}
+        missing = [column.name for column in table.columns if column.name not in actual]
+        if missing:
+            problems.append(f"  - {table_name}: thiếu cột {', '.join(missing)}")
+
+    if problems:
+        raise SchemaDriftError(
+            "Schema database đang cũ hơn ORM model:\n"
+            + "\n".join(problems)
+            + "\n\nDự án chưa dùng migration tool. Với SQLite ở môi trường dev, xoá (hoặc đổi tên)"
+            " file database rồi chạy lại để tạo mới:\n"
+            "  Remove-Item data/app.db        # PowerShell\n"
+            "  rm data/app.db                 # bash\n"
+            "Dữ liệu trong file cũ sẽ mất - sao lưu trước nếu cần giữ."
+        )
+
+
 def create_tables() -> None:
-    from src.models import user  # noqa: F401 - registers ORM models with Base metadata
+    from src.models import password_reset, user  # noqa: F401 - registers ORM models with Base metadata
 
     engine = _engine or configure_database()
     Base.metadata.create_all(bind=engine)
+    _check_schema_drift(engine)
 
 
 def get_db_session() -> Generator[Session, None, None]:
