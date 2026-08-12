@@ -1,166 +1,96 @@
-"""State machine (stage/route) cho agent fever, theo
-`_guidance/fever-detect-agent-task.md` Bước 2 và
-`docs/medical_knowledge/fever-conversation-specification.md` (CS) Part 1.3 (dừng hỏi), Part 2 (stage
-table), Part 4 (§4.1 EMERGENCY short-circuit, §4.2 SELF_CARE minimum scan, §4.3 routing + ngân sách),
-Part 7 (flowchart/state machine/conversation graph — nguồn thật cho thứ tự chuyển stage).
+"""State machine thuần rule-based cho agent fever: chọn cụm câu hỏi kế tiếp, xác định route, và
+quyết định khi nào dừng hội thoại. Theo đúng
+`docs/medical_knowledge/fever-conversation-specification.md` (CS) Part 2 (stages), Part 4.3
+(routing), Part 6/§6.5 (ngân sách câu hỏi), Part 1.3 (điều kiện dừng), và Part 7 (state diagram).
 
-Module này THUẦN rule-based: không import LLM/`provider_router` ở bất kỳ đâu (Checkpoint 2 assert
-`"provider_router" not in sys.modules` sau khi import module này). Nó xây trên
-`fever_checklist.QUESTION_CLUSTERS`/`FEVER_FIELDS` (Bước 1), không định nghĩa lại field/cụm.
+KHÔNG gọi LLM, không import `provider_router`/`llm`. Đây là ranh giới kiến trúc bắt buộc (mục 2 của
+`_guidance/fever-detect-agent-task.md`): mọi quyết định stage/route/dừng đều rule-based thuần.
 
-Phạm vi CHỦ ĐỊNH thu hẹp so với rule engine đầy đủ (đó là Bước 3, `red_flag_engine`, chưa tồn tại khi
-module này được viết):
-
-- `_has_red_flag()` chỉ dùng một tập field EMERGENCY tối thiểu, trực tiếp nguy hiểm (theo gợi ý của
-  task: `seizure_active_now`, `non_blanching_rash`, `cyanosis`, `stridor_or_drooling`,
-  `cold_clammy_skin`, `worse_after_defervescence`, tuổi <3 tháng có sốt, ...) — KHÔNG phải toàn bộ
-  bảng `R-E-xx` của knowledge model. Khi Bước 3 có rule engine thật, gate an toàn thật sự phải chạy
-  qua đó; hàm này chỉ đủ để state machine biết "dừng lại vì có khả năng đỏ" cho mục đích Checkpoint 2.
-- `_is_high_risk()` (dùng cho `ROUTE_HIGH_RISK`) là một xấp xỉ đơn giản của `conservatism_tier >= 1`
-  (KM §5.1/§5.2) dựa trên các field risk đã biết trực tiếp từ answers — không tính lại đầy đủ ma trận
-  quần thể của KM §5.2 (đó cũng là việc của rule engine, không phải state machine).
-- Điều kiện Ask/Skip theo tuổi/giới ở Stage 4 (Q4-01/01b/02/03/04/05/06) và các field `C` gated theo
-  tuổi ở Stage 3A/3B (`bulging_fontanelle`, `social_response_child`, `chest_indrawing`,
-  `nasal_flaring_grunting`, `non_weight_bearing`, `new_confusion`...) được mã hoá trực tiếp theo mô tả
-  cột "Ask condition"/"Skip condition" của CS Part 3 — khi điều kiện phụ thuộc một giá trị còn
-  `unknown` (vd tuổi chưa biết), chọn nhánh AN TOÀN HƠN (hỏi thêm) theo P0-6.
+Ranh giới với rule engine (Bước 3, `red_flag_engine`): `should_stop` ở đây chỉ chạy một provisional
+scan RẤT NHẸ trên các field `M0` "đỏ tuyệt đối" để biết KHI NÀO dừng hỏi ở Stage 3A/3B (đúng Part 1.3
+CS điểm 1) — đây KHÔNG phải rule engine đầy đủ (không sinh `reason_codes`/`triggered_rules` chính
+thức, không thay thế `red_flag_engine.evaluate()`). Kết luận triage chính thức luôn do rule engine của
+Bước 3 quyết định.
 """
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Callable
+from typing import Literal
 
 from src.services.checklists.fever_checklist import (
-    FEVER_FIELDS,
+    QUESTION_CLUSTERS,
     QuestionCluster,
     Stage,
     clusters_for_stage,
 )
-from src.services.infra import fever_stage_log
 
-# ---------------------------------------------------------------------------------------------
-# Stop reasons — CS Part 1.3
-# ---------------------------------------------------------------------------------------------
+Route = Literal[
+    "ROUTE_INFANT_HIGH",
+    "ROUTE_HIGH_RISK",
+    "ROUTE_STANDARD",
+    "ROUTE_DENGUE_CONTEXT",
+    "ROUTE_LOCALIZED_SOURCE",
+]
 
+StopReason = Literal["RED_FLAG", "SUFFICIENT_EVIDENCE", "BUDGET_EXHAUSTED", "USER_CANNOT_CONTINUE"]
 
-class StopReason(str, Enum):
-    """CS Part 1.3 — "áp dụng điều kiện nào đến trước thì dừng theo điều kiện đó"."""
-
-    RED_FLAG = "RED_FLAG"
-    SUFFICIENT = "SUFFICIENT"
-    BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
-    USER_CANNOT_CONTINUE = "USER_CANNOT_CONTINUE"
-
-
-# ---------------------------------------------------------------------------------------------
-# Stage order — CS Part 2 + Part 7.2 state machine (bỏ qua "6" vì đó là kết thúc, không có cụm hỏi)
-# ---------------------------------------------------------------------------------------------
-
+# CS Part 2: thứ tự stage cố định. "6" là kết thúc đánh giá - không có QuestionCluster nào ở đó.
 STAGE_ORDER: tuple[Stage, ...] = ("0", "1", "2", "3A", "3B", "4", "5")
 
-_NEXT_STAGE_AFTER: dict[str, str | None] = {
-    "0": "1",
-    "1": "2",
-    "2": "3A",
-    "3A": "3B",
-    "3B": "4",
-    "4": "5",
-    "5": None,
+# CS §6.5 - ngân sách câu hỏi tính theo CỤM (không phải field đơn lẻ), khoá theo route/kết luận.
+# ROUTE_DENGUE_CONTEXT không có hàng riêng trong §6.5 - tài liệu mô tả nó "đào sâu" bộ câu hỏi trước
+# khi kết luận, nên dùng chung ngân sách với nhóm ứng viên SELF_CARE (12-16) [EN - suy luận hợp lý từ
+# §4.3/§6.5, không có con số riêng trong tài liệu nguồn].
+BUDGET: dict[str, tuple[int, int]] = {
+    "ROUTE_INFANT_HIGH": (3, 6),
+    "EMERGENCY": (3, 6),
+    "EARLY_VISIT": (8, 12),
+    "ROUTE_HIGH_RISK": (8, 12),
+    "SELF_CARE_CANDIDATE": (12, 16),
+    "ROUTE_DENGUE_CONTEXT": (12, 16),
 }
 
-
-def stage_index(stage: str) -> int:
-    return STAGE_ORDER.index(stage)
-
-
-def advance_stage(stage: str) -> str | None:
-    """Stage kế tiếp theo thứ tự cố định 0->1->2->3A->3B->4->5. `None` = hết, sang Stage 6."""
-    return _NEXT_STAGE_AFTER.get(stage)
-
-
-# ---------------------------------------------------------------------------------------------
-# Routes — CS §4.3
-# ---------------------------------------------------------------------------------------------
-
-ROUTE_INFANT_HIGH = "ROUTE_INFANT_HIGH"
-ROUTE_HIGH_RISK = "ROUTE_HIGH_RISK"
-ROUTE_STANDARD = "ROUTE_STANDARD"
-ROUTE_DENGUE_CONTEXT = "ROUTE_DENGUE_CONTEXT"
-ROUTE_LOCALIZED_SOURCE = "ROUTE_LOCALIZED_SOURCE"
-
-ROUTES: tuple[str, ...] = (
-    ROUTE_INFANT_HIGH,
-    ROUTE_HIGH_RISK,
-    ROUTE_STANDARD,
-    ROUTE_DENGUE_CONTEXT,
-    ROUTE_LOCALIZED_SOURCE,
+# Field M0 "đỏ tuyệt đối" dùng cho provisional scan của should_stop (xem docstring module).
+# Value coi là dương tính: chuỗi tri-state "true", hoặc enum/giá trị cụ thể liệt kê trong set.
+_EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = (
+    "seizure_active_now",
+    "seizure_occurred",
+    "neck_stiffness",
+    "focal_neuro_deficit",
+    "cyanosis",
+    "stridor_or_drooling",
+    "cold_clammy_skin",
+    "capillary_refill_ge_3s",
+    "non_blanching_rash",
+    "mucosal_bleeding",
+    "gi_bleeding",
+    "worse_after_defervescence",
 )
-
-# Ngân sách câu hỏi (số CỤM, không phải field đơn lẻ) — CS §6.5.
-#
-# Bảng gốc CS §6.5 khoá theo TÌNH HUỐNG KẾT LUẬN (EMERGENCY/EARLY_VISIT/SELF_CARE-ứng viên/nguy cơ cao
-# ổn định), không khoá trực tiếp theo 5 route đặt tên ở §4.3. Ánh xạ route -> ngân sách dưới đây là
-# một lựa chọn hợp lý (ghi rõ để không giả vờ đây là chép nguyên văn 1:1):
-#   - ROUTE_INFANT_HIGH  -> tình huống "EMERGENCY rõ ràng do tuổi/ngưỡng riêng" (§6.5 dòng 1): 3-6
-#   - ROUTE_HIGH_RISK    -> tình huống "nguy cơ cao nhưng ổn định" (§6.5 dòng 4): 8-12
-#   - ROUTE_DENGUE_CONTEXT -> đào sâu cảnh báo SXHD trước khi kết luận, tương ứng khung EARLY_VISIT
-#     (§6.5 dòng 2): 8-12
-#   - ROUTE_STANDARD / ROUTE_LOCALIZED_SOURCE -> ứng viên SELF_CARE (§6.5 dòng 3): 12-16
-ROUTE_BUDGET: dict[str, tuple[int, int]] = {
-    ROUTE_INFANT_HIGH: (3, 6),
-    ROUTE_HIGH_RISK: (8, 12),
-    ROUTE_STANDARD: (12, 16),
-    ROUTE_DENGUE_CONTEXT: (8, 12),
-    ROUTE_LOCALIZED_SOURCE: (12, 16),
+_EMERGENCY_ENUM_MATCHES: dict[str, frozenset[str]] = {
+    "consciousness_level": frozenset({"difficult_to_rouse", "unresponsive"}),
+    "breathing_difficulty": frozenset({"severe"}),
+    "urine_output": frozenset({"none_gt_6h"}),
+    "feeding_intake": frozenset({"unable"}),
+    "vomiting_severity": frozenset({"unable_to_keep_fluids"}),
+    "abdominal_pain_severity": frozenset({"severe"}),
 }
 
 
-def budget_for_route(route: str) -> tuple[int, int]:
-    return ROUTE_BUDGET[route]
+def _is_filled(value: object) -> bool:
+    return value is not None and value != "unknown" and value != ""
 
 
-# ---------------------------------------------------------------------------------------------
-# Helpers dùng chung
-# ---------------------------------------------------------------------------------------------
+def _is_true(value: object) -> bool:
+    return value is True or value == "true"
 
 
-def _is_unknown(value: Any) -> bool:
-    return value is None or value == "unknown"
-
-
-def _truthy(answers: dict[str, Any], key: str) -> bool:
-    """Đúng tri-state: chỉ True khi field CHẮC CHẮN là "true" (P0-4 - không suy diễn từ mơ hồ)."""
-    return answers.get(key) == "true"
-
-
-def _falsy(answers: dict[str, Any], key: str) -> bool:
-    return answers.get(key) == "false"
-
-
-def _positive(answers: dict[str, Any], key: str) -> bool:
-    """Dùng cho field không hẳn tri-state boolean (enum/list/string) - coi mọi giá trị "có nội dung
-    thực" là dương tính, phục vụ routing/gợi ý (KHÔNG dùng hàm này cho quyết định red-flag an toàn -
-    ở đó luôn dùng `_truthy` tri-state nghiêm ngặt)."""
-    value = answers.get(key)
-    if _is_unknown(value):
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() not in ("false", "none", "no", "0", "")
-    if isinstance(value, (list, tuple, dict)):
-        return len(value) > 0
-    return bool(value)
-
-
-def _age_months(answers: dict[str, Any]) -> float | None:
+def age_in_months(answers: dict[str, object]) -> float | None:
     value = answers.get("age_value")
     unit = answers.get("age_unit")
-    if _is_unknown(value) or _is_unknown(unit):
+    if not _is_filled(value) or not _is_filled(unit):
         return None
     try:
-        numeric = float(value)
+        numeric = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     if unit == "day":
@@ -172,372 +102,284 @@ def _age_months(answers: dict[str, Any]) -> float | None:
     return None
 
 
-# ---------------------------------------------------------------------------------------------
-# Red flag tối thiểu — chỉ đủ cho state machine biết "dừng vì khả năng đỏ", KHÔNG thay thế rule
-# engine Bước 3. Xem docstring module.
-# ---------------------------------------------------------------------------------------------
-
-_EMERGENCY_TRI_STATE_FIELDS: frozenset[str] = frozenset(
-    (
-        "seizure_active_now",
-        "non_blanching_rash",
-        "cyanosis",
-        "stridor_or_drooling",
-        "cold_clammy_skin",
-        "capillary_refill_ge_3s",
-        "worse_after_defervescence",
-        "neck_stiffness",
-        "focal_neuro_deficit",
-        "mucosal_bleeding",
-        "gi_bleeding",
-        "abdominal_guarding",
-    )
-)
-
-_EMERGENCY_CONSCIOUSNESS_VALUES: frozenset[str] = frozenset(
-    ("unresponsive", "difficult_to_rouse", "lethargic")
-)
+def has_provisional_emergency_signal(answers: dict[str, object]) -> bool:
+    """Quét rất nhẹ các field M0 đỏ tuyệt đối - CHỈ dùng để biết khi nào state machine nên dừng hỏi
+    thường quy (Part 1.3 CS điểm 1). Không sinh reason_codes/triggered_rules chính thức."""
+    for key in _EMERGENCY_TRI_STATE_FIELDS:
+        if _is_true(answers.get(key)):
+            return True
+    for key, matches in _EMERGENCY_ENUM_MATCHES.items():
+        if answers.get(key) in matches:
+            return True
+    age_months = age_in_months(answers)
+    if age_months is not None and age_months < 3 and _is_true(answers.get("fever_reported")):
+        return True  # RF-22: sốt ở trẻ < 3 tháng luôn EMERGENCY
+    return False
 
 
-def _has_red_flag(answers: dict[str, Any]) -> bool:
-    if any(_truthy(answers, key) for key in _EMERGENCY_TRI_STATE_FIELDS):
+def determine_route(answers: dict[str, object]) -> Route:
+    """CS §4.3. Thứ tự ưu tiên: infant > high_risk > dengue_context > localized_source > standard -
+    route mạnh hơn không bao giờ bị route yếu hơn ghi đè, đúng tinh thần "không rule nào hạ mức"."""
+    age_months = age_in_months(answers)
+    if age_months is not None and age_months < 3:
+        return "ROUTE_INFANT_HIGH"
+
+    if _is_high_risk_tier(answers):
+        return "ROUTE_HIGH_RISK"
+
+    if _is_dengue_context(answers):
+        return "ROUTE_DENGUE_CONTEXT"
+
+    if _is_localized_source(answers):
+        return "ROUTE_LOCALIZED_SOURCE"
+
+    return "ROUTE_STANDARD"
+
+
+def _is_high_risk_tier(answers: dict[str, object]) -> bool:
+    """KM §5.1-5.2 conservatism_tier >= 1 - tập điều kiện chính, không đòi hỏi phủ hết ma trận đầy đủ
+    (đó là việc của rule engine Bước 3)."""
+    if _is_true(answers.get("is_pregnant")) or _is_true(answers.get("postpartum_6w")):
         return True
-    if answers.get("consciousness_level") in _EMERGENCY_CONSCIOUSNESS_VALUES:
+    if _is_true(answers.get("immunocompromised")) or _is_true(answers.get("known_neutropenia")):
         return True
-    if answers.get("urine_output") == "none_gt_6h":
+    if _is_true(answers.get("malaria_risk_area")):
         return True
-    if answers.get("vomiting_severity") == "unable_to_keep_fluids":
+    chronic = answers.get("chronic_conditions")
+    if isinstance(chronic, (list, tuple)) and any(item not in ("none", "unknown") for item in chronic):
         return True
-    if answers.get("breathing_difficulty") == "severe":
+    age_months = age_in_months(answers)
+    if age_months is not None and age_months >= 75 * 12:
         return True
-    age_m = _age_months(answers)
-    if age_m is not None and age_m < 3 and _truthy(answers, "fever_reported"):
+    if _is_true(answers.get("lives_alone")) or answers.get("caregiver_available") == "false":
         return True
     return False
 
 
+def _is_dengue_context(answers: dict[str, object]) -> bool:
+    if _is_true(answers.get("mosquito_exposure")):
+        return True
+    outbreak = answers.get("outbreak_exposure")
+    if isinstance(outbreak, (list, tuple)) and "dengue" in outbreak:
+        return True
+    if answers.get("abdominal_pain_severity") == "severe":
+        return True
+    if _is_true(answers.get("mucosal_bleeding")) or _is_true(answers.get("gi_bleeding")):
+        return True
+    if _is_true(answers.get("worse_after_defervescence")):
+        return True
+    if _is_true(answers.get("nsaid_use")):
+        return True
+    return False
+
+
+def _is_localized_source(answers: dict[str, object]) -> bool:
+    """Chỉ có ý nghĩa SAU Stage 3A sạch (CS §4.3) - caller đảm bảo không gọi sớm hơn."""
+    localized_signals = (
+        _is_true(answers.get("sore_throat")),
+        _is_true(answers.get("ear_pain")),
+        _is_true(answers.get("cough")),
+        _is_true(answers.get("urinary_symptoms")),
+        _is_true(answers.get("localized_infection_signs")),
+    )
+    return any(localized_signals) and not has_provisional_emergency_signal(answers)
+
+
 # ---------------------------------------------------------------------------------------------
-# Field applicability — một field `C` chỉ "cần trả lời" khi điều kiện kích hoạt của nó đúng (CS Part
-# 3, cột Ask/Skip condition). Dùng để không kẹt chờ mãi 1 field không bao giờ được hỏi.
+# Skip condition riêng cho các cụm có "Ask condition" không đơn thuần là "luôn hỏi" (CS Part 3).
+# Trả True => BỎ QUA cụm này dù còn field chưa điền.
 # ---------------------------------------------------------------------------------------------
 
-_CONDITIONAL_FIELD_APPLICABLE: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "temp_c": lambda a: a.get("fever_status") == "objective",
-    "temp_site": lambda a: a.get("fever_status") == "objective",
-    "temp_measured_at": lambda a: a.get("fever_status") == "objective",
-    "gestational_weeks": lambda a: _truthy(a, "is_pregnant"),
-    "obstetric_red_flags": lambda a: _truthy(a, "is_pregnant") or _truthy(a, "postpartum_6w"),
-    "bulging_fontanelle": lambda a: (m := _age_months(a)) is None or m < 18,
-    "social_response_child": lambda a: (m := _age_months(a)) is None or m < 60,
-    "chest_indrawing": lambda a: (m := _age_months(a)) is None or m < 60,
-    "nasal_flaring_grunting": lambda a: (m := _age_months(a)) is None or m < 60,
-    "non_weight_bearing": lambda a: (m := _age_months(a)) is None or m < 192,
-    "rash_present": lambda a: not _falsy(a, "non_blanching_rash"),
-    "rash_type": lambda a: _truthy(a, "non_blanching_rash"),
-    "abdominal_pain_location": lambda a: a.get("abdominal_pain_severity") not in (None, "unknown", "none"),
-    "seizure_features": lambda a: _truthy(a, "seizure_occurred") and not _truthy(a, "seizure_active_now"),
-    "surgical_site_signs": lambda a: _truthy(a, "recent_surgery_30d"),
-    "immunocompromise_cause": lambda a: not _falsy(a, "immunocompromised"),
-    "known_neutropenia": lambda a: not _falsy(a, "immunocompromised"),
+
+def _skip_q1_03(answers: dict[str, object]) -> bool:
+    return answers.get("fever_status") != "subjective"
+
+
+def _skip_q2_05(answers: dict[str, object]) -> bool:
+    age_months = age_in_months(answers)
+    young = age_months is not None and age_months < 3
+    old = age_months is not None and age_months >= 65 * 12
+    return not (young or old or _is_true(answers.get("immunocompromised")))
+
+
+def _skip_q3_02(answers: dict[str, object]) -> bool:
+    age_months = age_in_months(answers)
+    return age_months is not None and age_months < 16 * 12
+
+
+def _skip_if_stage_3a_not_clean(answers: dict[str, object]) -> bool:
+    """Stage 3B chỉ chạy nếu Stage 3A âm tính toàn bộ (CS §3.3B)."""
+    return has_provisional_emergency_signal(answers)
+
+
+def _skip_q4_01(answers: dict[str, object]) -> bool:
+    age_months = age_in_months(answers)
+    if answers.get("sex") != "female" or age_months is None:
+        return True
+    age_years = age_months / 12.0
+    return not (10 <= age_years <= 60)
+
+
+def _skip_q4_01b(answers: dict[str, object]) -> bool:
+    return not (_is_true(answers.get("is_pregnant")) or _is_true(answers.get("postpartum_6w")))
+
+
+def _skip_q4_02(answers: dict[str, object]) -> bool:
+    age_months = age_in_months(answers)
+    if answers.get("sex") != "female" or age_months is None:
+        return True
+    age_years = age_months / 12.0
+    if _is_true(answers.get("is_pregnant")):
+        return True
+    return not (15 <= age_years <= 55)
+
+
+def _skip_q5_06(answers: dict[str, object]) -> bool:
+    age_months = age_in_months(answers)
+    return not (age_months is not None and age_months < 5 * 12)
+
+
+_SKIP_RULES: dict[str, object] = {
+    "Q1-03": _skip_q1_03,
+    "Q2-05": _skip_q2_05,
+    "Q3-02": _skip_q3_02,
+    "Q4-01": _skip_q4_01,
+    "Q4-01b": _skip_q4_01b,
+    "Q4-02": _skip_q4_02,
+    "Q5-06": _skip_q5_06,
 }
 
+_STAGE_3B_STAGES: frozenset[Stage] = frozenset({"3B"})
 
-def _field_applicable(field_key: str, answers: dict[str, Any]) -> bool:
-    predicate = _CONDITIONAL_FIELD_APPLICABLE.get(field_key)
-    if predicate is None:
+
+def _cluster_is_skipped(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+    if cluster.stage in _STAGE_3B_STAGES and _skip_if_stage_3a_not_clean(answers):
         return True
-    return predicate(answers)
+    rule = _SKIP_RULES.get(cluster.id)
+    if rule is not None and rule(answers):
+        return True
+    return False
 
 
-def _all_fields_known(cluster: QuestionCluster, answers: dict[str, Any]) -> bool:
-    for key in cluster.fields:
-        if not _field_applicable(key, answers):
+def _cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+    return any(not _is_filled(answers.get(key)) for key in cluster.fields)
+
+
+def next_cluster(
+    stage: Stage,
+    answers: dict[str, object],
+    *,
+    asked_ids: frozenset[str] = frozenset(),
+) -> QuestionCluster | None:
+    """Cụm câu hỏi kế tiếp trong `stage` hiện tại, hoặc `None` nếu đã hết cụm khả dụng của stage đó
+    (caller khi đó tự chuyển sang `next_stage(stage)`). Rule-based thuần, không gọi LLM."""
+    for cluster in clusters_for_stage(stage):
+        if cluster.id in asked_ids:
             continue
-        if _is_unknown(answers.get(key)):
-            return False
-    return True
-
-
-# ---------------------------------------------------------------------------------------------
-# Ask condition per cluster — CS Part 3, cột "Ask condition"/"Skip condition". Mặc định True (đa số
-# cụm "luôn hỏi").
-# ---------------------------------------------------------------------------------------------
-
-
-def _gate_q2_05(a: dict[str, Any]) -> bool:
-    """Q2-05 hypothermia_reported: age<3 tháng HOẶC age>=65 tuổi HOẶC immunocompromised=true."""
-    age_m = _age_months(a)
-    if age_m is None:
-        return True  # tuổi chưa rõ -> hỏi để an toàn (P0-6)
-    if age_m < 3 or age_m >= 65 * 12:
-        return True
-    return _truthy(a, "immunocompromised")
-
-
-def _gate_q3_07(a: dict[str, Any]) -> bool:
-    """Q3-07 stridor_or_drooling: skip nếu đã đủ căn cứ EMERGENCY hô hấp (cyanosis/severe)."""
-    return not (_truthy(a, "cyanosis") or a.get("breathing_difficulty") == "severe")
-
-
-def _gate_q3_08b(a: dict[str, Any]) -> bool:
-    """Q3-08b dizziness_on_standing: skip nếu đã có căn cứ nặng hơn ở cụm tuần hoàn Q3-08."""
-    return not (_truthy(a, "cold_clammy_skin") or _truthy(a, "capillary_refill_ge_3s"))
-
-
-def _gate_q3_02(a: dict[str, Any]) -> bool:
-    """Q3-02 new_confusion: age >= 16 tuổi."""
-    age_m = _age_months(a)
-    if age_m is None:
-        return True
-    return age_m >= 16 * 12
-
-
-def _gate_q4_01(a: dict[str, Any]) -> bool:
-    """Q4-01 is_pregnant/gestational_weeks: sex=female AND 10<=age<=60 AND Q4-00 dương/mơ hồ ý thai kỳ."""
-    if a.get("sex") != "female":
-        return False
-    age_m = _age_months(a)
-    if age_m is not None:
-        age_y = age_m / 12
-        if not (10 <= age_y <= 60):
-            return False
-    return not _falsy(a, "is_pregnant")
-
-
-def _gate_q4_01b(a: dict[str, Any]) -> bool:
-    return _truthy(a, "is_pregnant") or _truthy(a, "postpartum_6w")
-
-
-def _gate_q4_02(a: dict[str, Any]) -> bool:
-    """Q4-02 postpartum_6w: sex=female AND 15<=age<=55 AND chưa xác nhận đang mang thai."""
-    if a.get("sex") != "female":
-        return False
-    age_m = _age_months(a)
-    if age_m is not None:
-        age_y = age_m / 12
-        if not (15 <= age_y <= 55):
-            return False
-    if _truthy(a, "is_pregnant"):
-        return False
-    return not _falsy(a, "postpartum_6w")
-
-
-def _gate_q4_03(a: dict[str, Any]) -> bool:
-    return not _falsy(a, "immunocompromised")
-
-
-def _gate_q4_04(a: dict[str, Any]) -> bool:
-    return not _falsy(a, "chronic_conditions")
-
-
-def _gate_q4_05(a: dict[str, Any]) -> bool:
-    return not (_falsy(a, "recent_surgery_30d") and _falsy(a, "indwelling_device"))
-
-
-def _gate_q4_06(a: dict[str, Any]) -> bool:
-    return not _falsy(a, "malaria_risk_area")
-
-
-def _gate_q5_06(a: dict[str, Any]) -> bool:
-    """Q5-06 immunization: age < 5 tuổi."""
-    age_m = _age_months(a)
-    if age_m is None:
-        return True
-    return age_m < 5 * 12
-
-
-ASK_CONDITIONS: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "Q1-02": lambda a: _truthy(a, "fever_reported"),
-    "Q1-03": lambda a: a.get("fever_status") == "subjective",
-    "Q2-05": _gate_q2_05,
-    "Q3-07": _gate_q3_07,
-    "Q3-08b": _gate_q3_08b,
-    "Q3-02": _gate_q3_02,
-    "Q4-01": _gate_q4_01,
-    "Q4-01b": _gate_q4_01b,
-    "Q4-02": _gate_q4_02,
-    "Q4-03": _gate_q4_03,
-    "Q4-04": _gate_q4_04,
-    "Q4-05": _gate_q4_05,
-    "Q4-06": _gate_q4_06,
-    "Q5-06": _gate_q5_06,
-}
-
-
-def _ask_allowed(cluster: QuestionCluster, answers: dict[str, Any]) -> bool:
-    condition = ASK_CONDITIONS.get(cluster.id)
-    if condition is None:
-        return True
-    return condition(answers)
-
-
-# ---------------------------------------------------------------------------------------------
-# next_cluster — pure rule-based
-# ---------------------------------------------------------------------------------------------
-
-
-def next_cluster(stage: str, answers: dict[str, Any]) -> QuestionCluster | None:
-    """Cụm kế tiếp cần hỏi trong `stage`, hoặc `None` nếu hết cụm áp dụng (caller advance stage).
-
-    - Không bao giờ trả cụm Stage 3B nếu đã có red flag EMERGENCY (kể cả khi được gọi trực tiếp với
-      `stage="3B"`) — CS §3.3B: "Chỉ chạy khi Stage 3A âm tính toàn bộ".
-    - Bỏ qua cụm mà điều kiện "Ask" không thỏa, hoặc mọi field áp dụng của cụm đã có giá trị xác định
-      (không hỏi lại field đã biết — CS Part 3, quy ước "Không hỏi lại field đã có giá trị xác định").
-    """
-    if _has_red_flag(answers):
-        return None
-    for cluster in clusters_for_stage(stage):  # type: ignore[arg-type]
-        if not _ask_allowed(cluster, answers):
+        if _cluster_is_skipped(cluster, answers):
             continue
-        if _all_fields_known(cluster, answers):
+        if not _cluster_needs_answer(cluster, answers):
             continue
         return cluster
     return None
 
 
-def next_cluster_logged(
-    session_id: str, *, turn: int, stage: str, answers: dict[str, Any]
-) -> QuestionCluster | None:
-    """Như `next_cluster`, nhưng ghi 1 dòng `tool_call` (`tool="fever_stage_machine.next_cluster"`)
-    vào `fever_stage_log` cho mỗi lần gọi - dùng bởi driver thật/driver test Checkpoint 2."""
-    known_fields = sorted(key for key, value in answers.items() if not _is_unknown(value))
-    with fever_stage_log.tool(
-        session_id,
-        turn=turn,
-        stage=stage,
-        cluster_id=None,
-        tool="fever_stage_machine.next_cluster",
-        input={"stage": stage, "known_fields": known_fields},
-    ) as rec:
-        cluster = next_cluster(stage, answers)
-        rec.output = {"cluster_id": cluster.id if cluster is not None else None}
-    return cluster
+def next_stage(stage: Stage) -> Stage | None:
+    """Stage kế tiếp theo STAGE_ORDER, hoặc None nếu đã ở stage cuối (Stage 5 -> hết, sang Stage 6
+    kết thúc đánh giá - Stage 6 không sinh QuestionCluster nào, xem CS §3.6)."""
+    try:
+        index = STAGE_ORDER.index(stage)
+    except ValueError:
+        return None
+    if index + 1 >= len(STAGE_ORDER):
+        return None
+    return STAGE_ORDER[index + 1]
 
 
-# ---------------------------------------------------------------------------------------------
-# Sufficiency / budget — CS Part 1.3, Part 6, §6.5
-# ---------------------------------------------------------------------------------------------
+def budget_key(
+    answers: dict[str, object],
+    route: Route,
+    *,
+    known_triage_level: str | None = None,
+) -> str:
+    """Chọn đúng hàng ngân sách trong BUDGET theo route/kết luận hiện có (§6.5).
+
+    `known_triage_level`: kết luận triage MỚI NHẤT do rule engine (Bước 3, chạy ở Stage 3A/3B/4)
+    trả về, do caller (Bước 5 `run_turn`) truyền vào - state machine không tự tính lại rule engine
+    (xem docstring module). Không truyền gì thì chỉ dựa vào provisional scan (chỉ bắt được
+    EMERGENCY, không bắt được EARLY_VISIT sinh ra ở Stage 4 như RF-23)."""
+    if route == "ROUTE_INFANT_HIGH" or has_provisional_emergency_signal(answers) or known_triage_level == "EMERGENCY":
+        return "EMERGENCY"
+    if route == "ROUTE_HIGH_RISK":
+        return "ROUTE_HIGH_RISK"
+    if route == "ROUTE_DENGUE_CONTEXT":
+        return "ROUTE_DENGUE_CONTEXT"
+    if known_triage_level == "EARLY_VISIT":
+        return "EARLY_VISIT"
+    return "SELF_CARE_CANDIDATE"
 
 
-def _is_sufficient(answers: dict[str, Any], route: str | None) -> bool:
-    """CS Part 1.3 điều kiện 2 - "Đủ căn cứ": toàn bộ M0 (+ M1 nếu đang hướng SELF_CARE) đã xác định.
-
-    Phạm vi thu hẹp: chỉ xét field M0/M1 CÓ áp dụng theo `_field_applicable` (bỏ qua field `C` chưa
-    kích hoạt điều kiện tuổi/quần thể). Route quyết định SELF_CARE track dựa trên §4.3 (route hướng
-    tới SELF_CARE là `ROUTE_STANDARD`/`ROUTE_LOCALIZED_SOURCE`)."""
-    for field in FEVER_FIELDS:
-        if field.tier != "M0":
+def self_care_checklist_satisfied(answers: dict[str, object]) -> bool:
+    """KM §5.4 - checklist bắt buộc trước khi cho phép kết luận SELF_CARE."""
+    if has_provisional_emergency_signal(answers):
+        return False
+    age_months = age_in_months(answers)
+    if age_months is None or age_months < 6:
+        return False
+    duration = answers.get("fever_duration_days")
+    if isinstance(duration, (int, float)) and duration >= 5:
+        return False
+    if answers.get("consciousness_level") != "alert":
+        return False
+    if answers.get("feeding_intake") not in ("normal", "reduced"):
+        return False
+    if answers.get("urine_output") != "normal":
+        return False
+    if not (_is_true(answers.get("caregiver_available")) or answers.get("reporter_type") == "self"):
+        return False
+    if not _is_true(answers.get("can_return_for_followup")):
+        return False
+    for cluster in QUESTION_CLUSTERS:
+        if cluster.stage not in ("0", "1", "2", "3A", "3B"):
             continue
-        if not _field_applicable(field.key, answers):
+        if _cluster_is_skipped(cluster, answers):
             continue
-        if _is_unknown(answers.get(field.key)):
-            return False
-    if route in (ROUTE_STANDARD, ROUTE_LOCALIZED_SOURCE):
-        for field in FEVER_FIELDS:
-            if field.tier != "M1":
-                continue
-            if not _field_applicable(field.key, answers):
-                continue
-            if _is_unknown(answers.get(field.key)):
-                return False
-    return True
-
-
-def _remaining_only_optional(answers: dict[str, Any]) -> bool:
-    """CS Part 1.3 điều kiện 3 / Part 6 "Dừng hẳn"(b) - phần còn thiếu chỉ là field O (rộng ra cả H,
-    theo câu chữ Part 6 "chỉ là field O/H")."""
-    for field in FEVER_FIELDS:
-        if field.tier in ("O", "H"):
-            continue
-        if not _field_applicable(field.key, answers):
-            continue
-        if _is_unknown(answers.get(field.key)):
+        if _cluster_needs_answer(cluster, answers):
             return False
     return True
 
 
 def should_stop(
-    stage: str,
-    answers: dict[str, Any],
+    stage: Stage,
+    answers: dict[str, object],
     *,
-    route: str | None = None,
-    asked_count: int = 0,
-    budget: int | None = None,
+    asked_count: int,
+    route: Route | None = None,
+    known_triage_level: str | None = None,
+    user_can_continue: bool = True,
 ) -> StopReason | None:
-    """CS Part 1.3 - áp dụng điều kiện nào đến trước thì dừng theo điều kiện đó:
+    """CS Part 1.3 - áp theo thứ tự: chốt đỏ > đủ căn cứ > hết ngân sách > người dùng không tiếp tục
+    được. `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ, đúng §6.5).
+    Ngân sách chỉ có hiệu lực từ Stage 3B trở đi - xem chú thích tại nơi kiểm tra bên dưới."""
+    if not user_can_continue:
+        return "USER_CANNOT_CONTINUE"
 
-    1. `RED_FLAG` - một field EMERGENCY tối thiểu dương tính (xem docstring module, phạm vi thu hẹp).
-    2. `SUFFICIENT` - đủ M0 (+M1 nếu SELF_CARE track) đã xác định.
-    3. `BUDGET_EXCEEDED` - hết ngân sách cụm câu hỏi (`asked_count >= budget`) VÀ phần còn thiếu chỉ
-       là field O/H.
-    4. `USER_CANNOT_CONTINUE` - không tự phát hiện được ở đây (cần tín hiệu ngoài luồng dữ liệu, vd
-       mất kết nối) - caller tự set khi cần, giá trị enum tồn tại để hỗ trợ việc đó.
+    if has_provisional_emergency_signal(answers) or known_triage_level == "EMERGENCY":
+        return "RED_FLAG"
 
-    `stage` hiện chưa dùng trực tiếp trong điều kiện (mọi field truy theo `answers`, không theo
-    stage đang đứng) nhưng giữ trong signature đúng theo spec Bước 2 và dự phòng mở rộng.
-    """
-    del stage  # xem docstring - giữ tham số theo đúng chữ ký spec, chưa cần dùng trực tiếp.
-    if _has_red_flag(answers):
-        return StopReason.RED_FLAG
-    if _is_sufficient(answers, route):
-        return StopReason.SUFFICIENT
-    if budget is not None and asked_count >= budget and _remaining_only_optional(answers):
-        return StopReason.BUDGET_EXCEEDED
+    resolved_route = route or determine_route(answers)
+
+    if stage == "5" and next_cluster(stage, answers) is None and self_care_checklist_satisfied(answers):
+        return "SUFFICIENT_EVIDENCE"
+
+    # CS §4.2: "Không được bỏ minimum scan an toàn - tức Stage 3A (toàn bộ field M0)". Ngân sách
+    # câu hỏi KHÔNG BAO GIỜ được phép cắt ngang Stage 0-3A (an toàn tuyệt đối theo P0-1) - chỉ áp
+    # dụng từ Stage 3B trở đi (M1/enrichment), nơi rút gọn là hợp lệ.
+    if STAGE_ORDER.index(stage) < STAGE_ORDER.index("3B"):
+        return None
+
+    budget_max = BUDGET[budget_key(answers, resolved_route, known_triage_level=known_triage_level)][1]
+    if asked_count >= budget_max:
+        return "BUDGET_EXHAUSTED"
+
     return None
-
-
-# ---------------------------------------------------------------------------------------------
-# Routing — CS §4.3
-# ---------------------------------------------------------------------------------------------
-
-
-def _is_high_risk(answers: dict[str, Any]) -> bool:
-    """Xấp xỉ đơn giản của `conservatism_tier >= 1` (KM §5.1/§5.2) - xem docstring module."""
-    age_m = _age_months(answers)
-    if age_m is not None and age_m >= 75 * 12:
-        return True
-    return any(
-        _positive(answers, key)
-        for key in (
-            "is_pregnant",
-            "postpartum_6w",
-            "immunocompromised",
-            "chronic_conditions",
-            "recent_surgery_30d",
-            "indwelling_device",
-            "malaria_risk_area",
-            "lives_alone",
-        )
-    )
-
-
-def _is_dengue_context(answers: dict[str, Any]) -> bool:
-    if any(_positive(answers, key) for key in ("mosquito_exposure", "outbreak_exposure", "nsaid_use")):
-        return True
-    if _truthy(answers, "worse_after_defervescence"):
-        return True
-    if _truthy(answers, "mucosal_bleeding") or _truthy(answers, "gi_bleeding"):
-        return True
-    return answers.get("abdominal_pain_severity") not in (None, "unknown", "none")
-
-
-def _is_localized_source(answers: dict[str, Any]) -> bool:
-    return any(
-        _positive(answers, key)
-        for key in ("sore_throat", "ear_pain", "cough", "urinary_symptoms", "localized_infection_signs")
-    )
-
-
-def determine_route(answers: dict[str, Any]) -> str:
-    """CS §4.3 - xác định route ngay khi đủ dữ liệu. Thứ tự kiểm tra theo mức ưu tiên an toàn: tuổi
-    nhũ nhi > nguy cơ cao > bối cảnh SXHD > ổ nhiễm khuẩn lành tính rõ > chuẩn."""
-    age_m = _age_months(answers)
-    if age_m is not None and age_m < 3:
-        return ROUTE_INFANT_HIGH
-    if _is_high_risk(answers):
-        return ROUTE_HIGH_RISK
-    if _is_dengue_context(answers):
-        return ROUTE_DENGUE_CONTEXT
-    if _is_localized_source(answers):
-        return ROUTE_LOCALIZED_SOURCE
-    return ROUTE_STANDARD
