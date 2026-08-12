@@ -58,7 +58,7 @@ pip install -r requirements.txt
 Chạy FastAPI server:
 
 ```powershell
-python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8001
 ```
 
 Hoặc dùng Makefile nếu môi trường có `make`:
