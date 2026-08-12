@@ -22,12 +22,29 @@ except Exception:  # pragma: no cover - exercised only when dependency is missin
     weaviate = None
     Configure = DataType = Property = Auth = Filter = None
 
-try:  # Optional because tests and non-RAG app paths should not need local ML models.
-    import numpy as np
-    from sentence_transformers import CrossEncoder, SentenceTransformer
-    from underthesea import word_tokenize
-except Exception:  # pragma: no cover - exercised only when dependency is missing.
-    np = SentenceTransformer = CrossEncoder = word_tokenize = None
+np = None
+SentenceTransformer = None
+CrossEncoder = None
+word_tokenize = None
+
+
+def _load_ml_deps() -> None:
+    """Import heavy ML deps (torch, sentence-transformers, underthesea) on first use.
+
+    These pull in torch and are only needed for local embedding/reranking/segmentation,
+    so importing them lazily keeps app boot fast and light on memory-constrained hosts.
+    """
+    global np, SentenceTransformer, CrossEncoder, word_tokenize
+    if SentenceTransformer is not None:
+        return
+    import numpy as _np
+    from sentence_transformers import CrossEncoder as _CrossEncoder, SentenceTransformer as _SentenceTransformer
+    from underthesea import word_tokenize as _word_tokenize
+
+    np = _np
+    SentenceTransformer = _SentenceTransformer
+    CrossEncoder = _CrossEncoder
+    word_tokenize = _word_tokenize
 
 
 EMBEDDING_MODEL_NAME = "bkai-foundation-models/vietnamese-bi-encoder"
@@ -319,15 +336,21 @@ def _new_id(prefix: str) -> str:
 
 
 def _segment(text: str) -> str:
-    if word_tokenize is None:
-        raise RuntimeError("underthesea is not installed. Install requirements before running retrieval.")
+    try:
+        _load_ml_deps()
+    except ImportError as exc:
+        raise RuntimeError("underthesea is not installed. Install requirements before running retrieval.") from exc
     return word_tokenize(text, format="text")
 
 
 def _embedding() -> Any:
     global _embedding_model
-    if SentenceTransformer is None:
-        raise RuntimeError("sentence-transformers is not installed. Install requirements before running retrieval.")
+    try:
+        _load_ml_deps()
+    except ImportError as exc:
+        raise RuntimeError(
+            "sentence-transformers is not installed. Install requirements before running retrieval."
+        ) from exc
     if _embedding_model is None:
         _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     return _embedding_model
@@ -339,8 +362,10 @@ def _embed(text: str) -> list[float]:
 
 def _reranker() -> Any:
     global _reranker_model
-    if CrossEncoder is None:
-        raise RuntimeError("sentence-transformers is not installed. Install requirements before running rerank.")
+    try:
+        _load_ml_deps()
+    except ImportError as exc:
+        raise RuntimeError("sentence-transformers is not installed. Install requirements before running rerank.") from exc
     if _reranker_model is None:
         _reranker_model = CrossEncoder(RERANKER_MODEL_NAME)
     return _reranker_model
