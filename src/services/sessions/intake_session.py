@@ -13,8 +13,8 @@ sinh mức độ ưu tiên, KHÔNG gửi cho điều dưỡng - phần đó thu�
 và nằm ngoài phạm vi demo hiện tại theo yêu cầu.
 
 Red-flag: được quét mỗi lượt bằng rule thuần (`intake_agent.scan_red_flags`) và tích luỹ vào phiên.
-Khi có red-flag, phiên KHÔNG bị dừng - vẫn hỏi tiếp - nhưng cờ được trả về ngay để UI hiện cảnh báo
-cấp cứu tức thì, đúng nguyên tắc "cảnh báo không chờ duyệt" ở đặc tả #4.
+Khi có red-flag, phiên dừng ngay và trả về hướng dẫn cấp cứu cố định; không chờ hoàn tất checklist,
+LLM hay sự duyệt của nhân viên y tế.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ class SessionState(str, Enum):
     COLLECTING = "collecting"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     CONFIRMED = "confirmed"
+    EMERGENCY = "emergency"
 
 
 @dataclass(slots=True)
@@ -107,6 +108,11 @@ OPENING_QUESTION = (
     "Bạn cho mình biết tên người bệnh, tuổi và triệu chứng đang gặp phải nhé?"
 )
 
+EMERGENCY_MESSAGE = (
+    "Dấu hiệu bạn mô tả có thể là tình trạng cấp cứu. Hãy gọi 115 ngay hoặc đến cơ sở y tế gần nhất. "
+    "Không chờ hoàn tất khai báo hay phản hồi trực tuyến."
+)
+
 
 def get_session(session_id: str) -> IntakeSession:
     """Đọc phiên theo id, raise SessionNotFoundError nếu không tồn tại."""
@@ -142,6 +148,9 @@ def start_session(credential: LLMCredential | None = None) -> IntakeSession:
 def submit_message(session_id: str, message: str) -> IntakeSession:
     """Xử lý một lượt trả lời của người bệnh: quét red-flag -> trích xuất -> quyết định hỏi tiếp hay tóm tắt."""
     session = _require_session(session_id)
+    if session.state == SessionState.EMERGENCY:
+        # Phiên đã có hướng dẫn cấp cứu; không tiếp tục thu thập hay gọi LLM nữa.
+        return session
     cleaned = (message or "").strip()
     if not cleaned:
         raise EmptyMessageError("Nội dung tin nhắn không được để trống.")
@@ -154,6 +163,11 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
     # 1. Red-flag TRƯỚC trên text thô: rule thuần, chạy mọi lượt, không phụ thuộc LLM
     #    và không đợi checklist đủ. Chạy trước để nếu LLM lỗi thì red-flag vẫn được ghi nhận.
     session.red_flags.extend(scan_red_flags(cleaned))
+    if session.red_flags:
+        session.llm_used_last_turn = False
+        _enter_emergency(session)
+        _trace_turn(session, {}, False)
+        return session
 
     # 2. Trích xuất checklist bằng LLM (không ghi đè trường đã có).
     extracted, llm_used = session.agent().extract(cleaned, session.answers)
@@ -164,6 +178,10 @@ def submit_message(session_id: str, message: str) -> IntakeSession:
     #    (vd "li bi" -> "li bì", "met lam" -> "lơ mơ") khiến bản quét text thô ở bước 1 bỏ sót.
     if extracted:
         session.red_flags.extend(scan_red_flags(*extracted.values()))
+    if session.red_flags:
+        _enter_emergency(session)
+        _trace_turn(session, extracted, llm_used)
+        return session
     _trace_turn(session, extracted, llm_used)
 
     # 4. Đủ ngưỡng (hoặc đã hỏi quá nhiều lượt) -> chuyển sang xin xác nhận.
@@ -208,6 +226,19 @@ def _trace_turn(session: IntakeSession, extracted: dict[str, str], llm_used: boo
     console_log.red_flag(session.session_id, session.red_flag_labels())
 
 
+def _enter_emergency(session: IntakeSession) -> None:
+    """Chốt phiên ngay bằng hướng dẫn cấp cứu được duyệt sẵn, không sinh nội dung qua LLM."""
+    session.state = SessionState.EMERGENCY
+    session.last_question = EMERGENCY_MESSAGE
+    session.conversation.append({"role": "assistant", "content": EMERGENCY_MESSAGE})
+    session_log.event(
+        session.session_id,
+        "emergency_alert",
+        red_flags=session.red_flag_codes(),
+        message=EMERGENCY_MESSAGE,
+    )
+
+
 def _trace_summary(session: IntakeSession, kind: str) -> None:
     progress = progress_of(session)
     session_log.summary(
@@ -238,6 +269,8 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
                         (vẫn quét red-flag và trích xuất bình thường).
     """
     session = _require_session(session_id)
+    if session.state == SessionState.EMERGENCY:
+        raise ValueError("Phiên đã được chuyển hướng cấp cứu và không cần xác nhận tóm tắt.")
     if session.state == SessionState.COLLECTING:
         raise ValueError("Phiên chưa có phiếu tóm tắt để xác nhận.")
 
@@ -259,6 +292,11 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
 
     session.conversation.append({"role": "user", "content": cleaned})
     session.red_flags.extend(scan_red_flags(cleaned))
+    if session.red_flags:
+        session.llm_used_last_turn = False
+        _enter_emergency(session)
+        _trace_turn(session, {}, False, kind="correction")
+        return session
 
     # Ở bước sửa, người bệnh ĐANG chủ động đính chính -> dùng prompt riêng cho phép ghi đè,
     # nhưng chỉ với đúng những trường họ nhắc tới (xem IntakeAgent.extract_correction).
@@ -268,6 +306,11 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
     session.llm_used_last_turn = llm_used
     if extracted:
         session.red_flags.extend(scan_red_flags(*extracted.values()))
+
+    if session.red_flags:
+        _enter_emergency(session)
+        _trace_turn(session, extracted, llm_used, kind="correction")
+        return session
 
     _trace_turn(session, extracted, llm_used, kind="correction")
     if is_complete_enough(session.answers):

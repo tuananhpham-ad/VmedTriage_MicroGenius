@@ -102,13 +102,24 @@ class TestSessionFlow:
 
         assert session.red_flags, "phải bắt được red-flag ngay lượt đầu"
         assert "loss_of_consciousness" in session.red_flag_codes()
-        assert session.state == SessionState.COLLECTING  # vẫn hỏi tiếp, không dừng phiên
+        assert session.state == SessionState.EMERGENCY
+        assert "115" in session.last_question
         assert not is_complete_enough(session.answers)
 
     def test_confirm_before_summary_is_rejected(self, no_llm):
         session = intake_session.start_session()
         with pytest.raises(ValueError, match="chưa có phiếu tóm tắt"):
             intake_session.confirm_summary(session.session_id, is_correct=True)
+
+    def test_emergency_session_does_not_continue_collecting(self, no_llm):
+        session = intake_session.start_session()
+        session = intake_session.submit_message(session.session_id, "bố tôi vừa bị ngất")
+        turns_before = session.turn_count
+
+        session = intake_session.submit_message(session.session_id, "tôi muốn khai thêm thông tin")
+
+        assert session.state == SessionState.EMERGENCY
+        assert session.turn_count == turns_before
 
     def test_force_summary_after_max_turns(self, no_llm, monkeypatch):
         """Không hỏi vòng vô hạn khi người bệnh liên tục không cung cấp được thông tin.
@@ -161,6 +172,7 @@ class TestSessionFlow:
             session.session_id, is_correct=False, correction="quên mất, cháu có co giật nữa"
         )
         assert "seizure" in session.red_flag_codes()
+        assert session.state == SessionState.EMERGENCY
 
 
 class TestProgressReporting:

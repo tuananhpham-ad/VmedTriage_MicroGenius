@@ -1,3 +1,4 @@
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
-from src.models.auth import LoginRequest, RegisterRequest, TokenClaims
+from src.models.auth import LoginRequest, RegisterRequest, TokenClaims, UpdateProfileRequest
 from src.models.password_reset import EmailVerificationCodeRecord, PasswordResetTokenRecord
 from src.models.user import UserRecord, UserRole
 
@@ -58,16 +59,17 @@ class AuthService:
                 raise NurseRegistrationDeniedError("Mã đăng ký điều dưỡng không hợp lệ")
 
         email = self._normalize_email(str(request.email))
+        username = request.username or self._username_from_email(db, email)
         if db.scalar(select(UserRecord).where(UserRecord.email == email)) is not None:
             raise UserAlreadyExistsError("Email đã được đăng ký")
-        if db.scalar(select(UserRecord).where(UserRecord.username == request.username)) is not None:
+        if db.scalar(select(UserRecord).where(UserRecord.username == username)) is not None:
             raise UserAlreadyExistsError("Tên đăng nhập đã được sử dụng")
         if db.scalar(select(UserRecord).where(UserRecord.phone_number == request.phone_number)) is not None:
             raise UserAlreadyExistsError("Số điện thoại đã được sử dụng")
 
         user = UserRecord(
             email=email,
-            username=request.username,
+            username=username,
             phone_number=request.phone_number,
             full_name=request.full_name.strip(),
             date_of_birth=request.date_of_birth,
@@ -89,6 +91,21 @@ class AuthService:
             raise UserAlreadyExistsError("Email, tên đăng nhập hoặc số điện thoại đã được sử dụng") from error
         db.refresh(user)
         return user
+
+    @staticmethod
+    def _username_from_email(db: Session, email: str) -> str:
+        """Create an internal username when the streamlined registration form omits it."""
+        local_part = email.partition("@")[0].lower()
+        base = re.sub(r"[^a-z0-9_.-]+", "-", local_part).strip(".-_") or "user"
+        base = f"user-{base}" if len(base) < 3 else base
+        base = base[:50]
+        candidate = base
+        counter = 2
+        while db.scalar(select(UserRecord.id).where(UserRecord.username == candidate)) is not None:
+            suffix = f"-{counter}"
+            candidate = f"{base[: 50 - len(suffix)]}{suffix}"
+            counter += 1
+        return candidate
 
     def create_email_verification_code(self, db: Session, user: UserRecord) -> str:
         now = datetime.now(timezone.utc)
@@ -202,6 +219,20 @@ class AuthService:
         user.password_hash = self.password_hash.hash(new_password)
         db.commit()
         return True
+
+    def update_profile(self, db: Session, *, user: UserRecord, payload: UpdateProfileRequest) -> UserRecord:
+        other_user = db.scalar(
+            select(UserRecord).where(UserRecord.phone_number == payload.phone_number, UserRecord.id != user.id)
+        )
+        if other_user is not None:
+            raise UserAlreadyExistsError("Số điện thoại đã được sử dụng")
+        user.full_name = payload.full_name.strip()
+        user.phone_number = payload.phone_number
+        user.date_of_birth = payload.date_of_birth
+        user.gender = payload.gender
+        db.commit()
+        db.refresh(user)
+        return user
 
     def create_access_token(self, user: UserRecord) -> tuple[str, int]:
         settings = get_settings()

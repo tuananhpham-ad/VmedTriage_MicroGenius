@@ -149,6 +149,39 @@ class NoProviderConfiguredError(RuntimeError):
     pass
 
 
+# Vì sao cần map này: thông báo lỗi nguyên văn của SDK CÓ THỂ chứa lại API key
+# (vd DeepSeek: "Your api key: sk-xxx is invalid") nên không được đưa ra ngoài. Nhưng chỉ báo tên
+# exception thì vô dụng - "ClientError" không phân biệt được key sai với hết quota. Lấy mã HTTP ra
+# và diễn giải là đủ thông tin để xử lý mà không rò key.
+_STATUS_HINTS: dict[int, str] = {
+    401: "API key sai hoặc đã bị thu hồi",
+    402: "tài khoản hết số dư - cần nạp thêm tiền",
+    403: "key không có quyền dùng model này",
+    404: "không tìm thấy model - kiểm tra lại tên model",
+    429: "hết quota hoặc bị giới hạn tốc độ - chờ hoặc nâng gói",
+}
+
+
+def _status_code_of(exc: Exception) -> int | None:
+    """Lấy mã HTTP từ exception của nhiều SDK khác nhau (openai: status_code, google: code)."""
+    for attr in ("status_code", "code", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def describe_provider_error(provider: str, exc: Exception) -> str:
+    """Mô tả lỗi gọi LLM đủ để người dùng biết phải làm gì, KHÔNG kèm nguyên văn từ SDK."""
+    status = _status_code_of(exc)
+    hint = _STATUS_HINTS.get(status or 0)
+    if hint:
+        return f"{provider}: {hint} (HTTP {status})"
+    if status:
+        return f"{provider}: lỗi HTTP {status} ({type(exc).__name__})"
+    return f"{provider}: {type(exc).__name__}"
+
+
 @dataclass(slots=True)
 class CompletionResult:
     text: str
@@ -199,8 +232,9 @@ def complete(
                 temperature=resolved_temperature,
             )
         except Exception as exc:
-            errors.append(f"{spec.name}: {type(exc).__name__}: {exc}")
-            logger.warning("provider.failed name=%s reason=%s", spec.name, type(exc).__name__)
+            described = describe_provider_error(spec.name, exc)
+            errors.append(described)
+            logger.warning("provider.failed %s", described)
             continue
 
         text = (response.text or "").strip()
@@ -234,11 +268,10 @@ def _complete_with_credential(
     try:
         response = provider.complete(list(messages), model=credential.model, temperature=temperature)
     except Exception as exc:
-        # Thông báo lỗi của SDK có thể chứa lại API key -> không đưa nguyên văn ra ngoài.
-        logger.warning("provider.user_credential_failed name=%s reason=%s", credential.provider, type(exc).__name__)
-        raise NoProviderConfiguredError(
-            f"Gọi {credential.provider} thất bại ({type(exc).__name__}). Kiểm tra lại API key và tên model."
-        ) from exc
+        # Thông báo lỗi của SDK có thể chứa lại API key -> chỉ đưa ra mã HTTP đã được diễn giải.
+        described = describe_provider_error(credential.provider, exc)
+        logger.warning("provider.user_credential_failed %s", described)
+        raise NoProviderConfiguredError(f"Gọi thất bại -> {described}") from exc
 
     text = (response.text or "").strip()
     if not text:

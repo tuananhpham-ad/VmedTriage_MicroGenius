@@ -54,6 +54,25 @@ async def test_register_requires_email_verification_before_login(client, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch):
+    monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: None)
+    response = await client.post(
+        "/api/v1/register",
+        json={
+            "email": "short.form@example.com",
+            "phone_number": "0901234569",
+            "full_name": "Short Form Patient",
+            "password": "StrongPass123!",
+            "confirm_password": "StrongPass123!",
+            "terms_accepted": True,
+            "role": "patient",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["username"] == "short.form"
+
+
+@pytest.mark.asyncio
 async def test_registration_rejects_weak_password_and_missing_terms(client):
     weak_password = registration_payload(email="weak@example.com", username="weak.user")
     weak_password["password"] = weak_password["confirm_password"] = "weakpass"
