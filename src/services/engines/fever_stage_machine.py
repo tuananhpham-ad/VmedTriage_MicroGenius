@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Literal
 
 from src.services.checklists.fever_checklist import (
+    FIELDS_BY_KEY,
     QUESTION_CLUSTERS,
     QuestionCluster,
     Stage,
@@ -52,7 +53,7 @@ BUDGET: dict[str, tuple[int, int]] = {
 
 # Field M0 "đỏ tuyệt đối" dùng cho provisional scan của should_stop (xem docstring module).
 # Value coi là dương tính: chuỗi tri-state "true", hoặc enum/giá trị cụ thể liệt kê trong set.
-_EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = (
+EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = (
     "seizure_active_now",
     "seizure_occurred",
     "neck_stiffness",
@@ -105,7 +106,7 @@ def age_in_months(answers: dict[str, object]) -> float | None:
 def has_provisional_emergency_signal(answers: dict[str, object]) -> bool:
     """Quét rất nhẹ các field M0 đỏ tuyệt đối - CHỈ dùng để biết khi nào state machine nên dừng hỏi
     thường quy (Part 1.3 CS điểm 1). Không sinh reason_codes/triggered_rules chính thức."""
-    for key in _EMERGENCY_TRI_STATE_FIELDS:
+    for key in EMERGENCY_TRI_STATE_FIELDS:
         if _is_true(answers.get(key)):
             return True
     for key, matches in _EMERGENCY_ENUM_MATCHES.items():
@@ -265,6 +266,12 @@ def _cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) 
     return any(not _is_filled(answers.get(key)) for key in cluster.fields)
 
 
+def _cluster_is_optional_tier(cluster: QuestionCluster) -> bool:
+    """CS Part 6 (b): ngân sách chỉ được cắt cụm mà TOÀN BỘ field bên trong là tier O/H (làm giàu/
+    handoff) - cụm có bất kỳ field M0/M1/C nào vẫn phải hỏi dù đã vượt ngân sách danh nghĩa."""
+    return all(FIELDS_BY_KEY[key].tier in ("O", "H") for key in cluster.fields)
+
+
 def next_cluster(
     stage: Stage,
     answers: dict[str, object],
@@ -360,7 +367,7 @@ def should_stop(
 ) -> StopReason | None:
     """CS Part 1.3 - áp theo thứ tự: chốt đỏ > đủ căn cứ > hết ngân sách > người dùng không tiếp tục
     được. `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ, đúng §6.5).
-    Ngân sách chỉ có hiệu lực từ Stage 3B trở đi - xem chú thích tại nơi kiểm tra bên dưới."""
+    Ngân sách chỉ có hiệu lực ở Stage 5 - xem chú thích tại nơi kiểm tra bên dưới."""
     if not user_can_continue:
         return "USER_CANNOT_CONTINUE"
 
@@ -372,14 +379,28 @@ def should_stop(
     if stage == "5" and next_cluster(stage, answers) is None and self_care_checklist_satisfied(answers):
         return "SUFFICIENT_EVIDENCE"
 
-    # CS §4.2: "Không được bỏ minimum scan an toàn - tức Stage 3A (toàn bộ field M0)". Ngân sách
-    # câu hỏi KHÔNG BAO GIỜ được phép cắt ngang Stage 0-3A (an toàn tuyệt đối theo P0-1) - chỉ áp
-    # dụng từ Stage 3B trở đi (M1/enrichment), nơi rút gọn là hợp lệ.
-    if STAGE_ORDER.index(stage) < STAGE_ORDER.index("3B"):
+    # CS §4.2: "Không được bỏ minimum scan an toàn - tức Stage 3A (toàn bộ field M0)" CỘNG field M1
+    # liên quan route đang áp dụng - và CS §4.3 điểm 3: "Đang hướng SELF_CARE -> phải hoàn thành M0 +
+    # M1/M1_SELF_CARE cho route đang áp dụng". Field M1 nằm rải ở Stage 3B VÀ Stage 4 (vd
+    # `can_return_for_followup`, `caregiver_available` ở Q4-08) - ngân sách vì vậy KHÔNG được cắt
+    # trước khi Stage 4 hoàn tất, nếu không checklist SELF_CARE (KM §5.4) sẽ KHÔNG BAO GIỜ đủ điều
+    # kiện được (thấy qua Checkpoint 6: ca SELF_CARE sạch tuyệt đối vẫn bị ép xuống EARLY_VISIT vì
+    # ngân sách cắt trước khi hỏi tới Q4-08). Chỉ Stage 5 (đúng CS §4.2 liệt kê "P3 ở Stage 5" là phần
+    # có thể bỏ khi xu hướng rõ ràng lành tính) mới thực sự chịu ngân sách.
+    if STAGE_ORDER.index(stage) < STAGE_ORDER.index("5"):
         return None
 
     budget_max = BUDGET[budget_key(answers, resolved_route, known_triage_level=known_triage_level)][1]
-    if asked_count >= budget_max:
+    if asked_count < budget_max:
+        return None
+
+    # CS Part 6 "Dừng hẳn" (b): "đạt giới hạn ngân sách câu hỏi MÀ PHẦN CÒN LẠI CHỈ LÀ field O/H".
+    # Vượt ngân sách KHÔNG tự động dừng nếu cụm kế tiếp còn field M0/M1/C (vd Q5-01 hỏi triệu chứng
+    # tiết niệu - bắt buộc cho trẻ <5 tuổi để loại trừ R-V-16/RF-42, không phải field làm giàu) -
+    # nếu không, hệ thống sẽ mãi mãi không đủ dữ kiện chứng minh SELF_CARE và mặc định thận trọng
+    # (EARLY_VISIT) một cách sai lệch, dù đúng ra đã có thể xác nhận an toàn.
+    candidate = next_cluster(stage, answers)
+    if candidate is None or _cluster_is_optional_tier(candidate):
         return "BUDGET_EXHAUSTED"
 
     return None

@@ -2,10 +2,13 @@
 
 Lưu ý về căng thẳng số liệu giữa 2 tài liệu nguồn: Stage 3A (minimum safety scan, KHÔNG được cắt
 theo CS §4.2/P0-1) đã chiếm **11 cụm**, cộng Stage 0-2 (~8 cụm) = ~19 cụm - tự nó đã vượt trần ngân
-sách `SELF_CARE_CANDIDATE`/`EARLY_VISIT` (12-16/8-12) ở §6.5 TRƯỚC KHI vào Stage 3B. Đây là căng
-thẳng có thật giữa CS §4.2 (không được cắt Stage 3A) và CS §6.5 (ngân sách tổng), không phải bug của
-state machine - test dưới đây phản ánh đúng hệ quả: ngân sách chỉ còn ý nghĩa cắt Stage 3B/4/5 (M1 +
-enrichment), không cắt được Stage 0-3A.
+sách `SELF_CARE_CANDIDATE`/`EARLY_VISIT` (12-16/8-12) ở §6.5 TRƯỚC KHI hết Stage 3A. Thêm nữa, field
+M1 bắt buộc cho checklist SELF_CARE (KM §5.4) nằm rải ở CẢ Stage 3B lẫn Stage 4 (`can_return_for_followup`,
+`caregiver_available` ở Q4-08) - nếu ngân sách cắt trước khi Stage 4 xong, SELF_CARE sẽ KHÔNG BAO GIỜ
+kết luận được (phát hiện qua Checkpoint 6 khi chạy qua API thật). Đây là căng thẳng có thật giữa
+CS §4.2/§4.3 (không được cắt M0/M1 khi đang hướng SELF_CARE) và CS §6.5 (ngân sách tổng), không phải
+bug của state machine - test dưới đây phản ánh đúng hệ quả: ngân sách chỉ thực sự có hiệu lực ở
+Stage 5 (đúng CS §4.2, liệt kê "field P3 ở Stage 5" là phần được phép bỏ khi đã rõ lành tính).
 
 Golden: bảng ngân sách CS §6.5, chép tay thành BUDGET (đã định nghĩa trong module, kiểm bằng test
 riêng để chống hồi quy). Driver mô phỏng hội thoại: giữ 2 dict - `known` (dữ liệu "thật" của ca, đầy
@@ -113,20 +116,16 @@ def test_high_risk_route_exhausts_budget_without_premature_self_care():
         "abdominal_guarding": "false", "is_pregnant": "false", "chronic_conditions": ["none"],
         "recent_surgery_30d": "false", "indwelling_device": ["none"], "malaria_risk_area": "false",
     }
-    # `immunocompromised` chỉ lộ ra ở Stage 4 (Q4-03/Q4-00). Vì Stage 3A (11 cụm, mandatory) đã tự
-    # nó vượt ngân sách SELF_CARE_CANDIDATE/HIGH_RISK trước khi hội thoại kịp tới Stage 4, ngân sách
-    # sẽ dừng hội thoại ngay khi bước sang Stage 3B - route quan sát được trong hội thoại vẫn là
-    # ROUTE_STANDARD (chưa kịp biết immunocompromised). Đây LÀ đúng theo `determine_route` thuần
-    # (xem test riêng dùng full `known`), chỉ là hội thoại chưa kịp thu thập đủ dữ liệu - một giới
-    # hạn có thật của ngân sách cố định, không phải lỗi state machine.
+    # `immunocompromised` chỉ lộ ra ở Stage 4 (Q4-03/Q4-00). Ngân sách chỉ có hiệu lực ở Stage 5
+    # (xem should_stop), nên hội thoại vẫn kịp đi hết Stage 4 và chốt đúng route trước khi dừng.
     asked, stop_reason, revealed = _run_conversation(known, session_id="high-risk", max_turns=80)
 
     stage_3a_ids = {c.id for c in fsm.clusters_for_stage("3A")}
     assert stage_3a_ids.issubset(set(asked)), "Stage 3A (an toàn) không được bị ngân sách cắt ngang"
+    assert revealed.get("immunocompromised") is True
+    assert fsm.determine_route(revealed) == "ROUTE_HIGH_RISK"
     assert not fsm.has_provisional_emergency_signal(revealed)
-    assert stop_reason == "BUDGET_EXHAUSTED"
-    # Dữ liệu ĐẦY ĐỦ của ca này (nếu hỏi hết, không bị ngân sách chặn) đúng là ROUTE_HIGH_RISK.
-    assert fsm.determine_route(known) == "ROUTE_HIGH_RISK"
+    assert stop_reason in ("BUDGET_EXHAUSTED", "SUFFICIENT_EVIDENCE")
 
 
 def test_determine_route_pure_function_covers_every_named_route():
@@ -189,9 +188,9 @@ def test_early_visit_known_from_rule_engine_hint_stays_within_budget():
     assert stage_3a_ids.issubset(set(asked)), "Stage 3A (an toàn) không được bị ngân sách cắt ngang"
     assert fsm.determine_route(revealed) == "ROUTE_STANDARD"
     assert stop_reason == "BUDGET_EXHAUSTED"
-    # Ngân sách chỉ có hiệu lực từ Stage 3B - kiểm tra nó THỰC SỰ dừng sớm ngay khi vào 3B, không để
-    # hội thoại chạy tràn qua cả Stage 4/5 dù đã biết EARLY_VISIT.
-    assert asked[-1] in {c.id for c in fsm.clusters_for_stage("3B")}
+    # Ngân sách chỉ có hiệu lực ở Stage 5 - kiểm tra nó THỰC SỰ dừng trong Stage 5, không chạy tràn
+    # vô hạn (Stage 0-4 hoàn tất trước, đúng CS §4.2/§4.3, rồi mới bị cắt ở phần enrichment).
+    assert asked[-1] in {c.id for c in fsm.clusters_for_stage("5")}
 
 
 def test_self_care_candidate_route_standard_stays_within_budget_cap():
@@ -218,8 +217,9 @@ def test_self_care_candidate_route_standard_stays_within_budget_cap():
     stage_3a_ids = {c.id for c in fsm.clusters_for_stage("3A")}
     assert stage_3a_ids.issubset(set(asked)), "Stage 3A (an toàn) không được bị ngân sách cắt ngang"
     assert fsm.determine_route(revealed) == "ROUTE_STANDARD"
-    assert stop_reason == "BUDGET_EXHAUSTED"
-    assert asked[-1] in {c.id for c in fsm.clusters_for_stage("3B")}
+    assert stop_reason in ("BUDGET_EXHAUSTED", "SUFFICIENT_EVIDENCE")
+    if stop_reason == "BUDGET_EXHAUSTED":
+        assert asked[-1] in {c.id for c in fsm.clusters_for_stage("5")}
 
 
 def test_budget_table_matches_conversation_spec_6_5():

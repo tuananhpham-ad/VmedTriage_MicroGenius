@@ -16,6 +16,7 @@ KHÔNG nằm ở đây - đó là việc của `fever_stage_machine.py` (Bước
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -36,10 +37,21 @@ EMERGENCY_MESSAGE = (
     "khoa cấp cứu gần nhất, không chờ thêm. Thông tin đã được chuyển cho điều dưỡng ưu tiên hỗ trợ."
 )
 
+# Field an toàn "đỏ tuyệt đối" (dùng chung với provisional scan của fever_stage_machine). Ở Stage
+# 0/1/2/4/5 (hướng E), schema trích xuất LUÔN kèm thêm nhóm field này dù không thuộc cụm đang hỏi -
+# lý do: P0-5 ("chốt đỏ ngắt hội thoại NGAY, không chờ hỏi hết checklist") không được phép chờ tới
+# lượt Stage 3A mới phát hiện. Ví dụ CS Part 8 ca E2: người dùng mô tả "tay chân đang giật, mắt trợn
+# lên" ngay ở tin nhắn ĐẦU TIÊN (còn đang ở Stage 0) - hệ thống phải chốt đỏ ngay lượt đó, không đợi
+# đi hết Stage 0->1->2 rồi mới tới cụm Q3-03 hỏi co giật.
+
 TriState = str  # "true" | "false" | "unknown"
 
 _TRUE_TOKENS = frozenset({"true", "có", "co", "yes", "dương tính", "duong tinh"})
 _FALSE_TOKENS = frozenset({"false", "không", "khong", "no", "âm tính", "am tinh"})
+
+# Xem giải thích ở EMERGENCY_MESSAGE - dùng chung danh sách field "đỏ tuyệt đối" với state machine
+# để hướng E cũng quét được emergency signal tình cờ xuất hiện ngoài Stage 3A/3B.
+_SAFETY_SIGNAL_FIELDS: tuple[str, ...] = fever_stage_machine.EMERGENCY_TRI_STATE_FIELDS
 
 # Quét cơ hội: các field an toàn cốt lõi thường được người dùng chủ động mô tả ngay từ câu đầu tiên,
 # trước khi tới lượt cụm hỏi tương ứng (đúng ví dụ O1, Part 8 CS). Danh sách CỐ Ý ngắn - chỉ phủ field
@@ -69,11 +81,15 @@ def _tri_state_value(raw: object) -> TriState:
     return "unknown"
 
 
-def _field_specs(cluster: QuestionCluster) -> str:
+def _field_specs(field_keys: tuple[str, ...]) -> str:
     lines = []
-    for key in cluster.fields:
+    for key in field_keys:
         field = FIELDS_BY_KEY[key]
-        kind = "true|false|unknown" if field.tri_state else "giá trị cụ thể hoặc null"
+        # Ghi rõ ngoặc kép trong chính hint để giảm khả năng model trả bareword unknown (không quote)
+        # - lỗi thật gặp phải với gpt-4o-mini qua OpenRouter khi chạy Checkpoint 6(b), xem
+        # _repair_bareword_unknown ở dưới (vẫn giữ lớp sửa lỗi đó làm lưới an toàn, không chỉ dựa
+        # vào việc nhắc prompt).
+        kind = '"true" | "false" | "unknown" (luôn có dấu ngoặc kép)' if field.tri_state else "giá trị cụ thể hoặc null"
         lines.append(f"- {key} ({field.label}) [{kind}]: {field.hint}")
     return "\n".join(lines)
 
@@ -123,7 +139,7 @@ def extract_cluster(
         )
 
     batch_rule = _BATCH_NEGATION_RULE if cluster.batch_negation else ""
-    system_prompt = _EXTRACTION_SYSTEM.format(batch_negation_rule=batch_rule, field_specs=_field_specs(cluster))
+    system_prompt = _EXTRACTION_SYSTEM.format(batch_negation_rule=batch_rule, field_specs=_field_specs(cluster.fields))
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
@@ -150,6 +166,19 @@ def extract_cluster(
     return extracted
 
 
+_BAREWORD_UNKNOWN_RE = re.compile(r'(:\s*)unknown\b(?!")')
+
+
+def _repair_bareword_unknown(text: str) -> str:
+    """Sửa lỗi JSON thật gặp phải với gpt-4o-mini (qua OpenRouter) khi chạy Checkpoint 6(b): model
+    đọc thấy `[true|false|unknown]` trong mô tả schema rồi coi "unknown" như 1 literal JSON kiểu
+    `true`/`false`/`null` và trả về KHÔNG có dấu ngoặc kép (vd `"seizure_occurred": unknown,`), khiến
+    `json.loads` hỏng toàn bộ - kể cả field khác trong CÙNG response đã trích đúng (vd
+    `seizure_active_now: true`) cũng bị mất theo. Chỉ thay bareword `unknown` ngay sau dấu `:` (không
+    đụng tới "unknown" đã nằm trong chuỗi có ngoặc kép, vd giá trị field enum hợp lệ)."""
+    return _BAREWORD_UNKNOWN_RE.sub(r'\1"unknown"', text)
+
+
 def _invoke_json(
     messages: list[dict[str, str]],
     credential: provider_router.LLMCredential | None,
@@ -165,18 +194,21 @@ def _invoke_json(
     latency_ms = int((time.monotonic() - started) * 1000)
     try:
         parsed = _parse_json_object(result.text)
-    except Exception as exc:  # JSON hỏng - không phải lỗi gọi provider
-        logger.warning("fever_intake.parse_failed reason=%s", type(exc).__name__)
-        return None, f"{type(exc).__name__}: {exc}", result.provider, result.model, result.text, latency_ms
+    except Exception:
+        try:
+            parsed = _parse_json_object(_repair_bareword_unknown(result.text))
+        except Exception as exc:  # JSON vẫn hỏng sau khi đã thử sửa - không phải lỗi gọi provider
+            logger.warning("fever_intake.parse_failed reason=%s", type(exc).__name__)
+            return None, f"{type(exc).__name__}: {exc}", result.provider, result.model, result.text, latency_ms
 
     return parsed, None, result.provider, result.model, result.text, latency_ms
 
 
-def _collect(cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
-    cluster_negative = bool(parsed.get("cluster_all_negative")) if cluster.batch_negation else False
+def _collect_fields(field_keys: tuple[str, ...], parsed: dict, *, batch_negation: bool = False) -> dict[str, TriState]:
+    cluster_negative = bool(parsed.get("cluster_all_negative")) if batch_negation else False
 
     collected: dict[str, TriState] = {}
-    for key in cluster.fields:
+    for key in field_keys:
         field = FIELDS_BY_KEY[key]
         if not field.tri_state:
             raw = parsed.get(key)
@@ -190,6 +222,10 @@ def _collect(cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
         collected[key] = value
 
     return collected
+
+
+def _collect(cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
+    return _collect_fields(cluster.fields, parsed, batch_negation=cluster.batch_negation)
 
 
 def _merge_answers(answers: dict[str, TriState], *updates: dict[str, TriState]) -> dict[str, TriState]:
@@ -233,6 +269,10 @@ BƯỚC 1 - TRÍCH XUẤT: đọc tin nhắn người dùng, điền vào ĐÚNG
 điền trường nào khác:
 {field_specs}
 
+NGOÀI RA, dù KHÔNG thuộc lượt hỏi này, nếu tin nhắn có TỰ MÔ TẢ bất kỳ dấu hiệu nào dưới đây, vẫn PHẢI
+điền vào JSON (đây là dấu hiệu an toàn khẩn cấp, không được bỏ sót dù chưa tới lượt hỏi):
+{safety_field_specs}
+
 QUY TẮC TRÍCH XUẤT:
 - CHỈ trích xuất thông tin ĐÃ CÓ trong tin nhắn. TUYỆT ĐỐI KHÔNG suy diễn, KHÔNG phỏng đoán.
 - Với trường [true|false|unknown]: "true" nếu xác nhận CÓ, "false" nếu XÁC NHẬN RÕ RÀNG không có,
@@ -273,6 +313,7 @@ def run_turn(
     message: str,
     answers: dict[str, TriState],
     next_cluster: QuestionCluster | None = None,
+    asked_ids: frozenset[str] = frozenset(),
     credential: provider_router.LLMCredential | None = None,
 ) -> FeverTurnResult:
     """Một lượt hỏi-đáp, ghép đúng hướng C/E theo stage (mục 2 task spec).
@@ -280,6 +321,10 @@ def run_turn(
     `cluster`: cụm câu hỏi mà `message` đang trả lời.
     `next_cluster`: cụm kế tiếp ĐÃ BIẾT TRƯỚC từ `fever_stage_machine.next_cluster(stage, answers)`
     (tính trên `answers` TRƯỚC lượt này) - không phụ thuộc kết quả extract lượt này, đúng kiến trúc.
+    `asked_ids`: các cụm ĐÃ hỏi trong toàn phiên (kể cả những cụm trả lời "unknown") - BẮT BUỘC
+    truyền đúng, nếu không hướng C (Stage 3A/3B) sẽ chọn lại đúng cụm vừa hỏi thay vì tiến tới cụm kế
+    tiếp khi field vẫn còn "unknown" (bug đã phát hiện qua Checkpoint 6: hội thoại treo vô hạn ở
+    Stage 3A vì `fever_stage_machine.next_cluster` không biết cụm nào đã hỏi rồi).
     """
     fever_stage_log.step(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="user_message",
@@ -287,10 +332,13 @@ def run_turn(
     )
 
     if stage in ("3A", "3B"):
-        return _run_turn_gate(session_id, turn=turn, stage=stage, cluster=cluster, message=message, answers=answers, credential=credential)
+        return _run_turn_gate(
+            session_id, turn=turn, stage=stage, cluster=cluster, message=message, answers=answers,
+            asked_ids=asked_ids, credential=credential,
+        )
     return _run_turn_combined(
         session_id, turn=turn, stage=stage, cluster=cluster, message=message, answers=answers,
-        next_cluster=next_cluster, credential=credential,
+        next_cluster=next_cluster, asked_ids=asked_ids, credential=credential,
     )
 
 
@@ -302,6 +350,7 @@ def _run_turn_gate(
     cluster: QuestionCluster,
     message: str,
     answers: dict[str, TriState],
+    asked_ids: frozenset[str],
     credential: provider_router.LLMCredential | None,
 ) -> FeverTurnResult:
     """Hướng C (Stage 3A/3B): extract -> rule-based red-flag gate -> next_question/thông báo cấp cứu.
@@ -348,7 +397,7 @@ def _run_turn_gate(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id,
         tool="fever_stage_machine.next_cluster", input={"stage": stage},
     ) as rec:
-        following = fever_stage_machine.next_cluster(stage, merged)
+        following = fever_stage_machine.next_cluster(stage, merged, asked_ids=asked_ids | {cluster.id})
         rec.output = {"cluster_id": following.id if following else None}
 
     question, question_llm_used = (
@@ -376,6 +425,7 @@ def _run_turn_combined(
     message: str,
     answers: dict[str, TriState],
     next_cluster: QuestionCluster | None,
+    asked_ids: frozenset[str],
     credential: provider_router.LLMCredential | None,
 ) -> FeverTurnResult:
     """Hướng E (Stage 0,1,2,4,5): 1 call JSON gộp extract + next_question. `next_cluster` được chọn
@@ -384,7 +434,11 @@ def _run_turn_combined(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id,
         tool="fever_stage_machine.next_cluster", input={"stage": stage},
     ) as rec:
-        following = next_cluster if next_cluster is not None else fever_stage_machine.next_cluster(stage, answers)
+        following = (
+            next_cluster
+            if next_cluster is not None
+            else fever_stage_machine.next_cluster(stage, answers, asked_ids=asked_ids | {cluster.id})
+        )
         rec.output = {"cluster_id": following.id if following else None}
 
     fever_stage_log.step(
@@ -392,8 +446,10 @@ def _run_turn_combined(
         input={"cluster_id": cluster.id}, output={"fields": list(cluster.fields), "schema_size": len(cluster.fields)},
     )
 
+    safety_extra_keys = tuple(key for key in _SAFETY_SIGNAL_FIELDS if key not in cluster.fields)
     system_prompt = _COMBINED_SYSTEM.format(
-        field_specs=_field_specs(cluster),
+        field_specs=_field_specs(cluster.fields),
+        safety_field_specs=_field_specs(safety_extra_keys),
         next_script_hint=following.script_hint if following is not None else "(đã đủ thông tin, không cần hỏi thêm)",
     )
     messages = [
@@ -410,19 +466,57 @@ def _run_turn_combined(
 
     parsed = parsed or {}
     extracted = _collect(cluster, parsed.get("extracted") or {})
+    safety_extracted = _collect_fields(safety_extra_keys, parsed.get("extracted") or {})
     opportunistic = scan_opportunistic_fields(message)
-    merged = _merge_answers(answers, opportunistic, extracted)
-
-    question = str(parsed.get("next_question") or "").strip()
-    llm_used = parse_error is None and bool(question)
-    if not question:
-        question = following.script_hint if following is not None else ""
+    merged = _merge_answers(answers, opportunistic, safety_extracted, extracted)
 
     fever_stage_log.step(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="extract",
         input=None, output=extracted,
         answers_delta={key: f"unknown -> {value}" for key, value in extracted.items()},
     )
+
+    # P0-5: dấu hiệu khẩn cấp có thể được mô tả TÌNH CỜ dù chưa tới lượt hỏi Stage 3A/3B (vd ca E2,
+    # CS Part 8: co giật được mô tả ngay ở tin nhắn đầu tiên trong khi đang ở Stage 0) - phải chốt đỏ
+    # NGAY, không đợi hết Stage 0->1->2 rồi mới quét ở Stage 3A. Dùng lại 1 call đã gọi, không tốn
+    # thêm call nào (hướng E vốn đã là 1 call gộp).
+    with fever_stage_log.tool(
+        session_id, turn=turn, stage=stage, cluster_id=cluster.id,
+        tool="red_flag_engine.evaluate", input=merged,
+    ) as rec:
+        rule_result = fever_red_flag_engine.evaluate(merged)
+        rec.output = {
+            "triage_level": rule_result.triage_level,
+            "reason_codes": list(rule_result.reason_codes),
+            "triggered_rules": list(rule_result.triggered_rules),
+        }
+    is_emergency = rule_result.triage_level == "EMERGENCY"
+    fever_stage_log.step(
+        session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="rule_gate",
+        input=None, output={"triage_level": rule_result.triage_level},
+        stop_reason="RED_FLAG" if is_emergency else None,
+    )
+
+    if is_emergency:
+        fever_stage_log.step(
+            session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="agent_message",
+            input=None, output={"text": EMERGENCY_MESSAGE}, llm_used=False,
+        )
+        fever_stage_log.step(
+            session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="stop", stop_reason="RED_FLAG",
+        )
+        return FeverTurnResult(
+            answers=merged, extracted={**extracted, **safety_extracted}, agent_message=EMERGENCY_MESSAGE,
+            next_cluster=None, llm_used=True, emergency=True,
+            triage_level=rule_result.triage_level,
+            reason_codes=rule_result.reason_codes, triggered_rules=rule_result.triggered_rules,
+        )
+
+    question = str(parsed.get("next_question") or "").strip()
+    llm_used = parse_error is None and bool(question)
+    if not question:
+        question = following.script_hint if following is not None else ""
+
     fever_stage_log.step(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="agent_message",
         input=None, output={"text": question}, llm_used=llm_used,
@@ -431,6 +525,8 @@ def _run_turn_combined(
     return FeverTurnResult(
         answers=merged, extracted=extracted, agent_message=question,
         next_cluster=following, llm_used=True, emergency=False,
+        triage_level=rule_result.triage_level,
+        reason_codes=rule_result.reason_codes, triggered_rules=rule_result.triggered_rules,
     )
 
 

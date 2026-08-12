@@ -220,6 +220,40 @@ def test_scan_opportunistic_fields_never_returns_false_for_silence():
 # --- log -----------------------------------------------------------------------------------
 
 
+# --- sửa lỗi JSON bareword unknown (lỗi thật gặp phải với gpt-4o-mini qua OpenRouter, Checkpoint 6b) -
+
+
+def test_repair_bareword_unknown_fixes_real_gpt4o_mini_output():
+    broken = (
+        '{\n  "extracted": {\n    "seizure_active_now": true,\n    "seizure_occurred": unknown,\n'
+        '    "neck_stiffness": unknown\n  },\n  "next_question": "..."\n}'
+    )
+    repaired = agent._repair_bareword_unknown(broken)
+    import json as _json
+
+    parsed = _json.loads(repaired)
+    assert parsed["extracted"]["seizure_active_now"] is True
+    assert parsed["extracted"]["seizure_occurred"] == "unknown"
+    assert parsed["extracted"]["neck_stiffness"] == "unknown"
+
+
+def test_repair_bareword_unknown_does_not_touch_already_quoted_unknown():
+    text = '{"consciousness_level": "unknown"}'
+    assert agent._repair_bareword_unknown(text) == text
+
+
+def test_extract_cluster_survives_bareword_unknown_from_real_model_output(monkeypatch):
+    broken_json_text = '{"seizure_active_now": true, "seizure_occurred": unknown}'
+    fake = Mock(return_value=provider_router.CompletionResult(text=broken_json_text, provider="openrouter", model="openai/gpt-4o-mini"))
+    monkeypatch.setattr(provider_router, "complete", fake)
+
+    cluster = CLUSTERS_BY_ID["Q3-03"]
+    result = agent.extract_cluster(cluster, "tay chân đang giật")
+
+    assert result["seizure_active_now"] == "true"
+    assert result["seizure_occurred"] == "unknown"
+
+
 def test_extract_cluster_logs_retrieve_llm_and_extract_in_order(monkeypatch):
     fake = _fake_complete({"consciousness_level": "alert"})
     monkeypatch.setattr(provider_router, "complete", fake)
