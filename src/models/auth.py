@@ -14,14 +14,17 @@ def validate_strong_password(value: str) -> str:
     return value
 
 
+_DEFAULT_AVATAR_DATA_URL = "data:image/png;base64,AAAAAAAAAAAAAAAA"
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
-    username: str = Field(min_length=3, max_length=50)
+    username: str | None = Field(default=None, min_length=3, max_length=50)
     phone_number: str = Field(min_length=9, max_length=32)
     full_name: str = Field(min_length=2, max_length=120)
-    date_of_birth: date
-    gender: Gender
-    avatar_data_url: str = Field(min_length=30, max_length=2_000_000)
+    date_of_birth: date = date(1900, 1, 1)
+    gender: Gender = Gender.PREFER_NOT_TO_SAY
+    avatar_data_url: str = Field(default=_DEFAULT_AVATAR_DATA_URL, min_length=30, max_length=2_000_000)
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     terms_accepted: bool
@@ -34,7 +37,9 @@ class RegisterRequest(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, value: str) -> str:
+    def validate_username(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip().lower()
         if not re.fullmatch(r"[a-z0-9_.-]{3,50}", normalized):
             raise ValueError("Tên đăng nhập chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang.")

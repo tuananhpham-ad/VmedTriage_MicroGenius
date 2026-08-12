@@ -263,14 +263,17 @@ _FINAL_PATIENT_STATUSES = {CaseStatus.APPROVED, CaseStatus.ESCALATED}
 
 
 def _patient_chat_response(triage_case: TriageCase) -> ChatResponse:
-    """Return only safe intake prompts to patients before nurse approval."""
-    is_collecting = triage_case.status == CaseStatus.COLLECTING_INFORMATION
-    response = triage_case.patient_visible_response if is_collecting else None
+    """Return a fixed emergency alert immediately; other guidance still needs review."""
+    is_patient_visible = triage_case.status in {
+        CaseStatus.COLLECTING_INFORMATION,
+        CaseStatus.ESCALATED,
+    }
+    response = triage_case.patient_visible_response if is_patient_visible else None
     return ChatResponse(
         case_id=triage_case.case_id,
         response=response or _PENDING_REVIEW_MESSAGE,
         status=triage_case.status,
-        requires_human_approval=True,
+        requires_human_approval=triage_case.status != CaseStatus.ESCALATED,
     )
 
 

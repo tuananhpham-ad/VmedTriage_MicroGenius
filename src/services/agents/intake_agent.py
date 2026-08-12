@@ -27,6 +27,7 @@ from src.services.checklists.intake_checklist import (
     missing_optional_keys,
     missing_required_keys,
 )
+from src.services.engines.red_flag_text_rules import detect_text_red_flags
 from src.services.infra import provider_router
 
 logger = logging.getLogger("vmedtriage.intake")
@@ -102,6 +103,11 @@ def scan_red_flags(*texts: str) -> list[RedFlagHit]:
             if strip_diacritics(keyword) in haystack:
                 hits.append(RedFlagHit(code=code, label=label, matched_keyword=keyword))
                 break
+    existing_codes = {hit.code for hit in hits}
+    for text_rule, phrase in detect_text_red_flags(*texts):
+        if text_rule.code not in existing_codes:
+            hits.append(RedFlagHit(code=text_rule.code, label=text_rule.label, matched_keyword=phrase))
+            existing_codes.add(text_rule.code)
     return hits
 
 
