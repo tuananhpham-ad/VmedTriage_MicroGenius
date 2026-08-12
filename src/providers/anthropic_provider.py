@@ -38,9 +38,11 @@ class AnthropicProvider:
         self,
         *,
         api_key_env: str = "ANTHROPIC_API_KEY",
+        api_key: str | None = None,
         default_model: str = "claude-haiku-4-5-20251001",
     ) -> None:
         self.api_key_env = api_key_env
+        self.api_key = api_key  # xem ghi chú ở OpenAIProvider về việc không dùng os.environ
         self.default_model = default_model
 
     def complete(
@@ -57,7 +59,7 @@ class AnthropicProvider:
         except ImportError as exc:
             raise RuntimeError("Install live provider dependency first: pip install anthropic") from exc
 
-        api_key = os.getenv(self.api_key_env)
+        api_key = self.api_key or os.getenv(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"Missing API key env var: {self.api_key_env}")
 

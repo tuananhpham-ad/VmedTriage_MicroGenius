@@ -11,9 +11,9 @@ from src.models.case_api import (
     RejectRequest,
 )
 from src.models.schemas import CaseStatus
-from src.services import case_approval
-from src.services.approval_store import ApprovalStatusRecord, AuditLogEntry
-from src.services.priority_labels import priority_label_vi
+from src.services.engines.priority_labels import priority_label_vi
+from src.services.sessions import case_approval
+from src.services.stores.approval_store import ApprovalStatusRecord, AuditLogEntry
 
 router = APIRouter(tags=["Feature 2 - Hàng đợi & Duyệt ca (HITL)"])
 

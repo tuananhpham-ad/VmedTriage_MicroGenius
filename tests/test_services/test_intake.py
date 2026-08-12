@@ -5,21 +5,21 @@ from __future__ import annotations
 
 import pytest
 
-from src.services import intake_session
-from src.services.intake_agent import scan_red_flags, strip_diacritics
-from src.services.intake_checklist import (
+from src.services.agents.intake_agent import scan_red_flags, strip_diacritics
+from src.services.checklists.intake_checklist import (
     REQUIRED_KEYS,
     completion_ratio,
     is_complete_enough,
     missing_required_keys,
 )
-from src.services.intake_session import SessionState
+from src.services.sessions import intake_session
+from src.services.sessions.intake_session import SessionState
 
 
 @pytest.fixture
 def no_llm(monkeypatch):
     """Ép agent chạy nhánh fallback deterministic: giả lập không provider nào có API key."""
-    from src.services import provider_router
+    from src.services.infra import provider_router
 
     def _no_provider(*args, **kwargs):
         raise provider_router.NoProviderConfiguredError("test: không có provider")

@@ -8,8 +8,8 @@ from src.config import (
     get_settings,
 )
 from src.models.schemas import CaseStatus, SummaryField, TriageCase
-from src.services.case_store import case_store
-from src.services.quality_guard import quality_guard
+from src.services.engines.quality_guard import quality_guard
+from src.services.stores.case_store import case_store
 from src.services.triage_pipeline import triage_pipeline
 
 # Cho phép hỏi lại tối đa 1 lần cho mỗi field còn thiếu (tổng cộng 2 lượt: lượt hỏi đầu + 1 lần hỏi lại),

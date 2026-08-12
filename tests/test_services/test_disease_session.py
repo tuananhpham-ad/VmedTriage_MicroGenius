@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from src.services import disease_session
-from src.services.disease_checklist import (
+from src.services.checklists.disease_checklist import (
     ChecklistNotFoundError,
     completion_ratio,
     is_complete_enough,
     load_checklist,
     missing_required_keys,
 )
-from src.services.disease_session import SessionState
+from src.services.sessions import disease_session
+from src.services.sessions.disease_session import SessionState
 
 DISEASE_ID = "disease_x"
 
@@ -25,7 +25,7 @@ DISEASE_ID = "disease_x"
 @pytest.fixture(autouse=True)
 def isolated_log_dir(tmp_path, monkeypatch):
     """Không cho test ghi vào `logs/` thật - mỗi test một thư mục tạm riêng."""
-    from src.services import session_log
+    from src.services.infra import session_log
 
     monkeypatch.setattr(session_log, "LOG_DIR", tmp_path / "logs")
 
@@ -33,7 +33,7 @@ def isolated_log_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def no_llm(monkeypatch):
     """Ép agent chạy nhánh fallback deterministic: giả lập không provider nào có API key."""
-    from src.services import provider_router
+    from src.services.infra import provider_router
 
     def _no_provider(*args, **kwargs):
         raise provider_router.NoProviderConfiguredError("test: không có provider")
@@ -169,7 +169,7 @@ class TestSessionFlow:
 
 class TestSessionLog:
     def test_log_file_written_with_questions_and_answers(self, no_llm):
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
@@ -183,7 +183,7 @@ class TestSessionLog:
 
     def test_all_summary_versions_are_kept(self, no_llm, monkeypatch):
         """generated / revised / confirmed đều phải được lưu, không chỉ bản cuối."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
@@ -207,7 +207,7 @@ class TestSessionLog:
 
     def test_correction_records_overwritten_value(self, no_llm, monkeypatch):
         """Phải tra được người dùng sửa TỪ GÌ sang gì."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         session.answers = {"name": "Tên Cũ", "condition": "B", "onset": "C"}
@@ -225,13 +225,97 @@ class TestSessionLog:
 
     def test_logging_failure_does_not_break_session(self, no_llm, monkeypatch):
         """Lỗi ghi log không được làm hỏng phiên hỏi-đáp."""
-        from src.services import session_log
+        from src.services.infra import session_log
 
         session = disease_session.start_session(DISEASE_ID)
         monkeypatch.setattr(session_log, "LOG_DIR", Path("/dev/null/khong-ghi-duoc"))
 
         session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
         assert session.answers.get("name") == "Nguyễn Văn A"
+
+
+class TestAccumulateField:
+    """Trường mô tả (accumulate) phải CỘNG DỒN, không bị bỏ qua khi đã có giá trị.
+
+    Bug thật đã gặp: người bệnh nói sơ sài trước ("thấy trong người không ổn") rồi mới kể chi tiết
+    ("sốt 39 độ, đau họng"), phần chi tiết bị vứt mất khỏi phiếu tóm tắt.
+    """
+
+    def _agent(self):
+        from src.services.agents.disease_agent import DiseaseQAAgent
+
+        return DiseaseQAAgent(load_checklist(DISEASE_ID))
+
+    def test_disease_x_marks_condition_as_accumulate(self):
+        checklist = load_checklist(DISEASE_ID)
+        assert checklist.fields_by_key["condition"].accumulate is True
+        assert checklist.fields_by_key["name"].accumulate is False
+
+    def test_accumulate_field_merges_new_detail(self):
+        merged = self._agent()._collect(
+            {"condition": "sốt cao 39 độ, đau họng"},
+            skip_existing={"condition": "thấy trong người không ổn"},
+        )
+        assert merged["condition"] == "thấy trong người không ổn; sốt cao 39 độ, đau họng"
+
+    def test_non_accumulate_field_is_not_overwritten(self):
+        """Tên/tuổi đã xác nhận thì giữ nguyên, không cộng dồn cũng không ghi đè."""
+        result = self._agent()._collect({"name": "Tên Khác"}, skip_existing={"name": "Trần Minh Khoa"})
+        assert "name" not in result
+
+    def test_duplicate_detail_is_not_appended_twice(self):
+        result = self._agent()._collect(
+            {"condition": "sốt cao"},
+            skip_existing={"condition": "sốt cao 39 độ"},
+        )
+        assert "condition" not in result, "mô tả đã bao hàm rồi thì không nối thêm"
+
+    def test_correction_replaces_instead_of_accumulating(self):
+        """Luồng đính chính (skip_existing=None) phải GHI ĐÈ, kể cả trường accumulate."""
+        result = self._agent()._collect({"condition": "chỉ bị đau đầu nhẹ"}, skip_existing=None)
+        assert result["condition"] == "chỉ bị đau đầu nhẹ"
+
+
+class TestCredentialIsolation:
+    """API key người dùng đưa không được rò ra file log."""
+
+    def test_credential_never_written_to_log(self, no_llm, monkeypatch):
+        from src.services.infra import provider_router, session_log
+
+        secret = "sk-super-secret-key-0123456789"
+        credential = provider_router.LLMCredential(provider="deepseek", api_key=secret, model="deepseek-chat")
+
+        session = disease_session.start_session(DISEASE_ID, credential)
+        session = disease_session.submit_message(session.session_id, "Nguyễn Văn A")
+
+        raw = session_log.log_path(session.session_id).read_text(encoding="utf-8")
+        assert secret not in raw, "API key bị ghi vào file log!"
+
+    def test_repr_masks_api_key(self):
+        from src.services.infra import provider_router
+
+        credential = provider_router.LLMCredential(provider="deepseek", api_key="sk-abcdefgh1234wxyz")
+        assert "sk-abcdefgh1234wxyz" not in repr(credential)
+        assert credential.masked() == "sk-••••wxyz"
+
+    def test_session_without_credential_uses_shared_agent(self):
+        """Không có credential -> dùng agent cache dùng chung (giữ hành vi cũ)."""
+        checklist = load_checklist(DISEASE_ID)
+        assert disease_session._agent_for(checklist) is disease_session._agent_for(checklist)
+
+    def test_session_with_credential_gets_isolated_agent(self):
+        """Có credential -> KHÔNG cache, tránh phiên này dùng nhầm key của phiên khác."""
+        from src.services.infra import provider_router
+
+        checklist = load_checklist(DISEASE_ID)
+        cred_a = provider_router.LLMCredential(provider="deepseek", api_key="key-a-1234567890")
+        cred_b = provider_router.LLMCredential(provider="deepseek", api_key="key-b-1234567890")
+
+        agent_a = disease_session._agent_for(checklist, cred_a)
+        agent_b = disease_session._agent_for(checklist, cred_b)
+        assert agent_a is not agent_b
+        assert agent_a.credential.api_key != agent_b.credential.api_key
+        assert disease_session._agent_for(checklist).credential is None
 
 
 class TestProgressReporting:

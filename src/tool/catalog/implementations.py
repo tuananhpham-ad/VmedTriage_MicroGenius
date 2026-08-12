@@ -13,10 +13,10 @@ from src.models.schemas import (
     StructuredSymptomData,
     ValidationResult,
 )
-from src.services.checklist_validator import ChecklistValidator
-from src.services.red_flag import RedFlagSafetyLayer
-from src.services.semantic_mapper import RuleBackedSemanticMapper
-from src.services.triage_engine import ProtocolTriageEngine
+from src.services.engines.checklist_validator import ChecklistValidator
+from src.services.engines.red_flag import RedFlagSafetyLayer
+from src.services.engines.semantic_mapper import RuleBackedSemanticMapper
+from src.services.engines.triage_engine import ProtocolTriageEngine
 from src.tool.catalog.framework import ToolExecutionContext
 from src.tool.catalog.state import CatalogStateStore, catalog_state
 

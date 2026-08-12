@@ -138,13 +138,18 @@ class AuthService:
         return user, self.create_email_verification_code(db, user)
 
     def authenticate(self, db: Session, request: LoginRequest) -> UserRecord:
-        email = self._normalize_email(str(request.email))
-        user = db.scalar(select(UserRecord).where(UserRecord.email == email))
+        identifier = self._normalize_email(str(request.email))
+        user = db.scalar(
+            select(UserRecord).where(
+                (UserRecord.email == identifier) | (UserRecord.username == identifier)
+            )
+        )
         if user is None:
+            # Vẫn verify với hash giả để thời gian phản hồi không tiết lộ tài khoản có tồn tại hay không.
             self.password_hash.verify(request.password, self.dummy_password_hash)
-            raise InvalidCredentialsError("Email hoặc mật khẩu không đúng")
+            raise InvalidCredentialsError("Tài khoản hoặc mật khẩu không đúng")
         if not self.password_hash.verify(request.password, user.password_hash):
-            raise InvalidCredentialsError("Email hoặc mật khẩu không đúng")
+            raise InvalidCredentialsError("Tài khoản hoặc mật khẩu không đúng")
         if not user.is_active:
             raise InvalidCredentialsError("Tài khoản đã bị vô hiệu hóa")
         if not user.email_verified:

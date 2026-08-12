@@ -5,8 +5,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from src.config import DETECT_SOURCE_LABEL, GROUNDING_SOURCE_LABEL
 from src.models.case_api import CaseInteractionResponse, PatientMessageRequest
 from src.models.schemas import TriageCase
-from src.services import case_flow
-from src.services.priority_labels import priority_label_vi
+from src.services.engines.priority_labels import priority_label_vi
+from src.services.sessions import case_flow
 
 router = APIRouter(tags=["Feature 1 - AI Agent khai thác triệu chứng"])
 

@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from src.services.account_mailer import account_mailer
+from src.services.infra.account_mailer import account_mailer
 
 
 def registration_payload(*, email: str = "patient.one@example.com", username: str = "patient.one") -> dict:

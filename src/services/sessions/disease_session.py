@@ -22,15 +22,16 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services import session_log
-from src.services.disease_agent import DiseaseQAAgent
-from src.services.disease_checklist import (
+from src.services.agents.disease_agent import DiseaseQAAgent
+from src.services.checklists.disease_checklist import (
     DiseaseChecklist,
     completion_ratio,
     is_complete_enough,
     load_checklist,
     missing_required_keys,
 )
+from src.services.infra import console_log, session_log
+from src.services.infra.provider_router import LLMCredential
 
 # Chặn hỏi vô hạn khi người dùng liên tục không cung cấp được trường còn thiếu: sau ngưỡng này,
 # phiên chuyển sang xác nhận với các trường đã có, phần còn thiếu hiển thị "(chưa cung cấp)".
@@ -54,6 +55,8 @@ class DiseaseSession:
     last_question: str = ""
     llm_used_last_turn: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # API key riêng của người test. CHỈ in-memory: không ghi ra logs/, không in ra console.
+    credential: LLMCredential | None = None
 
 
 class InMemoryDiseaseSessionStore:
@@ -62,8 +65,8 @@ class InMemoryDiseaseSessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, DiseaseSession] = {}
 
-    def create(self, checklist: DiseaseChecklist) -> DiseaseSession:
-        session = DiseaseSession(checklist=checklist)
+    def create(self, checklist: DiseaseChecklist, credential: LLMCredential | None = None) -> DiseaseSession:
+        session = DiseaseSession(checklist=checklist, credential=credential)
         self._sessions[session.session_id] = session
         return session
 
@@ -86,7 +89,11 @@ class EmptyMessageError(ValueError):
     pass
 
 
-def _agent_for(checklist: DiseaseChecklist) -> DiseaseQAAgent:
+def _agent_for(checklist: DiseaseChecklist, credential: LLMCredential | None = None) -> DiseaseQAAgent:
+    # Có credential riêng -> agent riêng, KHÔNG cache: cache theo disease_id sẽ khiến phiên của
+    # người này dùng nhầm key của người khác.
+    if credential is not None:
+        return DiseaseQAAgent(checklist, credential)
     agent = _agents_by_disease.get(checklist.disease_id)
     if agent is None:
         agent = DiseaseQAAgent(checklist)
@@ -94,9 +101,13 @@ def _agent_for(checklist: DiseaseChecklist) -> DiseaseQAAgent:
     return agent
 
 
-def start_session(disease_id: str) -> DiseaseSession:
+def _session_agent(session: DiseaseSession) -> DiseaseQAAgent:
+    return _agent_for(session.checklist, session.credential)
+
+
+def start_session(disease_id: str, credential: LLMCredential | None = None) -> DiseaseSession:
     checklist = load_checklist(disease_id)
-    session = session_store.create(checklist)
+    session = session_store.create(checklist, credential)
     first_field_label = checklist.fields[0].label.lower() if checklist.fields else "thông tin"
     opening = (
         f'Chào bạn, mình cần thu thập một vài thông tin về "{checklist.disease_label}". '
@@ -115,6 +126,17 @@ def start_session(disease_id: str) -> DiseaseSession:
         ],
     )
     session_log.event(session.session_id, "agent_question", question=opening, llm_used=False, source="opening")
+
+    agent = _session_agent(session)
+    provider = agent.active_provider or "fallback deterministic"
+    model = (credential.model if credential else None) or "model mặc định"
+    source = "key của bạn" if credential else "key server"
+    console_log.session_start(
+        session.session_id,
+        label=checklist.disease_label,
+        llm=f"{provider}/{model} ({source})",  # KHÔNG in api_key, chỉ tên provider/model
+    )
+    console_log.agent_question(session.session_id, opening, llm_used=False)
     return session
 
 
@@ -128,8 +150,9 @@ def submit_message(session_id: str, message: str) -> DiseaseSession:
     session.conversation.append({"role": "user", "content": cleaned})
     session.turn_count += 1
     session_log.event(session.session_id, "user_message", message=cleaned, turn=session.turn_count)
+    console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
 
-    agent = _agent_for(session.checklist)
+    agent = _session_agent(session)
     extracted, llm_used = agent.extract(cleaned, session.answers)
     session.answers.update(extracted)
     session.llm_used_last_turn = llm_used
@@ -155,6 +178,7 @@ def submit_message(session_id: str, message: str) -> DiseaseSession:
             targets=_targets,
             source="follow_up",
         )
+        console_log.agent_question(session.session_id, question, llm_used=question_llm_used)
     return session
 
 
@@ -192,7 +216,7 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
     session.conversation.append({"role": "user", "content": cleaned})
     session_log.event(session.session_id, "summary_rejected", correction=cleaned)
 
-    agent = _agent_for(session.checklist)
+    agent = _session_agent(session)
     before = dict(session.answers)
     extracted, llm_used = agent.extract_correction(cleaned, session.answers)
     session.answers.update(extracted)
@@ -218,11 +242,12 @@ def confirm_summary(session_id: str, is_correct: bool, correction: str | None = 
             targets=_targets,
             source="follow_up",
         )
+        console_log.agent_question(session.session_id, question, llm_used=question_llm_used)
     return session
 
 
 def build_summary_text(session: DiseaseSession) -> str:
-    return _agent_for(session.checklist).build_summary_text(session.answers)
+    return _session_agent(session).build_summary_text(session.answers)
 
 
 def build_summary_rows(session: DiseaseSession) -> list[dict[str, object]]:
@@ -279,6 +304,15 @@ def _log_extraction(
     session_log.event(session.session_id, kind, **payload)
     session_log.update_state(session.session_id, session.state.value, session.answers)
 
+    progress = payload["progress"]
+    console_log.extraction(
+        session.session_id,
+        extracted,
+        percent=progress["percent"],
+        filled=progress["filled_required"],
+        total=progress["total_required"],
+    )
+
 
 def _log_summary(session: DiseaseSession, kind: str, *, forced: bool = False) -> None:
     session_log.summary(
@@ -296,6 +330,16 @@ def _log_summary(session: DiseaseSession, kind: str, *, forced: bool = False) ->
         forced_by_max_turns=forced,
     )
     session_log.update_state(session.session_id, session.state.value, session.answers)
+
+    progress = progress_of(session)
+    console_log.summary(session.session_id, kind, percent=progress["percent"])
+    if kind == "confirmed":
+        console_log.session_end(
+            session.session_id,
+            state=session.state.value,
+            turns=session.turn_count,
+            percent=progress["percent"],
+        )
 
 
 def _require_session(session_id: str) -> DiseaseSession:

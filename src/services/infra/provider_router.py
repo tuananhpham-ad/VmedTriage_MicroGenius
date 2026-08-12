@@ -58,6 +58,46 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
 
 SPECS_BY_NAME: dict[str, ProviderSpec] = {spec.name: spec for spec in PROVIDER_SPECS}
 
+# Model gợi ý cho UI. KHÔNG phải danh sách đóng - người dùng vẫn gõ tay được tên model khác, vì
+# nhà cung cấp ra model mới liên tục và hardcode cứng sẽ nhanh lỗi thời.
+SUGGESTED_MODELS: dict[str, tuple[str, ...]] = {
+    "gemini": ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"),
+    "deepseek": ("deepseek-chat", "deepseek-reasoner"),
+    "openai": ("gpt-4o-mini", "gpt-4o"),
+    "anthropic": ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-5"),
+    "openrouter": ("openai/gpt-4o-mini", "anthropic/claude-sonnet-5", "google/gemini-2.0-flash"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LLMCredential:
+    """API key + model do NGƯỜI DÙNG cung cấp cho một phiên cụ thể.
+
+    Tồn tại để mỗi người test dùng key của chính họ thay vì key trong `.env` của dự án.
+
+    Ràng buộc bảo mật: object này chỉ được giữ in-memory theo phiên. TUYỆT ĐỐI không ghi vào
+    `logs/*.json`, không log ra console, không trả lại trong API response - dùng `masked()` khi cần
+    hiển thị.
+    """
+
+    provider: str
+    api_key: str
+    model: str | None = None
+
+    def masked(self) -> str:
+        """Dạng che để hiển thị/ghi log an toàn, vd `sk-••••1f13`."""
+        key = self.api_key.strip()
+        if len(key) <= 8:
+            return "••••"
+        return f"{key[:3]}••••{key[-4:]}"
+
+    def __repr__(self) -> str:  # chặn key lọt ra qua repr khi debug/log vô ý
+        return f"LLMCredential(provider={self.provider!r}, model={self.model!r}, api_key={self.masked()!r})"
+
+
+class UnknownProviderError(ValueError):
+    pass
+
 
 def has_usable_key(value: str) -> bool:
     normalized = (value or "").strip().strip('"').strip("'")
@@ -109,6 +149,39 @@ class NoProviderConfiguredError(RuntimeError):
     pass
 
 
+# Vì sao cần map này: thông báo lỗi nguyên văn của SDK CÓ THỂ chứa lại API key
+# (vd DeepSeek: "Your api key: sk-xxx is invalid") nên không được đưa ra ngoài. Nhưng chỉ báo tên
+# exception thì vô dụng - "ClientError" không phân biệt được key sai với hết quota. Lấy mã HTTP ra
+# và diễn giải là đủ thông tin để xử lý mà không rò key.
+_STATUS_HINTS: dict[int, str] = {
+    401: "API key sai hoặc đã bị thu hồi",
+    402: "tài khoản hết số dư - cần nạp thêm tiền",
+    403: "key không có quyền dùng model này",
+    404: "không tìm thấy model - kiểm tra lại tên model",
+    429: "hết quota hoặc bị giới hạn tốc độ - chờ hoặc nâng gói",
+}
+
+
+def _status_code_of(exc: Exception) -> int | None:
+    """Lấy mã HTTP từ exception của nhiều SDK khác nhau (openai: status_code, google: code)."""
+    for attr in ("status_code", "code", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def describe_provider_error(provider: str, exc: Exception) -> str:
+    """Mô tả lỗi gọi LLM đủ để người dùng biết phải làm gì, KHÔNG kèm nguyên văn từ SDK."""
+    status = _status_code_of(exc)
+    hint = _STATUS_HINTS.get(status or 0)
+    if hint:
+        return f"{provider}: {hint} (HTTP {status})"
+    if status:
+        return f"{provider}: lỗi HTTP {status} ({type(exc).__name__})"
+    return f"{provider}: {type(exc).__name__}"
+
+
 @dataclass(slots=True)
 class CompletionResult:
     text: str
@@ -121,14 +194,22 @@ def complete(
     *,
     temperature: float | None = None,
     max_attempts: int = 3,
+    credential: LLMCredential | None = None,
 ) -> CompletionResult:
     """Gọi LLM qua provider đầu tiên khả dụng, tự chuyển provider khác nếu lỗi.
+
+    `credential` != None: dùng ĐÚNG provider + key người dùng đưa, KHÔNG fallback sang provider khác
+    (key của họ, không tự ý chuyển sang provider khác thay họ) và KHÔNG đụng `os.environ`.
 
     Raise `NoProviderConfiguredError` khi không có provider nào có key, hoặc mọi provider đều lỗi -
     người gọi tự quyết định fallback (intake_agent dùng nhánh deterministic).
     """
     settings = get_settings()
     resolved_temperature = settings.llm_temperature if temperature is None else temperature
+
+    if credential is not None:
+        return _complete_with_credential(credential, messages, resolved_temperature)
+
     specs = [
         spec
         for spec in _ordered_specs(settings.llm_provider, settings.llm_provider_order)
@@ -151,8 +232,9 @@ def complete(
                 temperature=resolved_temperature,
             )
         except Exception as exc:
-            errors.append(f"{spec.name}: {type(exc).__name__}: {exc}")
-            logger.warning("provider.failed name=%s reason=%s", spec.name, type(exc).__name__)
+            described = describe_provider_error(spec.name, exc)
+            errors.append(described)
+            logger.warning("provider.failed %s", described)
             continue
 
         text = (response.text or "").strip()
@@ -164,3 +246,34 @@ def complete(
         return CompletionResult(text=text, provider=spec.name, model=model or "(mặc định của adapter)")
 
     raise NoProviderConfiguredError("Mọi provider đều lỗi -> " + " | ".join(errors))
+
+
+def _complete_with_credential(
+    credential: LLMCredential,
+    messages: Sequence[dict[str, str]],
+    temperature: float,
+) -> CompletionResult:
+    """Gọi LLM bằng key người dùng đưa. Không fallback provider, không ghi os.environ."""
+    if credential.provider not in SPECS_BY_NAME:
+        raise UnknownProviderError(
+            f"Provider không hợp lệ: {credential.provider}. Chọn một trong: "
+            + ", ".join(SPECS_BY_NAME)
+        )
+    if not has_usable_key(credential.api_key):
+        raise NoProviderConfiguredError("API key trống hoặc là giá trị mẫu.")
+
+    from src.providers import make_provider
+
+    provider = make_provider(credential.provider, api_key=credential.api_key.strip())
+    try:
+        response = provider.complete(list(messages), model=credential.model, temperature=temperature)
+    except Exception as exc:
+        # Thông báo lỗi của SDK có thể chứa lại API key -> chỉ đưa ra mã HTTP đã được diễn giải.
+        described = describe_provider_error(credential.provider, exc)
+        logger.warning("provider.user_credential_failed %s", described)
+        raise NoProviderConfiguredError(f"Gọi thất bại -> {described}") from exc
+
+    text = (response.text or "").strip()
+    if not text:
+        raise NoProviderConfiguredError(f"{credential.provider} trả về nội dung rỗng.")
+    return CompletionResult(text=text, provider=credential.provider, model=credential.model or "(mặc định)")

@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
 from src.main import app
-from src.services.account_mailer import account_mailer
+from src.services.infra.account_mailer import account_mailer
 
 
 @pytest_asyncio.fixture

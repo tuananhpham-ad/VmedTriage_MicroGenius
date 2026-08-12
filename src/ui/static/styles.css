@@ -580,6 +580,30 @@ a.text-button {
   margin: 0;
 }
 
+/* Gợi ý tài khoản demo - chỉ hiện ở chế độ đăng nhập, JS ẩn khi chuyển sang đăng ký. */
+.demo-hint {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted, #5b7079);
+}
+
+.demo-fill {
+  border: 1px dashed currentColor;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+
+.demo-fill:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
 .auth-actions {
   display: flex;
   flex-wrap: wrap;
