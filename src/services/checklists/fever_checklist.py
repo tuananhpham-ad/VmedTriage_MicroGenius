@@ -11,33 +11,21 @@ của rule engine, không phải câu hỏi hội thoại). Mọi `QuestionClust
 liệu "tri-state"/"boolean" trong cột Data type — KHÔNG áp dụng cho field enum/number/date/array dù
 tier là M0/M1 (vd `consciousness_level` là M0 nhưng là enum, không phải tri-state). `tri_state=True`
 được gán đúng theo cột Data type của KM, không suy theo tier.
+
+`FeverField`/`QuestionCluster` là alias của kiểu generic ở `symptom_protocol.models` (engine dùng
+chung cho mọi symptom_group, xem `_guidance/fever-detect-agent-task.md` mục "kế thừa được") - file
+này chỉ còn là DATA (field/cụm cụ thể của fever), không định nghĩa kiểu riêng nữa.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
+
+from src.services.symptom_protocol.models import FieldSpec as FeverField
+from src.services.symptom_protocol.models import QuestionCluster
 
 Tier = Literal["M0", "M1", "C", "O", "H"]
 Stage = Literal["0", "1", "2", "3A", "3B", "4", "5"]
-
-
-@dataclass(frozen=True, slots=True)
-class FeverField:
-    key: str
-    label: str
-    tier: Tier
-    hint: str
-    tri_state: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionCluster:
-    id: str
-    stage: Stage
-    fields: tuple[str, ...]
-    batch_negation: bool = False
-    script_hint: str = ""
 
 
 # ---------------------------------------------------------------------------------------------

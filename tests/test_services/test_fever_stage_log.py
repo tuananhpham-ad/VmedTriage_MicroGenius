@@ -148,15 +148,25 @@ def test_event_name_must_be_known():
         )
 
 
-def test_all_tool_calls_use_declared_tool_names():
-    session_id = "sess-tool-enum"
+def test_all_tool_calls_use_well_formed_tool_names():
+    """`tool` không còn là enum đóng theo symptom_group (log module dùng chung cho mọi protocol qua
+    `symptom_protocol/`) - chỉ kiểm ĐỊNH DẠNG "module.method", chống lỗi đánh máy kiểu thiếu dấu chấm."""
+    session_id = "sess-tool-format"
     _simulate_full_turn(session_id)
 
     records = fever_stage_log.read_all(session_id)
     tool_calls = [r for r in records if r["event"] == "tool_call"]
     assert tool_calls
     for record in tool_calls:
-        assert record["tool"] in fever_stage_log.TOOL_NAMES
+        assert fever_stage_log._validate_tool_name(record["tool"]), record["tool"]
+
+
+def test_tool_name_without_a_dot_is_rejected():
+    with pytest.raises(ValueError):
+        fever_stage_log.step(
+            "sess-bad-tool-format", turn=1, stage="3A", cluster_id="Q3-06", event="tool_call",
+            tool="not_a_valid_tool_name", input={}, output={},
+        )
 
 
 # --- io_ref --------------------------------------------------------------------------------
