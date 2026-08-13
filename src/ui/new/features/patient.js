@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { accountMenu, bindAccountMenu } from "./account.js";
+import { accountMenu, bindAccountMenu } from "./account.js?v=settings-full-20260813";
 import { setActiveCase, state } from "../state.js";
 import { escapeHtml, logo, shortCaseId, showToast, statusClass, statusLabels, symptomGroupLabels } from "../shared.js";
 

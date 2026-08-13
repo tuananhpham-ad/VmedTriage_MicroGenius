@@ -86,7 +86,7 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
 }
 
 function loginFields() {
-  return `<label>Email hoặc số điện thoại<input name="email" autocomplete="username" maxlength="320" required placeholder="ten@email.com hoặc 0356 276 505" /></label><label>Mật khẩu${passwordInput({ name: "password", autocomplete: "current-password", placeholder: "Nhập mật khẩu" })}</label><label class="remember-field"><input name="remember_me" type="checkbox" /> Ghi nhớ đăng nhập trên thiết bị này</label>`;
+  return `<label>Email hoặc số điện thoại<input name="email" autocomplete="username" maxlength="320" required placeholder="ten@email.com hoặc 0123456789" /></label><label>Mật khẩu${passwordInput({ name: "password", autocomplete: "current-password", placeholder: "Nhập mật khẩu" })}</label><label class="remember-field"><input name="remember_me" type="checkbox" /> Ghi nhớ đăng nhập trên thiết bị này</label>`;
 }
 
 function passwordInput({ name, autocomplete, minLength = "", placeholder = "" }) {

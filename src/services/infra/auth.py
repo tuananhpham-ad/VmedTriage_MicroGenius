@@ -232,6 +232,10 @@ class AuthService:
         user.phone_number = payload.phone_number
         user.date_of_birth = payload.date_of_birth
         user.gender = payload.gender
+        user.address = _optional_text(payload.address)
+        user.emergency_contact_name = _optional_text(payload.emergency_contact_name)
+        user.emergency_contact_relationship = _optional_text(payload.emergency_contact_relationship)
+        user.emergency_contact_phone = payload.emergency_contact_phone
         db.commit()
         db.refresh(user)
         return user
@@ -268,3 +272,7 @@ class AuthService:
 
 
 auth_service = AuthService()
+
+
+def _optional_text(value: str | None) -> str | None:
+    return value.strip() if value and value.strip() else None

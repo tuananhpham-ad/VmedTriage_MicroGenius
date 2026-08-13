@@ -58,7 +58,7 @@ app.include_router(intake_router, prefix="/api/v1")
 async def prevent_demo_asset_caching(request, call_next):
     """Ensure the demo cannot keep running stale JavaScript after an update."""
     response = await call_next(request)
-    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css", "/api.js", "/state.js", "/shared.js"}:
+    if request.url.path in {"/", "/index.html"} or request.url.path.endswith((".js", ".css")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
 

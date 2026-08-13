@@ -98,6 +98,28 @@ async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_profile_updates_extended_optional_information(client, patient_headers):
+    response = await client.put(
+        "/api/v1/me",
+        headers=patient_headers,
+        json={
+            "full_name": "Patient Updated",
+            "phone_number": "0901234567",
+            "date_of_birth": "1990-01-01",
+            "gender": "female",
+            "address": "Cầu Giấy, Hà Nội",
+            "emergency_contact_name": "Người thân",
+            "emergency_contact_relationship": "Mẹ",
+            "emergency_contact_phone": "0901234599",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["address"] == "Cầu Giấy, Hà Nội"
+    assert body["emergency_contact_phone"] == "0901234599"
+
+
+@pytest.mark.asyncio
 async def test_registration_rejects_weak_password_and_missing_terms(client):
     weak_password = registration_payload(email="weak@example.com", username="weak.user")
     weak_password["password"] = weak_password["confirm_password"] = "weakpass"
