@@ -25,7 +25,7 @@ from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
 from src.services.symptom_protocol import rule_engine, stage_machine
 from src.services.symptom_protocol.models import QuestionCluster
-from src.services.symptom_protocol.protocol import SymptomProtocol
+from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for_stage
 
 logger = logging.getLogger("vmedtriage.symptom_intake")
 
@@ -168,10 +168,12 @@ def _repair_bareword_unknown(text: str) -> str:
 def _invoke_json(
     messages: list[dict[str, str]],
     credential: provider_router.LLMCredential | None,
+    *,
+    temperature: float | None = None,
 ) -> tuple[dict | None, str | None, str, str, str, int]:
     started = time.monotonic()
     try:
-        result = provider_router.complete(messages, credential=credential)
+        result = provider_router.complete(messages, temperature=temperature, credential=credential)
     except Exception as exc:
         logger.warning("symptom_intake.extract_failed reason=%s", type(exc).__name__)
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -313,6 +315,11 @@ def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
 # câu cho cùng 1 script_hint mỗi lần, làm hội thoại cảm giác "học thuộc lòng" thay vì tự nhiên (phát
 # hiện qua test tay với LLM thật).
 _QUESTION_TEMPERATURE = 0.7
+
+# temperature THẤP HƠN call trên (chỉ 0.3, không phải 0.7) vì call này CÒN GÁNH việc trích xuất field -
+# tăng đủ để câu hỏi ở BƯỚC 2 bớt lặp khuôn, nhưng không tăng cao tới mức ảnh hưởng đáng kể độ tin cậy
+# JSON/field ở BƯỚC 1. Đánh đổi này do người dùng chọn tường minh (0.3, không phải giữ 0).
+_COMBINED_TEMPERATURE = 0.3
 
 
 def _generate_question(
@@ -489,7 +496,15 @@ def _run_turn_combined(
         input={"cluster_id": cluster.id}, output={"fields": list(cluster.fields), "schema_size": len(cluster.fields)},
     )
 
-    safety_extra_keys = tuple(key for key in protocol.safety_signal_fields if key not in cluster.fields)
+    # Không chỉ nhặt field "an toàn" cố định (`protocol.safety_signal_fields`) mà còn nhặt MỌI field
+    # còn thiếu thuộc CÁC CỤM KHÁC trong CÙNG stage - người dùng hay trả lời gộp nhiều ý cùng lúc, nếu
+    # chỉ nhặt đúng field của cụm đang hỏi thì hệ thống hỏi lại cứng nhắc dù họ đã nói trước (phát
+    # hiện qua test tay với LLM thật). Phạm vi giới hạn trong 1 stage (không quét toàn bộ 101 field)
+    # để giữ prompt gọn và tránh tăng rủi ro LLM suy diễn/gán nhầm field ở xa ngữ cảnh đang hỏi.
+    stage_field_keys = {key for stage_cluster in clusters_for_stage(protocol, stage) for key in stage_cluster.fields}
+    safety_extra_keys = tuple(
+        key for key in (set(protocol.safety_signal_fields) | stage_field_keys) if key not in cluster.fields
+    )
     system_prompt = _COMBINED_SYSTEM.format(
         today=_today_iso(),
         history=_format_history(conversation or []),
@@ -501,7 +516,9 @@ def _run_turn_combined(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
     ]
-    parsed, parse_error, provider_name, model_name, response_text, latency_ms = _invoke_json(messages, credential)
+    parsed, parse_error, provider_name, model_name, response_text, latency_ms = _invoke_json(
+        messages, credential, temperature=_COMBINED_TEMPERATURE,
+    )
 
     stage_log.llm_io(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id, purpose="extract+next_question",
