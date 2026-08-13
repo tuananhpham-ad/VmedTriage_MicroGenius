@@ -54,6 +54,31 @@ async def test_register_requires_email_verification_before_login(client, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_login_accepts_phone_number(client, monkeypatch):
+    delivered_codes: list[str] = []
+    monkeypatch.setattr(
+        account_mailer,
+        "send_email_verification_code",
+        lambda *, recipient, code: delivered_codes.append(code),
+    )
+    payload = registration_payload(email="phone.login@example.com", username="phone.login")
+    payload["phone_number"] = "0901234578"
+    assert (await client.post("/api/v1/register", json=payload)).status_code == 201
+    assert delivered_codes
+    assert (
+        await client.post(
+            "/api/v1/auth/email-verification/confirm",
+            json={"email": payload["email"], "code": delivered_codes[0]},
+        )
+    ).status_code == 200
+    login_response = await client.post(
+        "/api/v1/login", json={"email": payload["phone_number"], "password": payload["password"]}
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["user"]["phone_number"] == payload["phone_number"]
+
+
+@pytest.mark.asyncio
 async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch):
     monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: None)
     response = await client.post(
