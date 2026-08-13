@@ -145,8 +145,26 @@ Route được bảo vệ yêu cầu header `Authorization: Bearer <token>` (JWT
 | POST | `/api/v1/intake/sessions/{session_id}/messages` | Gửi câu trả lời | `IntakeSessionResponse` | 404, 400 rỗng |
 | POST | `/api/v1/intake/sessions/{session_id}/confirm` | Xác nhận phiếu tóm tắt | `IntakeSessionResponse` | 404, 400 |
 
+### 4.7 Demo — Fever intake (phát hiện triệu chứng sốt, không auth, chỉ dùng để test/demo)
+
+> Router riêng cho luồng phát hiện triệu chứng SỐT theo `_guidance/fever-detect-agent-task.md` — hội
+> thoại thích ứng theo `docs/medical_knowledge/fever-conversation-specification.md` (Stage 0→5),
+> `triage_level`/`reason_codes`/`triggered_rules` do rule engine (`fever_red_flag_engine.py`) quyết
+> định, không phải LLM. Không có auth, không đẩy case sang điều dưỡng — cùng phạm vi demo với 4.6.
+
+| Method | Endpoint | Purpose | Response | Error codes |
+|---|---|---|---|---|
+| POST | `/api/v1/fever/sessions` | Bắt đầu phiên phát hiện triệu chứng sốt (câu hỏi mở đầu Q0-01) | `FeverSessionResponse` (201) | — |
+| GET | `/api/v1/fever/sessions/{session_id}` | Xem trạng thái phiên | `FeverSessionResponse` | 404 |
+| POST | `/api/v1/fever/sessions/{session_id}/messages` | Gửi câu trả lời; agent trích xuất + hỏi tiếp hoặc dừng (chốt đỏ/đủ căn cứ/hết ngân sách) | `FeverSessionResponse` | 404, 400 rỗng |
+| POST | `/api/v1/fever/sessions/{session_id}/confirm` | Xác nhận phiếu tóm tắt cuối phiên | `FeverSessionResponse` | 404, 400 |
+
+`FeverSessionResponse` gồm: `session_id, state (collecting/awaiting_confirmation/confirmed/emergency),
+stage, next_question, turn_count, answers, conversation, triage_level, reason_codes, triggered_rules,
+stop_reason (RED_FLAG/SUFFICIENT_EVIDENCE/BUDGET_EXHAUSTED), llm_used`.
+
 ## 5. Ghi chú cho PM khi review
 
 - **Nguồn sự thật** cho request/response schema đầy đủ (field types, validation, examples) là Swagger UI/`docs/openapi.yaml` — bảng trên chỉ tóm tắt phạm vi & mục đích để review nhanh.
-- Luồng nghiệp vụ chính là **4.2 + 4.3** (`POST /cases` → hội thoại → `GET /queue` → nurse duyệt → `GET /cases/{id}/result`). Mục 4.5 (`/chat`) là đường cũ giữ lại tương thích ngược, mục 4.6 (`/intake/*`) là route demo không dùng auth — không tính vào phạm vi bảo mật/nghiệp vụ chính thức.
+- Luồng nghiệp vụ chính là **4.2 + 4.3** (`POST /cases` → hội thoại → `GET /queue` → nurse duyệt → `GET /cases/{id}/result`). Mục 4.5 (`/chat`) là đường cũ giữ lại tương thích ngược, mục 4.6 (`/intake/*`) và 4.7 (`/fever/*`) là route demo không dùng auth — không tính vào phạm vi bảo mật/nghiệp vụ chính thức.
 - Toàn bộ kết quả triage cho bệnh nhân đều bị chặn (`is_approved=false`, không lộ nội dung xử trí) cho tới khi điều dưỡng duyệt — đây là ràng buộc HITL bắt buộc, không phải thiếu sót.

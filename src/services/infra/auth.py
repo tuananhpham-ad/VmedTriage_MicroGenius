@@ -158,7 +158,9 @@ class AuthService:
         identifier = self._normalize_email(str(request.email))
         user = db.scalar(
             select(UserRecord).where(
-                (UserRecord.email == identifier) | (UserRecord.username == identifier)
+                (UserRecord.email == identifier)
+                | (UserRecord.username == identifier)
+                | (UserRecord.phone_number == identifier)
             )
         )
         if user is None:

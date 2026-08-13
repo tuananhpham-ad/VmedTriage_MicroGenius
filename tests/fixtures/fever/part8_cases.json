@@ -1,0 +1,207 @@
+[
+  {
+    "case_id": "E1",
+    "expected_triage_level": "EMERGENCY",
+    "expected_reason_codes": ["RF-22"],
+    "expected_triggered_rules": ["R-E-14"],
+    "fields": {
+      "age_value": 2, "age_unit": "month",
+      "fever_reported": true, "fever_status": "objective", "temp_c": 37.8, "temp_site": "axillary",
+      "consciousness_level": "alert", "feeding_intake": "normal"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "E2",
+    "expected_triage_level": "EMERGENCY",
+    "expected_reason_codes": ["RF-02"],
+    "expected_triggered_rules": ["R-E-02"],
+    "fields": {
+      "seizure_occurred": true, "seizure_active_now": true
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "E3",
+    "expected_triage_level": "EMERGENCY",
+    "expected_reason_codes": ["RF-18"],
+    "expected_triggered_rules": ["R-E-12"],
+    "fields": {
+      "rash_present": true, "non_blanching_rash": true, "rash_type": "petechial",
+      "neck_stiffness": false, "photophobia": false
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "E4",
+    "expected_triage_level": "EMERGENCY",
+    "expected_reason_codes": ["RF-35", "RF-28"],
+    "expected_triggered_rules": ["R-E-19"],
+    "fields": {
+      "travel_history_12m": [{"place": "Bình Phước", "return_date": "2026-07-28"}],
+      "malaria_risk_area": true,
+      "rigors": true, "fever_duration_days": 1,
+      "consciousness_level": "alert"
+    },
+    "narrative_supplement_keys": [],
+    "note": "R-V-04 (rigors) cũng khớp (EARLY_VISIT) nhưng bị R-E-19 (EMERGENCY) trội hơn - đúng CS Part 8 E4: triggered_rules chỉ liệt kê rule ở mức thắng, reason_codes vẫn giữ RF-28 làm bằng chứng bổ trợ."
+  },
+  {
+    "case_id": "E5",
+    "expected_triage_level": "EMERGENCY",
+    "expected_reason_codes": ["RF-19", "RF-29"],
+    "expected_triggered_rules": ["R-E-13", "R-E-17"],
+    "fields": {
+      "fever_duration_days": 4, "worse_after_defervescence": true,
+      "mucosal_bleeding": true,
+      "abdominal_pain_severity": "moderate", "vomiting_severity": "occasional"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "V1",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-23"],
+    "expected_triggered_rules": ["R-V-01"],
+    "fields": {
+      "age_value": 4, "age_unit": "month",
+      "temp_c": 39.2, "temp_site": "tympanic",
+      "consciousness_level": "alert", "feeding_intake": "normal", "activity_vs_baseline": "normal"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "V2",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-26"],
+    "expected_triggered_rules": ["R-V-02"],
+    "fields": {
+      "fever_duration_days": 5, "antipyretic_response": "partial"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "V3",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-37"],
+    "expected_triggered_rules": ["R-V-13"],
+    "fields": {
+      "age_value": 78, "age_unit": "year",
+      "temp_c": 37.9,
+      "consciousness_level": "alert", "new_confusion": false, "feeding_intake": "normal"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "V4",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-32"],
+    "expected_triggered_rules": ["R-V-10"],
+    "fields": {
+      "is_pregnant": true, "gestational_weeks": 28, "obstetric_red_flags": [],
+      "temp_c": 38.0
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "V5",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-41"],
+    "expected_triggered_rules": ["R-V-15"],
+    "fields": {
+      "joint_limb_swelling": true, "non_weight_bearing": true,
+      "consciousness_level": "alert"
+    },
+    "narrative_supplement_keys": []
+  },
+  {
+    "case_id": "H1",
+    "expected_triage_level": "SELF_CARE",
+    "expected_reason_codes": [],
+    "expected_triggered_rules": ["R-S-01"],
+    "fields": {
+      "age_value": 2, "age_unit": "year",
+      "lives_alone": false, "caregiver_available": true, "can_return_for_followup": true,
+      "temp_c": 38.3, "fever_duration_days": 2,
+      "consciousness_level": "alert", "activity_vs_baseline": "normal", "feeding_intake": "normal",
+      "urine_output": "normal"
+    },
+    "narrative_supplement_keys": ["urine_output"],
+    "note": "JSON gốc trong CS Part 8 không liệt kê urine_output (tài liệu nói rõ JSON chỉ gồm field liên quan trực tiếp, không liệt kê toàn schema) - bổ sung urine_output=normal vì hội thoại không ghi nhận bất thường tiểu tiện, cần thiết để chạy đúng checklist KM §5.4."
+  },
+  {
+    "case_id": "H2",
+    "expected_triage_level": "SELF_CARE",
+    "expected_reason_codes": [],
+    "expected_triggered_rules": ["R-S-01"],
+    "fields": {
+      "temp_c": 38.0, "fever_duration_days": 1,
+      "sore_throat": true,
+      "lives_alone": false, "caregiver_available": true,
+      "age_value": 25, "age_unit": "year", "reporter_type": "self",
+      "consciousness_level": "alert", "feeding_intake": "normal", "urine_output": "normal",
+      "can_return_for_followup": true
+    },
+    "narrative_supplement_keys": ["age_value", "age_unit", "reporter_type", "consciousness_level", "feeding_intake", "urine_output", "can_return_for_followup"],
+    "note": "Ca người lớn tự khai ('Em sốt... vẫn đi làm việc nhà được') - JSON gốc không ghi tuổi/tri giác/ăn uống tường minh. Bổ sung giá trị người lớn tỉnh táo bình thường nhất quán với hội thoại, cần cho checklist KM §5.4."
+  },
+  {
+    "case_id": "H3",
+    "expected_triage_level": "SELF_CARE",
+    "expected_reason_codes": [],
+    "expected_triggered_rules": ["R-S-01"],
+    "fields": {
+      "temp_c": 37.8, "fever_duration_days": 0,
+      "recent_vaccination_48h": true,
+      "consciousness_level": "alert", "feeding_intake": "normal",
+      "age_value": 1, "age_unit": "year", "reporter_type": "parent_caregiver",
+      "urine_output": "normal", "caregiver_available": true, "can_return_for_followup": true
+    },
+    "narrative_supplement_keys": ["age_value", "age_unit", "reporter_type", "urine_output", "caregiver_available", "can_return_for_followup"],
+    "note": "JSON gốc không ghi tuổi bé (chỉ nói 'bé... vẫn bú được'). Suy luận phải >=6 tháng vì kết luận là SELF_CARE (nếu <3 tháng sẽ là EMERGENCY theo R-E-14) - chọn 1 tuổi làm giá trị đại diện hợp lý, không mâu thuẫn với 'vẫn bú'."
+  },
+  {
+    "case_id": "H4",
+    "expected_triage_level": "SELF_CARE",
+    "expected_reason_codes": [],
+    "expected_triggered_rules": ["R-S-01"],
+    "fields": {
+      "fever_reported": true, "fever_status": "subjective", "measurement_confidence": "subjective",
+      "consciousness_level": "alert",
+      "age_value": 25, "age_unit": "year", "reporter_type": "self", "fever_duration_days": 1,
+      "feeding_intake": "normal", "urine_output": "normal", "can_return_for_followup": true
+    },
+    "narrative_supplement_keys": ["age_value", "age_unit", "reporter_type", "fever_duration_days", "feeding_intake", "urine_output", "can_return_for_followup"],
+    "note": "Ca người lớn tự khai, sốt chủ quan không đo được - JSON gốc rất tối giản. Bổ sung giá trị người lớn tỉnh táo, ăn uống/tiểu tiện bình thường theo đúng mạch hội thoại ('vẫn tỉnh táo bình thường'), cần cho checklist KM §5.4."
+  },
+  {
+    "case_id": "H5",
+    "expected_triage_level": "SELF_CARE",
+    "expected_reason_codes": [],
+    "expected_triggered_rules": ["R-S-01"],
+    "fields": {
+      "age_value": 8, "age_unit": "month",
+      "temp_c": 38.1, "fever_duration_days": 1,
+      "stridor_or_drooling": false,
+      "consciousness_level": "alert", "feeding_intake": "normal",
+      "urine_output": "normal", "caregiver_available": true, "can_return_for_followup": true
+    },
+    "narrative_supplement_keys": ["urine_output", "caregiver_available", "can_return_for_followup"],
+    "note": "Bổ sung urine_output/caregiver_available/can_return_for_followup - hội thoại không hỏi trực tiếp nhưng ngữ cảnh (cha mẹ đang khai hộ, bé vẫn bú/chơi bình thường) nhất quán với giá trị bổ sung."
+  },
+  {
+    "case_id": "O2",
+    "expected_triage_level": "EARLY_VISIT",
+    "expected_reason_codes": ["RF-26"],
+    "expected_triggered_rules": ["R-V-02"],
+    "fields": {
+      "age_value": 2, "age_unit": "year",
+      "fever_duration_days": 6,
+      "seizure_occurred": false, "neck_stiffness": false,
+      "breathing_difficulty": "none", "cyanosis": false,
+      "non_blanching_rash": false
+    },
+    "narrative_supplement_keys": [],
+    "note": "Minh hoạ 'sửa lại câu trả lời' - fever_duration_days đã được ghi đè từ 3 thành 6 theo giá trị mới nhất người dùng cung cấp (đúng quy ước CS §3)."
+  }
+]
