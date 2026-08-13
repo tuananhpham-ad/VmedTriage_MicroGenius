@@ -67,7 +67,14 @@ def _field_specs(protocol: SymptomProtocol, field_keys: tuple[str, ...]) -> str:
         # - lỗi thật gặp phải với gpt-4o-mini qua OpenRouter khi chạy Checkpoint 6(b) của fever, xem
         # _repair_bareword_unknown ở dưới (vẫn giữ lớp sửa lỗi đó làm lưới an toàn, không chỉ dựa vào
         # việc nhắc prompt - lỗi này không riêng gì fever, giữ ở tầng chung).
-        kind = '"true" | "false" | "unknown" (luôn có dấu ngoặc kép)' if spec.tri_state else "giá trị cụ thể hoặc null"
+        if spec.tri_state:
+            kind = '"true" | "false" | "unknown" (luôn có dấu ngoặc kép)'
+        elif spec.allowed_values:
+            # Liệt kê thẳng giá trị hợp lệ thay vì để model tự suy từ `hint` - `_collect_fields` loại
+            # mọi giá trị ngoài danh sách này, nên không nhắc ở prompt chỉ làm field rơi về unknown.
+            kind = " | ".join(f'"{value}"' for value in spec.allowed_values) + " hoặc null - CHỈ dùng đúng các mã này"
+        else:
+            kind = "giá trị cụ thể hoặc null"
         lines.append(f"- {key} ({spec.label}) [{kind}]: {spec.hint}")
     return "\n".join(lines)
 
@@ -99,6 +106,10 @@ _BATCH_NEGATION_RULE = """- Đây là câu hỏi gộp kiểu phủ định cả
   không có gì trong số đó cả", "hoàn toàn bình thường"), thêm "cluster_all_negative": true vào JSON
   trả về - hệ thống sẽ tự gán false cho các trường còn lại chưa nhắc tới. Nếu người dùng chỉ xác nhận
   một vài ý, đừng thêm cờ này - chỉ điền đúng field họ đã nói rõ.
+- Khi thêm "cluster_all_negative": true, BẮT BUỘC thêm kèm "negation_evidence": "<đoạn TRÍCH NGUYÊN
+  VĂN từ tin nhắn người dùng thể hiện sự phủ định đó>". Phải chép Y HỆT ký tự trong tin nhắn, không
+  diễn giải lại, không dịch, không viết hoa/thường khác đi. Không trích được câu nào thì KHÔNG được
+  đặt cờ.
 """
 
 
@@ -140,7 +151,7 @@ def extract_cluster(
             parsed=parsed, tokens=None, latency_ms=latency_ms, parse_error=parse_error,
         )
 
-    extracted = _collect(protocol, cluster, parsed or {})
+    extracted = _collect(protocol, cluster, parsed or {}, message)
 
     if session_id is not None:
         stage_log.step(
@@ -192,8 +203,59 @@ def _invoke_json(
     return parsed, None, result.provider, result.model, result.text, latency_ms
 
 
-def _collect_fields(protocol: SymptomProtocol, field_keys: tuple[str, ...], parsed: dict, *, batch_negation: bool = False) -> dict[str, TriState]:
-    cluster_negative = bool(parsed.get("cluster_all_negative")) if batch_negation else False
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_for_evidence(text: str) -> str:
+    return _WHITESPACE_RE.sub(" ", (text or "").strip()).casefold()
+
+
+def _negation_evidence_ok(parsed: dict, message: str) -> bool:
+    """Cờ phủ định gộp CHỈ được tin khi model trích được nguyên văn câu phủ định từ chính tin nhắn.
+
+    Lỗi thật đã tái hiện 3/3 lần khi test tay với LLM thật: người dùng nói "ăn uống tốt, không nôn",
+    model đặt `cluster_all_negative` rồi hệ thống gán "false" cho cả 11 red flag (co giật, tím tái,
+    xuất huyết...) mà người dùng chưa hề được hỏi. Đây là suy diễn im lặng thành phủ định - vi phạm
+    P0-4 và là loại lỗi nguy hiểm nhất của hệ thống (bỏ sót ca cấp cứu).
+
+    Kiểm tra là substring sau khi chuẩn hoá khoảng trắng + casefold: model bịa evidence sẽ không khớp,
+    còn model trích đúng thì hầu như luôn khớp. So khớp lỏng hơn (fuzzy) sẽ mở lại đúng lỗ hổng này."""
+    evidence = parsed.get("negation_evidence")
+    if not isinstance(evidence, str):
+        return False
+    normalized_evidence = _normalize_for_evidence(evidence)
+    if not normalized_evidence:
+        return False
+    return normalized_evidence in _normalize_for_evidence(message)
+
+
+def _coerce_enum(spec, raw: object) -> object | None:
+    """Ép giá trị field không-tri-state về đúng `allowed_values`. Trả None = loại (giữ unknown)."""
+    if isinstance(raw, (list, tuple)):
+        return raw
+    text = str(raw).strip()
+    if not spec.allowed_values:
+        return text
+    lowered = text.casefold()
+    for value in spec.allowed_values:
+        if lowered == value.casefold():
+            return value  # trả về đúng dạng chuẩn trong allowed_values, không giữ dạng model viết
+    return None
+
+
+def _collect_fields(
+    protocol: SymptomProtocol,
+    field_keys: tuple[str, ...],
+    parsed: dict,
+    *,
+    batch_negation: bool = False,
+    message: str = "",
+) -> dict[str, TriState]:
+    cluster_negative = (
+        batch_negation
+        and bool(parsed.get("cluster_all_negative"))
+        and _negation_evidence_ok(parsed, message)
+    )
 
     collected: dict[str, TriState] = {}
     for key in field_keys:
@@ -201,7 +263,9 @@ def _collect_fields(protocol: SymptomProtocol, field_keys: tuple[str, ...], pars
         if not spec.tri_state:
             raw = parsed.get(key)
             if raw not in (None, "", "null"):
-                collected[key] = str(raw).strip() if not isinstance(raw, (list, tuple)) else raw
+                coerced = _coerce_enum(spec, raw)
+                if coerced is not None:
+                    collected[key] = coerced
             continue
 
         value = _tri_state_value(parsed.get(key))
@@ -212,15 +276,26 @@ def _collect_fields(protocol: SymptomProtocol, field_keys: tuple[str, ...], pars
     return collected
 
 
-def _collect(protocol: SymptomProtocol, cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
-    return _collect_fields(protocol, cluster.fields, parsed, batch_negation=cluster.batch_negation)
+def _collect(protocol: SymptomProtocol, cluster: QuestionCluster, parsed: dict, message: str = "") -> dict[str, TriState]:
+    return _collect_fields(
+        protocol, cluster.fields, parsed, batch_negation=cluster.batch_negation, message=message,
+    )
 
 
 def _merge_answers(answers: dict[str, TriState], *updates: dict[str, TriState]) -> dict[str, TriState]:
-    """Gộp answers, `updates` sau ghi đè `updates` trước - đúng CS §3: giá trị TRÍCH MỚI NHẤT thắng."""
+    """Gộp answers, `updates` sau ghi đè `updates` trước - đúng CS §3: giá trị TRÍCH MỚI NHẤT thắng.
+
+    NGOẠI LỆ (đơn điệu tri-state): "unknown" KHÔNG được ghi đè một giá trị đã xác định. Lỗi thật khi
+    test tay: các dấu hiệu nguy hiểm đã xác nhận "không có" ở lượt trước bị xoá về "unknown" ở lượt
+    sau chỉ vì tin nhắn mới không nhắc tới chúng - hệ thống quên câu trả lời cũ rồi hỏi lại. "Không
+    nhắc tới" là im lặng, không phải bằng chứng rút lại. Giá trị XÁC ĐỊNH mới vẫn ghi đè giá trị xác
+    định cũ (CS §3 - người dùng có quyền sửa lại lời khai)."""
     merged = dict(answers)
     for update in updates:
-        merged.update(update)
+        for key, value in update.items():
+            if value == "unknown" and merged.get(key) not in (None, "unknown"):
+                continue
+            merged[key] = value
     return merged
 
 
@@ -527,8 +602,11 @@ def _run_turn_combined(
     )
 
     parsed = parsed or {}
-    extracted = _collect(protocol, cluster, parsed.get("extracted") or {})
-    safety_extracted = _collect_fields(protocol, safety_extra_keys, parsed.get("extracted") or {})
+    extracted = _collect(protocol, cluster, parsed.get("extracted") or {}, message)
+    # batch_negation=False TƯỜNG MINH (turn-scoping): cờ phủ định gộp chỉ có nghĩa cho ĐÚNG cụm vừa
+    # được hỏi. `safety_extra_keys` là field của các cụm KHÁC mà người dùng chưa hề được hỏi tới - để
+    # cờ lan sang đây tức là một câu "không có gì cả" trả lời cụm này sẽ đóng luôn cả stage.
+    safety_extracted = _collect_fields(protocol, safety_extra_keys, parsed.get("extracted") or {}, batch_negation=False)
     opportunistic = scan_opportunistic_fields(protocol, message)
     merged = _merge_answers(answers, opportunistic, safety_extracted, extracted)
     merged = _apply_derived_fields(protocol, merged)

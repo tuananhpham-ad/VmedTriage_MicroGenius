@@ -22,6 +22,7 @@ from src import paths
 from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
 from src.services.infra import fever_stage_log, provider_router
+from src.services.symptom_protocol import intake_agent as _engine
 
 O1_USER_MESSAGE = (
     "Con em 3 tuổi, sốt 2 ngày 38,5 độ, bé vẫn tỉnh táo, chơi đùa bình thường, ăn uống tốt, "
@@ -111,13 +112,14 @@ def test_golden_o1_feeding_cluster_matches_part8_sample(monkeypatch):
 
 
 def test_batch_negation_sets_all_cluster_fields_false_none_unknown(monkeypatch):
-    fake = _fake_complete({"cluster_all_negative": True})
+    message = "Dạ không, không có gì trong số đó cả."
+    fake = _fake_complete({"cluster_all_negative": True, "negation_evidence": "không có gì trong số đó cả"})
     monkeypatch.setattr(provider_router, "complete", fake)
 
     cluster = CLUSTERS_BY_ID["Q3-04"]  # batch_negation=True, 4 field tri-state
     assert cluster.batch_negation is True
 
-    result = agent.extract_cluster(cluster, "Dạ không, không có gì trong số đó cả.")
+    result = agent.extract_cluster(cluster, message)
 
     assert set(result.values()) == {"false"}
     assert "unknown" not in result.values()
@@ -126,12 +128,87 @@ def test_batch_negation_sets_all_cluster_fields_false_none_unknown(monkeypatch):
 
 def test_batch_negation_partial_positive_keeps_explicit_field_true():
     cluster = CLUSTERS_BY_ID["Q3-06"]  # breathing_difficulty, cyanosis, chest_indrawing, nasal_flaring_grunting
-    parsed = {"cluster_all_negative": True, "breathing_difficulty": "mild"}
-    collected = agent._collect(cluster, parsed)
+    message = "Thở hơi mệt một chút thôi, ngoài ra không có gì cả."
+    parsed = {
+        "cluster_all_negative": True,
+        "negation_evidence": "ngoài ra không có gì cả",
+        "breathing_difficulty": "mild",
+    }
+    collected = agent._collect(cluster, parsed, message)
 
     assert collected["breathing_difficulty"] == "mild"
     assert collected["cyanosis"] == "false"
     assert collected["chest_indrawing"] == "false"
+
+
+# --- Guard 1: evidence span bắt buộc cho phủ định gộp (lỗi C1, test tay 2026-08-13) --------------
+
+
+def test_batch_negation_without_evidence_key_is_rejected():
+    cluster = CLUSTERS_BY_ID["Q3-04"]
+    collected = agent._collect(cluster, {"cluster_all_negative": True}, "Bé ăn uống tốt, không nôn.")
+    # Không có `negation_evidence` -> cờ bị bỏ, mọi field giữ unknown.
+    assert set(collected.values()) == {"unknown"}
+
+
+def test_batch_negation_with_fabricated_evidence_is_rejected():
+    """Đúng lỗi C1: tin nhắn nói về ăn uống, model bịa cờ phủ định cho cả cụm red flag thần kinh."""
+    cluster = CLUSTERS_BY_ID["Q3-04"]
+    parsed = {"cluster_all_negative": True, "negation_evidence": "không có dấu hiệu nào bất thường"}
+    collected = agent._collect(cluster, parsed, "Bé ăn uống tốt, không nôn.")
+
+    assert set(collected.values()) == {"unknown"}
+    assert "false" not in collected.values()
+
+
+def test_batch_negation_evidence_tolerates_case_and_whitespace():
+    cluster = CLUSTERS_BY_ID["Q3-04"]
+    parsed = {"cluster_all_negative": True, "negation_evidence": "KHÔNG   có   gì  cả"}
+    collected = agent._collect(cluster, parsed, "Dạ không có gì cả ạ.")
+
+    assert set(collected.values()) == {"false"}
+
+
+# --- Guard 4: enum lạ bị loại thay vì lưu nguyên văn tiếng Việt (lỗi M2) -------------------------
+
+
+def test_enum_field_rejects_free_text_value():
+    cluster = CLUSTERS_BY_ID["Q3-01"]  # consciousness_level, social_response_child
+    collected = agent._collect(cluster, {"consciousness_level": "tỉnh táo bình thường"}, "Bé tỉnh táo bình thường ạ.")
+    # Giá trị ngoài allowed_values bị loại hẳn (giữ unknown) thay vì lọt vào answers rồi làm rule
+    # engine không bao giờ khớp `consciousness_level = alert`.
+    assert "consciousness_level" not in collected
+
+
+def test_enum_field_accepts_canonical_value_case_insensitively():
+    cluster = CLUSTERS_BY_ID["Q3-01"]
+    collected = agent._collect(cluster, {"consciousness_level": "Alert"}, "Bé tỉnh táo ạ.")
+    assert collected["consciousness_level"] == "alert"
+
+
+def test_free_text_field_without_allowed_values_is_kept_as_is():
+    cluster = CLUSTERS_BY_ID["Q0-01"]  # age_value không có allowed_values
+    collected = agent._collect(cluster, {"age_value": "3"}, "Bé 3 tuổi.")
+    assert collected["age_value"] == "3"
+
+
+# --- Guard 3: unknown không xoá được giá trị đã xác định (lỗi M3) --------------------------------
+
+
+def test_merge_answers_keeps_determined_value_against_unknown():
+    merged = _engine._merge_answers({"cyanosis": "false"}, {"cyanosis": "unknown"})
+    assert merged["cyanosis"] == "false"
+
+
+def test_merge_answers_allows_user_to_correct_a_determined_value():
+    # CS §3: người dùng có quyền sửa lời khai - giá trị XÁC ĐỊNH mới vẫn thắng giá trị cũ.
+    merged = _engine._merge_answers({"cyanosis": "false"}, {"cyanosis": "true"})
+    assert merged["cyanosis"] == "true"
+
+
+def test_merge_answers_still_writes_unknown_for_new_key():
+    merged = _engine._merge_answers({}, {"cyanosis": "unknown"})
+    assert merged["cyanosis"] == "unknown"
 
 
 def test_non_batch_negation_cluster_ignores_cluster_all_negative_flag():
