@@ -1,14 +1,17 @@
-"""Trace toàn bộ inference của agent fever, tách theo stage, ra `logs/fever/<session_id>/`.
+"""Trace toàn bộ inference của agent hội thoại triệu chứng (`symptom_protocol`), tách theo stage, ra
+`logs/<namespace>/<session_id>/` - `namespace` mặc định `"fever"` nhưng bất kỳ symptom_group nào cắm
+vào engine chung đều tự có thư mục log riêng (truyền `namespace=` cho `start()`).
 
-Khác `session_log.py` (một file JSON ghi đè cho toàn phiên `disease_session`), module này phục vụ
-riêng agent fever (`_guidance/fever-detect-agent-task.md` §5): mỗi lượt người dùng nhắn sinh ra một
-chuỗi step - user nói gì, hệ thống `retrieve` cụm/field nào, gọi tool nào với input/output gì, gọi
-LLM với prompt/response gì, rule engine quyết định gì, agent trả lời gì. Ghi APPEND (JSONL) thay vì
-ghi đè cả file như `session_log.py`, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem
-đúng thứ tự step" ngay cả khi phiên đang chạy dở, và mỗi dòng là JSON độc lập nên process chết giữa
-chừng chỉ mất đúng dòng cuối.
+Khác `session_log.py` (một file JSON ghi đè cho toàn phiên `disease_session`), module này phục vụ các
+agent hội thoại theo cụm câu hỏi (xem `_guidance/fever-detect-agent-task.md` §5 - lúc đầu viết riêng
+cho fever, sau tách chung khi thêm symptom_group thứ 2): mỗi lượt người dùng nhắn sinh ra một chuỗi
+step - user nói gì, hệ thống `retrieve` cụm/field nào, gọi tool nào với input/output gì, gọi LLM với
+prompt/response gì, rule engine quyết định gì, agent trả lời gì. Ghi APPEND (JSONL) thay vì ghi đè cả
+file như `session_log.py`, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem đúng thứ
+tự step" ngay cả khi phiên đang chạy dở, và mỗi dòng là JSON độc lập nên process chết giữa chừng chỉ
+mất đúng dòng cuối.
 
-Bố cục `logs/fever/<session_id>/`:
+Bố cục `logs/<namespace>/<session_id>/`:
     session.json        - snapshot phiên (ghi đè cả file mỗi lần cập nhật)
     stage-<STAGE>.jsonl  - mọi step của mọi lượt diễn ra khi đang ở stage đó
     llm-io.jsonl         - nguyên văn prompt gửi LLM + nguyên văn response (tách khỏi file stage vì
@@ -29,6 +32,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -41,9 +45,13 @@ from src import paths
 
 logger = logging.getLogger("vmedtriage.fever_stage_log")
 
-def _fever_log_dir() -> Path:
+_DEFAULT_NAMESPACE = "fever"
+_session_namespace: dict[str, str] = {}
+
+
+def _namespace_log_dir(namespace: str) -> Path:
     """Tính lại mỗi lần gọi (không cache ở module scope) để test monkeypatch `paths.LOGS_DIR` được."""
-    return paths.LOGS_DIR / "fever"
+    return paths.LOGS_DIR / namespace
 
 EventType = Literal[
     "stage_enter",
@@ -77,23 +85,17 @@ EVENT_TYPES: frozenset[str] = frozenset(
     )
 )
 
-ToolName = Literal[
-    "fever_checklist.get_cluster",
-    "semantic_mapper.contains_any",
-    "red_flag_engine.evaluate",
-    "fever_stage_machine.next_cluster",
-    "fever_stage_machine.should_stop",
-]
+ToolName = str
+"""Tên tool dạng `"<module>.<method>"` (vd `"rule_engine.evaluate"`, `"stage_machine.next_cluster"`).
+Không còn là enum đóng theo từng symptom_group cụ thể - `_validate_tool_name` chỉ kiểm ĐỊNH DẠNG,
+không kiểm danh sách cứng, để mọi protocol cắm vào engine chung (`symptom_protocol/`) đều dùng được
+mà không phải sửa module log này."""
 
-TOOL_NAMES: frozenset[str] = frozenset(
-    (
-        "fever_checklist.get_cluster",
-        "semantic_mapper.contains_any",
-        "red_flag_engine.evaluate",
-        "fever_stage_machine.next_cluster",
-        "fever_stage_machine.should_stop",
-    )
-)
+_TOOL_NAME_RE = re.compile(r"^[a-zA-Z_][\w]*\.[a-zA-Z_][\w]*$")
+
+
+def _validate_tool_name(tool: str) -> bool:
+    return bool(_TOOL_NAME_RE.match(tool))
 
 _REDACT_ENV_VAR = "FEVER_LOG_REDACT"
 
@@ -133,7 +135,8 @@ def _redact_payload(payload: Any) -> Any:
 
 
 def session_dir(session_id: str) -> Path:
-    return _fever_log_dir() / session_id
+    namespace = _session_namespace.get(session_id, _DEFAULT_NAMESPACE)
+    return _namespace_log_dir(namespace) / session_id
 
 
 def _stage_path(session_id: str, stage: str) -> Path:
@@ -175,9 +178,11 @@ def _write_json(path: Path, record: dict[str, Any]) -> None:
         logger.warning("fever_stage_log.write_failed path=%s reason=%s", path, type(exc).__name__)
 
 
-def start(session_id: str, *, route: str | None, budget: int) -> None:
-    """Khởi tạo snapshot phiên. Gọi 1 lần khi phiên fever bắt đầu."""
+def start(session_id: str, *, route: str | None, budget: int, namespace: str = _DEFAULT_NAMESPACE) -> None:
+    """Khởi tạo snapshot phiên. Gọi 1 lần khi phiên bắt đầu. `namespace` quyết định thư mục
+    `logs/<namespace>/` - mỗi symptom_group (fever, chest_pain, ...) nên dùng namespace riêng."""
     with _lock:
+        _session_namespace[session_id] = namespace
         _seq_counters[session_id] = 0
         meta = {
             "session_id": session_id,
@@ -221,8 +226,8 @@ def step(
     """Ghi một step vào `stage-<stage>.jsonl`. Không bao giờ ném ra ngoài."""
     if event not in EVENT_TYPES:
         raise ValueError(f"event không hợp lệ: {event!r}")
-    if tool is not None and tool not in TOOL_NAMES:
-        raise ValueError(f"tool không hợp lệ: {tool!r}")
+    if tool is not None and not _validate_tool_name(tool):
+        raise ValueError(f"tool không hợp lệ (cần dạng 'module.method'): {tool!r}")
 
     with _lock:
         seq = _next_seq(session_id)

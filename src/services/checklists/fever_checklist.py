@@ -11,33 +11,21 @@ của rule engine, không phải câu hỏi hội thoại). Mọi `QuestionClust
 liệu "tri-state"/"boolean" trong cột Data type — KHÔNG áp dụng cho field enum/number/date/array dù
 tier là M0/M1 (vd `consciousness_level` là M0 nhưng là enum, không phải tri-state). `tri_state=True`
 được gán đúng theo cột Data type của KM, không suy theo tier.
+
+`FeverField`/`QuestionCluster` là alias của kiểu generic ở `symptom_protocol.models` (engine dùng
+chung cho mọi symptom_group, xem `_guidance/fever-detect-agent-task.md` mục "kế thừa được") - file
+này chỉ còn là DATA (field/cụm cụ thể của fever), không định nghĩa kiểu riêng nữa.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
+
+from src.services.symptom_protocol.models import FieldSpec as FeverField
+from src.services.symptom_protocol.models import QuestionCluster
 
 Tier = Literal["M0", "M1", "C", "O", "H"]
 Stage = Literal["0", "1", "2", "3A", "3B", "4", "5"]
-
-
-@dataclass(frozen=True, slots=True)
-class FeverField:
-    key: str
-    label: str
-    tier: Tier
-    hint: str
-    tri_state: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionCluster:
-    id: str
-    stage: Stage
-    fields: tuple[str, ...]
-    batch_negation: bool = False
-    script_hint: str = ""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -262,7 +250,12 @@ QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
     QuestionCluster("Q4-05", "4", ("recent_surgery_30d", "surgical_site_signs", "indwelling_device"), script_hint="30 ngày gần đây có phẫu thuật không, hiện có ống thông/catheter/dẫn lưu không"),
     QuestionCluster("Q4-06", "4", ("travel_history_12m", "malaria_risk_area"), script_hint="1-3 tháng gần đây có đi vùng sốt rét lưu hành không"),
     QuestionCluster("Q4-07", "4", ("outbreak_exposure", "mosquito_exposure"), script_hint="Xung quanh có ai bị SXHD/cúm/sởi/tay chân miệng không, có bị muỗi đốt nhiều không"),
-    QuestionCluster("Q4-08", "4", ("lives_alone", "caregiver_available", "access_to_care_minutes"), script_hint="Sống một mình hay có người theo dõi, từ nhà đến cơ sở y tế mất bao lâu"),
+    # can_return_for_followup KHÔNG có cột "Field" riêng ở Q4-08 trong bảng CS Part 3 - đây là một
+    # lỗ hổng thật của tài liệu nguồn (field này là tiền đề safety-netting bắt buộc cho checklist
+    # SELF_CARE ở KM §5.4, nhưng CS không gán nó vào cụm hỏi nào cả). Gán vào Q4-08 vì cùng chủ đề
+    # "khả năng tiếp cận y tế khi trở nặng" với lives_alone/caregiver_available/access_to_care_minutes
+    # đã có trong cụm này - nếu không gán, SELF_CARE sẽ KHÔNG BAO GIỜ kết luận được (field mãi unknown).
+    QuestionCluster("Q4-08", "4", ("lives_alone", "caregiver_available", "access_to_care_minutes", "can_return_for_followup"), script_hint="Sống một mình hay có người theo dõi, từ nhà đến cơ sở y tế mất bao lâu, có thể quay lại tái khám khi trở nặng không"),
     # --- Stage 5 — Thu thập phần còn lại (CS §3.5) ---
     QuestionCluster("Q5-01", "5", ("urinary_symptoms",), script_hint="Có tiểu buốt, tiểu rắt, đau vùng hông lưng không"),
     QuestionCluster("Q5-02", "5", ("joint_limb_swelling", "non_weight_bearing"), script_hint="Có sưng đau khớp/chi nào không - có chịu đi lại được không"),

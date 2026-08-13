@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers.cases import router as cases_router
+from src.api.routers.fever_intake import router as fever_intake_router
 from src.api.routers.intake import router as intake_router
 from src.api.routers.queue import router as queue_router
 from src.api.routers.result import router as result_router
@@ -52,6 +53,7 @@ app.include_router(cases_router, prefix="/api/v1")
 app.include_router(queue_router, prefix="/api/v1")
 app.include_router(result_router, prefix="/api/v1")
 app.include_router(intake_router, prefix="/api/v1")
+app.include_router(fever_intake_router, prefix="/api/v1")
 
 
 @app.middleware("http")
