@@ -15,6 +15,12 @@ class FieldSpec:
     tier: Tier
     hint: str
     tri_state: bool = True
+    # Tập giá trị hợp lệ của field enum (rỗng = tự do: số, ngày, chuỗi mô tả). Không chỉ để nhắc
+    # prompt mà còn để LOẠI giá trị lạ sau khi LLM trả về - lỗi thật gặp phải khi test tay: người dùng
+    # nói "tỉnh táo bình thường", model lưu nguyên văn tiếng Việt vào `consciousness_level` thay vì mã
+    # `alert`, khiến rule engine không bao giờ nhận ra điều kiện an toàn và tự đẩy ca lành tính lên
+    # EARLY_VISIT. Nhắc prompt là chưa đủ - phải chặn deterministic bằng code.
+    allowed_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

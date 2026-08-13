@@ -18,7 +18,9 @@ from src import paths
 from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
 from src.services.engines import fever_stage_machine as fsm
+from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import fever_stage_log, provider_router
+from src.services.symptom_protocol import intake_agent as _engine
 
 E2_USER_MESSAGE = "Con em đang sốt cao, giờ tay chân đang giật, mắt trợn lên, em không biết làm sao."
 
@@ -92,6 +94,26 @@ def test_non_gate_stage_still_uses_single_combined_call(monkeypatch):
     assert result.emergency is False
     assert result.extracted == {"fever_reported": "true"}
     assert result.agent_message == "Bé sốt được mấy ngày rồi ạ?"
+
+
+# --- turn-scoping: cờ phủ định gộp KHÔNG lan sang field của cụm khác (lỗi C1) --------------------
+
+
+def test_batch_negation_flag_never_applies_to_fields_outside_the_asked_cluster():
+    """Hướng E nhặt kèm field của CÁC CỤM KHÁC trong cùng stage (`safety_extra_keys`,
+    `intake_agent._run_turn_combined`). Một câu "không có gì cả" chỉ trả lời ĐÚNG cụm đang hỏi - nếu
+    cờ phủ định gộp lan sang đám field ngoài cụm thì cả stage bị đóng bằng một câu duy nhất, đúng lỗi
+    C1 phát hiện khi test tay 2026-08-13. Chặn bằng `batch_negation=False` cứng ở call đó."""
+    message = "Dạ bé thở bình thường, không có gì cả ạ."
+    parsed = {"cluster_all_negative": True, "negation_evidence": "không có gì cả"}
+    outside_keys = ("new_confusion", "joint_limb_swelling", "non_weight_bearing", "looks_very_unwell")
+
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, outside_keys, parsed, batch_negation=False, message=message,
+    )
+
+    # Cùng một `parsed` có cờ hợp lệ, nhưng ngoài phạm vi cụm thì không field nào được gán "false".
+    assert set(collected.values()) == {"unknown"}
 
 
 # --- thứ tự tool trong log: rule_gate SAU extract, TRƯỚC mọi llm_request khác --------------------

@@ -12,6 +12,13 @@ liệu "tri-state"/"boolean" trong cột Data type — KHÔNG áp dụng cho fie
 tier là M0/M1 (vd `consciousness_level` là M0 nhưng là enum, không phải tri-state). `tri_state=True`
 được gán đúng theo cột Data type của KM, không suy theo tier.
 
+`allowed_values`: chép nguyên văn `enum` trong JSON Schema KM §7 (nguồn chuẩn duy nhất - bảng §3.x có
+chỗ ghi rút gọn kèm "..."). Chỉ điền cho field enum VÔ HƯỚNG; field `array[enum]` (`dehydration_signs`,
+`seizure_features`, `chronic_conditions`, `immunocompromise_cause`, `indwelling_device`,
+`outbreak_exposure`, `animal_water_exposure`, `obstetric_red_flags`) để rỗng vì `_coerce_enum` lọc theo
+giá trị đơn, chưa lọc theo từng phần tử mảng - lọc nửa vời sẽ xoá cả mảng hợp lệ. Field số/ngày/mô tả
+tự do (`age_value`, `temp_c`, `caregiver_concern_level`, `current_medications`...) đương nhiên để rỗng.
+
 `FeverField`/`QuestionCluster` là alias của kiểu generic ở `symptom_protocol.models` (engine dùng
 chung cho mọi symptom_group, xem `_guidance/fever-detect-agent-task.md` mục "kế thừa được") - file
 này chỉ còn là DATA (field/cụm cụ thể của fever), không định nghĩa kiểu riêng nữa.
@@ -32,10 +39,10 @@ Stage = Literal["0", "1", "2", "3A", "3B", "4", "5"]
 # KM §3.2 — Nhóm PATIENT
 # ---------------------------------------------------------------------------------------------
 _PATIENT_FIELDS: tuple[FeverField, ...] = (
-    FeverField("reporter_type", "Người khai là ai", "H", "self/parent_caregiver/other - độ tin cậy thông tin", tri_state=False),
+    FeverField("reporter_type", "Người khai là ai", "H", "self/parent_caregiver/other - độ tin cậy thông tin", tri_state=False, allowed_values=("self", "parent_caregiver", "other",)),
     FeverField("age_value", "Tuổi (số)", "M0", "Biến phân tầng nguy cơ chính, quyết định toàn bộ ngưỡng/nhánh hỏi", tri_state=False),
-    FeverField("age_unit", "Đơn vị tuổi", "M0", "day/month/year - đi kèm age_value", tri_state=False),
-    FeverField("sex", "Giới tính sinh học", "M0", "male/female/unknown - điều hướng nhánh sản khoa/tiết niệu", tri_state=False),
+    FeverField("age_unit", "Đơn vị tuổi", "M0", "day/month/year - đi kèm age_value", tri_state=False, allowed_values=("day", "month", "year",)),
+    FeverField("sex", "Giới tính sinh học", "M0", "male/female/unknown - điều hướng nhánh sản khoa/tiết niệu", tri_state=False, allowed_values=("male", "female", "unknown",)),
     FeverField("weight_kg", "Cân nặng (kg)", "O", "Chỉ dùng cảnh báo quá liều paracetamol", tri_state=False),
     FeverField("lives_alone", "Sống một mình", "M1", "Điều kiện an toàn của SELF_CARE (RF-38)"),
     FeverField("caregiver_available", "Có người theo dõi 24h", "M1", "Điều kiện an toàn của SELF_CARE (RF-38)"),
@@ -48,20 +55,20 @@ _PATIENT_FIELDS: tuple[FeverField, ...] = (
 # ---------------------------------------------------------------------------------------------
 _FEVER_FIELDS: tuple[FeverField, ...] = (
     FeverField("fever_reported", "Người dùng khai có sốt", "M0", "Cổng vào toàn bộ protocol sốt"),
-    FeverField("fever_status", "Loại sốt", "M0", "objective/subjective/none - điều hướng nhánh dữ liệu thiếu", tri_state=False),
+    FeverField("fever_status", "Loại sốt", "M0", "objective/subjective/none - điều hướng nhánh dữ liệu thiếu", tri_state=False, allowed_values=("objective", "subjective", "none",)),
     FeverField("temp_c", "Nhiệt độ đo được (°C)", "M0", "Đầu vào rule ngưỡng theo tuổi; M0 khi fever_status=objective", tri_state=False),
-    FeverField("temp_site", "Vị trí đo", "M0", "axillary/oral/rectal/tympanic/temporal - quyết định ngưỡng áp dụng", tri_state=False),
+    FeverField("temp_site", "Vị trí đo", "M0", "axillary/oral/rectal/tympanic/temporal - quyết định ngưỡng áp dụng", tri_state=False, allowed_values=("axillary", "oral", "rectal", "tympanic", "temporal", "unknown",)),
     FeverField("temp_measured_at", "Thời điểm đo", "C", "Số đo cũ -> độ tin cậy thấp hơn", tri_state=False),
-    FeverField("temp_device_type", "Loại nhiệt kế", "O", "Gán measurement_confidence", tri_state=False),
+    FeverField("temp_device_type", "Loại nhiệt kế", "O", "Gán measurement_confidence", tri_state=False, allowed_values=("digital", "infrared_ear", "infrared_forehead", "mercury_glass", "chemical_dot", "unknown",)),
     FeverField("temp_max_24h_c", "Nhiệt độ cao nhất 24h qua (°C)", "O", "Bắt đỉnh sốt bị thuốc che", tri_state=False),
     FeverField("fever_onset_at", "Thời điểm bắt đầu sốt", "M0", "Tính fever_duration_days - mốc 5/7 ngày", tri_state=False),
-    FeverField("fever_pattern", "Kiểu sốt", "O", "continuous/intermittent/relapsing - giá trị hạn chế", tri_state=False),
+    FeverField("fever_pattern", "Kiểu sốt", "O", "continuous/intermittent/relapsing - giá trị hạn chế", tri_state=False, allowed_values=("continuous", "intermittent", "relapsing", "unknown",)),
     FeverField("rigors", "Rét run dữ dội", "M0", "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét"),
     FeverField("hypothermia_reported", "Nhiệt độ < 36°C", "C", "Red flag ở nhóm nguy cơ, kích hoạt theo tuổi/miễn dịch"),
     FeverField("antipyretic_taken", "Đã dùng thuốc hạ sốt", "M0", "Nhiệt độ hiện tại có thể bị che"),
-    FeverField("antipyretic_drug", "Tên hoạt chất hạ sốt", "C", "Sàng lọc NSAID trong bối cảnh SXHD", tri_state=False),
+    FeverField("antipyretic_drug", "Tên hoạt chất hạ sốt", "C", "Sàng lọc NSAID trong bối cảnh SXHD", tri_state=False, allowed_values=("paracetamol", "ibuprofen", "aspirin", "other", "unknown",)),
     FeverField("antipyretic_total_24h_mg", "Tổng liều 24h (mg)", "O", "Cảnh báo quá liều paracetamol", tri_state=False),
-    FeverField("antipyretic_response", "Đáp ứng sau khi uống thuốc", "O", "Không dùng để loại trừ bệnh nặng", tri_state=False),
+    FeverField("antipyretic_response", "Đáp ứng sau khi uống thuốc", "O", "Không dùng để loại trừ bệnh nặng", tri_state=False, allowed_values=("resolved", "partial", "none", "unknown",)),
     FeverField("worse_after_defervescence", "Mệt/khó chịu hơn dù đã hạ sốt", "M0", "Dấu hiệu khám lại ngay theo QĐ 2760 (RF-29)"),
 )
 
@@ -69,11 +76,11 @@ _FEVER_FIELDS: tuple[FeverField, ...] = (
 # KM §3.4 — Nhóm GENERAL
 # ---------------------------------------------------------------------------------------------
 _GENERAL_FIELDS: tuple[FeverField, ...] = (
-    FeverField("consciousness_level", "Mức tỉnh táo", "M0", "Yếu tố tiên lượng mạnh nhất mọi thang triage (RF-01)", tri_state=False),
+    FeverField("consciousness_level", "Mức tỉnh táo", "M0", "Yếu tố tiên lượng mạnh nhất mọi thang triage (RF-01)", tri_state=False, allowed_values=("alert", "drowsy_but_rousable", "difficult_to_rouse", "unresponsive", "unknown",)),
     FeverField("new_confusion", "Lú lẫn/thay đổi hành vi mới", "C", "Biểu hiện duy nhất ở người già (RF-05); kích hoạt tuổi >=16"),
-    FeverField("social_response_child", "Đáp ứng xã hội của trẻ", "C", "Lõi traffic light NICE; kích hoạt tuổi <5", tri_state=False),
-    FeverField("activity_vs_baseline", "Hoạt động so với ngày thường", "M1", "Chuẩn hóa theo baseline cá nhân", tri_state=False),
-    FeverField("feeding_intake", "Ăn/uống/bú", "M0", "IMCI danger sign", tri_state=False),
+    FeverField("social_response_child", "Đáp ứng xã hội của trẻ", "C", "Lõi traffic light NICE; kích hoạt tuổi <5", tri_state=False, allowed_values=("normal", "reduced", "no_response", "not_applicable",)),
+    FeverField("activity_vs_baseline", "Hoạt động so với ngày thường", "M1", "Chuẩn hóa theo baseline cá nhân", tri_state=False, allowed_values=("normal", "reduced", "markedly_reduced", "unknown",)),
+    FeverField("feeding_intake", "Ăn/uống/bú", "M0", "IMCI danger sign", tri_state=False, allowed_values=("normal", "reduced", "unable", "unknown",)),
     FeverField("caregiver_concern_level", "Mức lo lắng người chăm sóc (0-10)", "M1", "Tín hiệu độc lập có giá trị theo NICE", tri_state=False),
     FeverField("looks_very_unwell", "Trông rất mệt/khác hẳn thường ngày", "M1", "Proxy ill-appearance khi không khám trực tiếp được"),
 )
@@ -82,7 +89,7 @@ _GENERAL_FIELDS: tuple[FeverField, ...] = (
 # KM §3.5 — Nhóm RESPIRATORY
 # ---------------------------------------------------------------------------------------------
 _RESPIRATORY_FIELDS: tuple[FeverField, ...] = (
-    FeverField("breathing_difficulty", "Khó thở", "M0", "none/mild/severe - cấu phần red/amber hô hấp", tri_state=False),
+    FeverField("breathing_difficulty", "Khó thở", "M0", "none/mild/severe - cấu phần red/amber hô hấp", tri_state=False, allowed_values=("none", "mild", "severe", "unknown",)),
     FeverField("rapid_breathing", "Thở nhanh hơn bình thường", "M1", "Dấu hiệu nặng nhận biết từ xa"),
     FeverField("chest_indrawing", "Rút lõm lồng ngực", "C", "Suy hô hấp ở trẻ -> red (RF-09); kích hoạt tuổi <5"),
     FeverField("nasal_flaring_grunting", "Phập phồng cánh mũi/thở rên", "C", "Red ở trẻ (RF-09); kích hoạt tuổi <5"),
@@ -100,9 +107,9 @@ _CIRCULATION_FIELDS: tuple[FeverField, ...] = (
     FeverField("cold_clammy_skin", "Da lạnh, ẩm, nổi vân tím", "M0", "Dấu hiệu sốc (RF-13)"),
     FeverField("capillary_refill_ge_3s", "CRT >= 3 giây", "M0", "Giảm tưới máu (RF-13)"),
     FeverField("dizziness_on_standing", "Choáng khi đứng dậy", "M1", "Giảm thể tích tuần hoàn - tiền sốc"),
-    FeverField("urine_output", "Lượng nước tiểu", "M0", "normal/reduced/none_gt_6h - tưới máu thận (RF-14)", tri_state=False),
+    FeverField("urine_output", "Lượng nước tiểu", "M0", "normal/reduced/none_gt_6h - tưới máu thận (RF-14)", tri_state=False, allowed_values=("normal", "reduced", "none_gt_6h", "unknown",)),
     FeverField("dehydration_signs", "Dấu mất nước", "O", "Đa dấu hiệu: khô môi, mắt trũng, thóp lõm...", tri_state=False),
-    FeverField("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40)", tri_state=False),
+    FeverField("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40)", tri_state=False, allowed_values=("none", "occasional", "frequent", "unable_to_keep_fluids", "unknown",)),
 )
 
 # ---------------------------------------------------------------------------------------------
@@ -125,7 +132,7 @@ _NEUROLOGICAL_FIELDS: tuple[FeverField, ...] = (
 _SKIN_FIELDS: tuple[FeverField, ...] = (
     FeverField("non_blanching_rash", "Ban không mất khi ấn kính", "M0", "Red flag kinh điển nghi não mô cầu (RF-18)"),
     FeverField("rash_present", "Có ban", "C", "Chỉ hỏi riêng khi non_blanching_rash dương tính/mơ hồ"),
-    FeverField("rash_type", "Kiểu ban", "C", "petechial/maculopapular/vesicular/urticarial", tri_state=False),
+    FeverField("rash_type", "Kiểu ban", "C", "petechial/maculopapular/vesicular/urticarial", tri_state=False, allowed_values=("petechial", "maculopapular", "vesicular", "urticarial", "other", "unknown",)),
     FeverField("mucosal_bleeding", "Chảy máu chân răng/mũi/âm đạo bất thường", "M0", "Cảnh báo SXHD -> nhập viện (RF-19)"),
     FeverField("gi_bleeding", "Nôn ra máu / phân đen", "M0", "Xuất huyết nặng (RF-20)"),
     FeverField("jaundice_new", "Vàng da mới", "O", "Tổn thương gan/nhiễm khuẩn nặng"),
@@ -136,8 +143,8 @@ _SKIN_FIELDS: tuple[FeverField, ...] = (
 # KM §3.9 — Nhóm ASSOCIATED SYMPTOMS
 # ---------------------------------------------------------------------------------------------
 _ASSOCIATED_FIELDS: tuple[FeverField, ...] = (
-    FeverField("abdominal_pain_severity", "Mức độ đau bụng", "M0", "none/mild/moderate/severe - cảnh báo SXHD (RF-39)", tri_state=False),
-    FeverField("abdominal_pain_location", "Vị trí đau bụng", "C", "Định hướng cho người duyệt", tri_state=False),
+    FeverField("abdominal_pain_severity", "Mức độ đau bụng", "M0", "none/mild/moderate/severe - cảnh báo SXHD (RF-39)", tri_state=False, allowed_values=("none", "mild", "moderate", "severe", "unknown",)),
+    FeverField("abdominal_pain_location", "Vị trí đau bụng", "C", "Định hướng cho người duyệt", tri_state=False, allowed_values=("diffuse", "ruq", "rlq", "epigastric", "other", "unknown",)),
     FeverField("abdominal_guarding", "Bụng cứng/ấn rất đau", "C", "Nghi bụng ngoại khoa (RF-39)"),
     FeverField("diarrhea", "Tiêu chảy", "M1", "Mất nước, nguồn nhiễm"),
     FeverField("bloody_stool", "Phân máu", "C", "Cần khám"),
@@ -155,7 +162,7 @@ _ASSOCIATED_FIELDS: tuple[FeverField, ...] = (
 # ---------------------------------------------------------------------------------------------
 _RISK_FIELDS: tuple[FeverField, ...] = (
     FeverField("chronic_conditions", "Bệnh mạn tính", "M1", "Lý do cân nhắc nhập viện theo BYT (RF-36)", tri_state=False),
-    FeverField("obesity_or_malnutrition", "Béo phì/suy dinh dưỡng", "O", "Tăng nặng, khó đánh giá", tri_state=False),
+    FeverField("obesity_or_malnutrition", "Béo phì/suy dinh dưỡng", "O", "Tăng nặng, khó đánh giá", tri_state=False, allowed_values=("none", "obesity", "malnutrition", "unknown",)),
     FeverField("immunocompromised", "Suy giảm miễn dịch", "M1", "Nhóm nguy cơ cao nhất (RF-31)"),
     FeverField("immunocompromise_cause", "Nguyên nhân suy giảm miễn dịch", "C", "chemotherapy_6w/transplant/hiv_uncontrolled...", tri_state=False),
     FeverField("known_neutropenia", "Đã biết giảm bạch cầu hạt", "C", "Kích hoạt ngưỡng sốt 38,3°C/38,0°C >=1h (RF-30)"),
@@ -173,7 +180,7 @@ _RISK_FIELDS: tuple[FeverField, ...] = (
     FeverField("mosquito_exposure", "Bị muỗi đốt/vùng có SXHD", "C", "Kích hoạt bộ câu hỏi cảnh báo SXHD"),
     FeverField("animal_water_exposure", "Tiếp xúc động vật/lội nước lũ", "O", "Bệnh lây từ động vật, Leptospira", tri_state=False),
     FeverField("sick_contact", "Tiếp xúc người bệnh tương tự", "O", "Dịch tễ"),
-    FeverField("immunization_status", "Tình trạng tiêm chủng", "C", "up_to_date/incomplete/unknown; kích hoạt tuổi <5", tri_state=False),
+    FeverField("immunization_status", "Tình trạng tiêm chủng", "C", "up_to_date/incomplete/unknown; kích hoạt tuổi <5", tri_state=False, allowed_values=("up_to_date", "incomplete", "unknown",)),
     FeverField("recent_vaccination_48h", "Tiêm chủng trong 48 giờ", "C", "Yếu tố nhiễu khi diễn giải sốt; kích hoạt tuổi <5"),
 )
 

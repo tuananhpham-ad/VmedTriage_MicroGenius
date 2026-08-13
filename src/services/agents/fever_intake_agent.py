@@ -50,8 +50,10 @@ def extract_cluster(
     )
 
 
-def _collect(cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
-    return _collect_fields(FEVER_PROTOCOL, cluster.fields, parsed, batch_negation=cluster.batch_negation)
+def _collect(cluster: QuestionCluster, parsed: dict, message: str = "") -> dict[str, TriState]:
+    return _collect_fields(
+        FEVER_PROTOCOL, cluster.fields, parsed, batch_negation=cluster.batch_negation, message=message,
+    )
 
 
 def run_turn(
