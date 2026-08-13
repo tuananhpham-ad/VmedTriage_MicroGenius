@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from src.agents.graph import agent
 from src.config import get_settings
 from src.database import get_db_session
 from src.models.auth import (
@@ -33,6 +32,7 @@ from src.services.infra.auth import (
     UserAlreadyExistsError,
     auth_service,
 )
+from src.services.sessions import fever_case_bridge, fever_session
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.case_store import case_store
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
@@ -166,26 +166,37 @@ def update_current_user(
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
-    """Receive a patient message and run the controlled triage pipeline."""
-    try:
-        patient_id = int(request.state.auth.sub)
-        if payload.case_id:
-            existing_case = case_store.get(payload.case_id)
-            if existing_case and existing_case.patient_id not in (None, patient_id):
-                raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
-        graph_payload = {"query": payload.message}
-        if payload.case_id:
-            graph_payload["case_id"] = payload.case_id
+    """Nhận tin nhắn tự do của bệnh nhân và chạy AGENT FEVER (`symptom_protocol/`).
 
-        result = await agent.ainvoke(graph_payload)
-        triage_case = result["triage_case"]
-        triage_case.patient_id = patient_id
-        case_store.save(triage_case)
-        return _patient_chat_response(triage_case)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    Trước đây endpoint này chạy pipeline rule-based `src/agents/graph.py`. Đã chuyển sang agent fever
+    vì agent hỏi theo cụm/stage đúng tài liệu CS, chốt đỏ ngay khi phát hiện red flag, và mọi kết
+    luận vẫn do rule engine THUẦN quyết định (LLM chỉ trích xuất field, không xếp mức khẩn cấp).
+
+    HỢP ĐỒNG API KHÔNG ĐỔI (`ChatRequest`/`ChatResponse`) và case vẫn được ghi vào `case_store` qua
+    `fever_case_bridge` - hàng đợi điều dưỡng, lịch sử bệnh nhân và luồng duyệt HITL chạy y như cũ.
+    `case_id` chính là `session_id` của phiên agent."""
+    patient_id = int(request.state.auth.sub)
+    previous = case_store.get(payload.case_id) if payload.case_id else None
+    if previous and previous.patient_id not in (None, patient_id):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
+
+    session_id = payload.case_id
+    if session_id is None or fever_session.session_store.get(session_id) is None:
+        # Chưa có phiên (case mới, hoặc phiên đã mất do restart server - store là in-memory): mở
+        # phiên mới rồi đưa luôn tin nhắn đầu tiên vào, không bắt người dùng gõ lại.
+        session_id = fever_session.start_session().session_id
+        previous = None
+
+    try:
+        session = fever_session.submit_message(session_id, payload.message)
+    except fever_session.EmptyMessageError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except fever_session.SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    triage_case = fever_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+    case_store.save(triage_case)
+    return _patient_chat_response(triage_case)
 
 
 @router.get("/status")

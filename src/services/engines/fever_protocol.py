@@ -106,6 +106,57 @@ OPPORTUNISTIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# Nhãn tiếng Việt của từng `RF-xx`, chép nguyên văn cột tên dấu hiệu ở bảng KM §6.1. Rule engine chỉ
+# trả về MÃ (`reason_codes`) - mã là thứ ổn định để log/test, nhưng điều dưỡng đọc phiếu bàn giao thì
+# "RF-13" không có nghĩa gì. Bảng này chỉ để HIỂN THỊ, không tham gia bất kỳ quyết định nào.
+REASON_CODE_LABELS: dict[str, str] = {
+    "RF-01": "Giảm ý thức",
+    "RF-02": "Đang co giật / vừa co giật",
+    "RF-03": "Co giật phức tạp",
+    "RF-04": "Cứng gáy / thóp phồng / sợ ánh sáng",
+    "RF-05": "Lú lẫn / thay đổi hành vi mới",
+    "RF-06": "Dấu thần kinh khu trú mới",
+    "RF-07": "Khó thở nặng",
+    "RF-08": "Tím tái",
+    "RF-09": "Dấu suy hô hấp ở trẻ",
+    "RF-10": "Thở rít / chảy dãi, không nuốt được",
+    "RF-11": "Thở nhanh + SpO2 <= 95% khí trời",
+    "RF-12": "Đau ngực / ho ra máu kèm sốt",
+    "RF-13": "Dấu hiệu sốc",
+    "RF-14": "Không tiểu > 6 giờ",
+    "RF-15": "Không uống được / nôn tất cả",
+    "RF-16": "Mất nước có dấu hiệu",
+    "RF-17": "Choáng / ngất khi đứng dậy",
+    "RF-18": "Ban không mất khi ấn kính",
+    "RF-19": "Xuất huyết niêm mạc",
+    "RF-20": "Xuất huyết tiêu hóa",
+    "RF-21": "Vàng da mới",
+    "RF-22": "Sốt ở trẻ < 3 tháng",
+    "RF-23": "Sốt cao ở trẻ 3-6 tháng",
+    "RF-24": "Hạ thân nhiệt",
+    "RF-25": "Nghi tăng thân nhiệt bệnh lý (say nắng / say nóng)",
+    "RF-26": "Sốt kéo dài >= 5 ngày",
+    "RF-27": "Sốt kéo dài >= 7 ngày",
+    "RF-28": "Rét run dữ dội",
+    "RF-29": "Khó chịu hơn dù đã hạ sốt",
+    "RF-30": "Sốt + giảm bạch cầu hạt / hóa trị <= 6 tuần",
+    "RF-31": "Sốt + suy giảm miễn dịch khác",
+    "RF-32": "Sốt + thai kỳ hoặc hậu sản <= 6 tuần",
+    "RF-33": "Sốt + phẫu thuật / thủ thuật <= 30 ngày",
+    "RF-34": "Sốt + thiết bị lưu trong cơ thể",
+    "RF-35": "Sốt sau du lịch vùng sốt rét <= 3 tháng",
+    "RF-36": "Sốt + bệnh mạn tính nặng",
+    "RF-37": "Sốt ở người >= 75 tuổi",
+    "RF-38": "Sống một mình / không ai theo dõi / xa cơ sở y tế",
+    "RF-39": "Đau bụng dữ dội / bụng cứng",
+    "RF-40": "Nôn nhiều",
+    "RF-41": "Sưng đau khớp/chi, không đi được, không dùng chi",
+    "RF-42": "Triệu chứng tiết niệu ở trẻ < 5 tuổi sốt không rõ ổ",
+    "RF-43": "Ổ nhiễm khuẩn khu trú tiến triển",
+    "RF-44": 'Mức lo lắng người chăm sóc rất cao / "trông khác hẳn"',
+}
+
+
 def _is_filled(value: object) -> bool:
     return value is not None and value != "unknown" and value != ""
 

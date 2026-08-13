@@ -52,9 +52,12 @@ async def test_unconfigured_mcp_tool_call_returns_503(client, nurse_headers):
 
 @pytest.mark.asyncio
 async def test_chat_routes_red_flag_alerts_patient_immediately(client, patient_headers):
+    # Tin nhắn đổi từ "đau ngực" sang "co giật": `/api/v1/chat` giờ chạy AGENT FEVER, mà agent này chỉ
+    # có protocol cho sốt - xem `test_chat_non_fever_complaint_has_no_red_flag_coverage_yet` bên dưới.
+    # Ý ĐỊNH của test không đổi: có red flag -> chốt đỏ NGAY lượt đầu, không lộ proposal/rule nội bộ.
     response = await client.post(
         "/api/v1/chat",
-        json={"message": "Tôi đau ngực từ sáng, đi vài bước là hụt hơi."},
+        json={"message": "Con em đang sốt cao, giờ tay chân đang co giật."},
         headers=patient_headers,
     )
 
@@ -67,6 +70,26 @@ async def test_chat_routes_red_flag_alerts_patient_immediately(client, patient_h
     assert data["requires_human_approval"] is False
     assert data["pipeline_trace"] == []
     assert "115" in data["response"]
+
+
+@pytest.mark.asyncio
+async def test_chat_non_fever_complaint_has_no_red_flag_coverage_yet(client, patient_headers):
+    """LỖ HỔNG ĐÃ BIẾT, ghi lại để nó hiện ra trong CI thay vì nằm im.
+
+    `/api/v1/chat` đã chuyển từ pipeline rule-based đa triệu chứng sang agent fever. Agent fever chỉ
+    có protocol cho SỐT, nên các than phiền khác (đau ngực, khó thở, đột quỵ...) không còn được luật
+    red-flag nào quét nữa - trước đây `RED_FLAG_RULES` trong `src/config.py` bắt được.
+
+    Khi nào có routing đa protocol (chest_pain, breathing...) thì test này PHẢI hỏng - lúc đó xoá nó
+    đi, đừng nới assert."""
+    response = await client.post(
+        "/api/v1/chat",
+        json={"message": "Tôi đau ngực từ sáng, đi vài bước là hụt hơi."},
+        headers=patient_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "collecting_information"
 
 
 @pytest.mark.asyncio
