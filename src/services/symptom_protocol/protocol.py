@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
 from src.services.infra.provider_router import LLMCredential
-from src.services.symptom_protocol.models import FieldSpec, QuestionCluster, RuleMatch
+from src.services.symptom_protocol.models import FieldSpec, QuestionCluster, RuleMatch, ScreeningGroup
 
 RouteFn = Callable[[dict[str, object]], str]
 BudgetKeyFn = Callable[[dict[str, object], str, "str | None"], str]
@@ -26,6 +27,7 @@ SkipRuleFn = Callable[[QuestionCluster, dict[str, object]], bool]
 RuleFn = Callable[[dict[str, object], "tuple[RuleMatch, ...]"], "RuleMatch | None"]
 FallbackRuleFn = Callable[[dict[str, object]], RuleMatch]
 DeriveFieldsFn = Callable[[dict[str, object]], dict[str, object]]
+ContradictionFn = Callable[[dict[str, object]], "tuple[str, ...]"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,11 +99,57 @@ class SymptomProtocol:
     opportunistic_keywords: tuple[tuple[str, tuple[str, ...]], ...]
     """Quét từ khoá nhẹ bổ trợ (kỹ thuật `_contains_any`), mỗi phần tử `(field_key, keywords)`."""
 
+    screening_groups: tuple[ScreeningGroup, ...] = ()
+    """Nhóm cơ quan được sàng lọc bằng một câu hỏi gộp (xem `ScreeningGroup`). Rỗng (mặc định) =
+    protocol hỏi tuần tự từng cụm như trước - `screening.py` không có gì để làm nên không lượt nào
+    đổi hành vi."""
+
+    max_screening_rounds: int = 2
+    """Số lượt sàng lọc tối đa cho MỖI stage. Chống lặp vô hạn khi người bệnh trả lời mãi không rõ:
+    hết hạn mức thì tự rơi về đường hỏi từng cụm, không có nhánh nào làm hội thoại treo."""
+
+    field_dependencies: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    """`{field cha: (field con...)}` - khi field cha bị PHỦ ĐỊNH ("false"/"none"), các field con mất
+    hết ý nghĩa và phải bị xoá về "unknown" (`retraction.apply_retraction`). Vd `fever_reported=false`
+    ⇒ bỏ `temp_c`, `fever_onset_at`, `antipyretic_taken`... Không khai báo = protocol không có quan hệ
+    phụ thuộc nào (mặc định an toàn: không xoá gì)."""
+
+    contradiction_rules: tuple[ContradictionFn, ...] = ()
+    """Mỗi hàm nhận `answers`, trả về các field ĐANG CHỌI NHAU (rỗng nếu không có mâu thuẫn). Đây là
+    chiều NGƯỢC với `field_dependencies`: không xoá gì cả, chỉ mở lại cụm chứa các field đó để hỏi
+    cho rõ. Vd hồ sơ ghi `fever_status=none` mà người bệnh vừa khai `temp_c=39.2` - hệ thống không có
+    căn cứ để chọn bên nào, việc duy nhất đúng là hỏi lại."""
+
+    confirm_before_retract: frozenset[str] = frozenset()
+    """Field hệ trọng tới mức phải XIN XÁC NHẬN trước khi xoá dây chuyền, thay vì xoá thẳng. Chặn
+    đúng bug C2: model hiểu nhầm "bé không **sốt xuất huyết**" (tên bệnh) thành "bé không **sốt**" rồi
+    xoá sạch phần nhiệt độ đã khai. Giữ HẸP - mỗi field trong tập này tốn của người bệnh một lượt hội
+    thoại, nên chỉ đưa vào field mà việc xoá nhầm thực sự đắt."""
+
     derive_fields: DeriveFieldsFn | None = None
     """Tính field DẪN XUẤT (derived) từ field khác sau khi merge mỗi lượt - vd
     `fever_duration_days` tính từ `fever_onset_at`. KHÔNG bắt LLM tự nhẩm ngày tháng (không đáng tin
     cậy, LLM không biết "hôm nay" nếu không được cho biết) - đây là phép tính THUẦN, xác định. Trả
     `None` (mặc định) nếu protocol không cần field dẫn xuất nào."""
+
+    reason_code_labels: dict[str, str] = dataclass_field(default_factory=dict)
+    """`RF-xx` -> nhãn tiếng Việt, CHỈ để hiển thị trên phiếu bàn giao. Rule engine chỉ trả về MÃ (mã
+    là thứ ổn định để log/test), nhưng điều dưỡng đọc "RF-13" thì không có nghĩa gì. Bảng này KHÔNG
+    tham gia bất kỳ quyết định nào - thiếu một mã chỉ làm phiếu hiện mã thô, không đổi kết luận."""
+
+    # --- 4 field dưới đây CHỈ phục vụ phiếu bàn giao (`symptom_case_bridge.py`) -------------------
+    # Chúng tồn tại để lớp bridge không phải biết tên field của từng bệnh. Bridge từng ghi cứng
+    # `fever_onset_at`/`temp_c`/"Sốt", nên ca ngoài sốt vẫn bị gắn nhãn "Sốt" trong dữ liệu gửi đi -
+    # sai DỮ LIỆU downstream, không phải sai hiển thị.
+    chief_complaint_field: str = ""
+    """Field chứa lời người bệnh tự mô tả than phiền. Rỗng = protocol không hỏi (fever biết trước
+    than phiền là gì)."""
+
+    default_chief_complaint: str = ""
+    """Dùng khi `chief_complaint_field` rỗng hoặc chưa điền."""
+
+    onset_field: str = ""
+    severity_field: str = ""
 
     default_credential: LLMCredential | None = None
 

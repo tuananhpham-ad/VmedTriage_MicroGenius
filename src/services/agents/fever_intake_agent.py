@@ -50,8 +50,10 @@ def extract_cluster(
     )
 
 
-def _collect(cluster: QuestionCluster, parsed: dict) -> dict[str, TriState]:
-    return _collect_fields(FEVER_PROTOCOL, cluster.fields, parsed, batch_negation=cluster.batch_negation)
+def _collect(cluster: QuestionCluster, parsed: dict, message: str = "") -> dict[str, TriState]:
+    return _collect_fields(
+        FEVER_PROTOCOL, cluster.fields, parsed, batch_negation=cluster.batch_negation, message=message,
+    )
 
 
 def run_turn(
@@ -62,14 +64,14 @@ def run_turn(
     cluster: QuestionCluster,
     message: str,
     answers: dict[str, TriState],
-    next_cluster: QuestionCluster | None = None,
     asked_ids: frozenset[str] = frozenset(),
+    retry_count: int = 0,
     credential: provider_router.LLMCredential | None = None,
 ) -> FeverTurnResult:
     return _engine.run_turn(
         FEVER_PROTOCOL, session_id,
         turn=turn, stage=stage, cluster=cluster, message=message, answers=answers,
-        next_cluster=next_cluster, asked_ids=asked_ids, credential=credential,
+        asked_ids=asked_ids, retry_count=retry_count, credential=credential,
     )
 
 

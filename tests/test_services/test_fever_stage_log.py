@@ -81,6 +81,33 @@ def test_creates_one_file_per_stage_touched():
     assert (directory / "session.json").exists()
 
 
+def test_rule_engine_file_captures_both_engines():
+    """`rule-engine.jsonl` phải bắt CẢ HAI engine cùng tồn tại trong repo.
+
+    `red_flag_engine.evaluate` là engine fever cũ; `rule_engine.evaluate` là engine dùng chung của
+    `symptom_protocol/` — chính là đường mà `/chat` đang chạy. Trước đây điều kiện mirror chỉ khớp
+    tên cũ, nên với đường agent mới file này LUÔN RỖNG dù rule engine chạy mỗi lượt."""
+    session_id = "sess-both-engines"
+    fever_stage_log.start(session_id, route=None, budget=0)
+    with fever_stage_log.tool(
+        session_id, turn=1, stage="0", cluster_id="Q0-01",
+        tool="rule_engine.evaluate", input={"seizure_active_now": "true"},
+    ) as rec:
+        rec.output = {"triage_level": "EMERGENCY"}
+    with fever_stage_log.tool(
+        session_id, turn=1, stage="0", cluster_id="Q0-01",
+        tool="red_flag_engine.evaluate", input={"seizure_active_now": "true"},
+    ) as rec:
+        rec.output = {"triage_level": "EMERGENCY"}
+
+    records = [
+        json.loads(line)
+        for line in (fever_stage_log.session_dir(session_id) / "rule-engine.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [r["tool"] for r in records] == ["rule_engine.evaluate", "red_flag_engine.evaluate"]
+
+
 def test_read_turn_returns_all_steps_in_order():
     session_id = "sess-turn"
     _simulate_full_turn(session_id)

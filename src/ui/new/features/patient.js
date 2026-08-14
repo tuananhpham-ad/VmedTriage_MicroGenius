@@ -47,6 +47,7 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
     setActiveCase(null);
     state.currentPatientCase = null;
     state.patientMessages = [];
+    state.summaryConfirmed = false;
   }
   renderPatientChat(root, { navigate, logout });
 }
@@ -54,12 +55,13 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
 export function renderPatientChat(root, { navigate, logout }) {
   const current = state.currentPatientCase;
   const messages = state.patientMessages.length ? state.patientMessages : initialMessages(current);
-  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section><section class="checklist-card"><h2>Thông tin cần làm rõ</h2><div id="checklist">${checklistMarkup(current)}</div></section><section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
+  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
   root.querySelector("[data-home]").addEventListener("click", () => navigate("patient-home"));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
   root.querySelectorAll("[data-symptom]").forEach((button) => button.addEventListener("click", () => { root.querySelector("#patient-message").value = button.dataset.symptom; root.querySelector("#patient-message").focus(); }));
   root.querySelector("#chat-form").addEventListener("submit", (event) => submitMessage(event, root, { navigate, logout }));
   root.querySelector("[data-check-result]")?.addEventListener("click", () => checkResult(root, { navigate, logout }));
+  root.querySelectorAll("[data-confirm]").forEach((button) => button.addEventListener("click", () => confirmSummary(root, { navigate, logout }, button.dataset.confirm === "yes")));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
   root.querySelector("#patient-message").focus();
   scrollChat(root);
@@ -72,10 +74,36 @@ function initialMessages(current) {
 
 function messageMarkup(message) { return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`; }
 
-function checklistMarkup(current) {
-  const missing = current?.validation?.missing_fields || current?.structured_data?.missing_fields || [];
-  if (!missing.length) return `<p class="muted-copy">Trợ lý sẽ ghi nhận thông tin cần thiết khi bạn trò chuyện.</p>`;
-  return missing.map((item) => `<div class="check-row"><span>○</span>${escapeHtml(item.replaceAll("_", " "))}</div>`).join("");
+// Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`,
+// `intakeChecklistMarkup`) ngày 2026-08-14, đúng đích đến ghi trong ghi chú 2026-08-13. Nó phơi ra
+// checklist nội bộ mà bệnh nhân không cần thấy - họ chỉ cần trả lời câu trợ lý đang hỏi - trong khi
+// điều dưỡng thì cần biết chính xác ca này còn thiếu gì trước khi duyệt.
+
+// Stage 6 CS: hết phiên hỏi-đáp, agent dựng phiếu tóm tắt và chờ bệnh nhân xác nhận ĐÚNG/CHƯA ĐÚNG
+// trước khi bàn giao điều dưỡng. `case_id` chính là `session_id` của phiên agent nên gọi thẳng
+// `/api/v1/fever/sessions/{id}/confirm` được, không cần endpoint mới.
+function summaryMarkup(current) {
+  if (!current?.summary_ready || state.summaryConfirmed) return "";
+  const rows = (current.summary_fields || []).filter((row) => !row.is_missing);
+  if (!rows.length) return "";
+  return `<section class="checklist-card summary-card"><h2>Phiếu tóm tắt</h2><p class="muted-copy">Bạn xem giúp phần thông tin đã ghi nhận có đúng không.</p>${rows
+    .slice(0, 10)
+    .map((row) => `<div class="check-row"><span>✓</span>${escapeHtml(row.label)}</div>`)
+    .join("")}<div class="action-row"><button class="primary-button" type="button" data-confirm="yes">Đúng rồi</button><button class="secondary-button" type="button" data-confirm="no">Chưa đúng</button></div></section>`;
+}
+
+async function confirmSummary(root, context, isCorrect) {
+  try {
+    await api(`/api/v1/fever/sessions/${state.caseId}/confirm`, { method: "POST", body: JSON.stringify({ is_correct: isCorrect }) });
+    state.summaryConfirmed = true;
+    state.patientMessages.push({
+      role: "system",
+      text: isCorrect ? "Bạn đã xác nhận phiếu tóm tắt. Thông tin đang chờ nhân viên y tế duyệt." : "Đã ghi nhận. Bạn hãy nhắn lại phần chưa đúng để trợ lý sửa.",
+    });
+    renderPatientChat(root, context);
+  } catch (problem) {
+    showToast(problem.message || "Không gửi được xác nhận.", true);
+  }
 }
 
 function outcomeMarkup(current) {
@@ -103,7 +131,10 @@ async function submitMessage(event, root, context) {
   try {
     const data = await api("/api/v1/chat", { method: "POST", body: JSON.stringify({ message, ...(state.caseId ? { case_id: state.caseId } : {}) }) });
     setActiveCase(data.case_id);
-    state.currentPatientCase = data;
+    // `/chat` chỉ trả câu trả lời + trạng thái. Lấy thêm case đầy đủ để cột bên phải hiện đúng tiến
+    // độ (`summary_fields`) - request này KHÔNG gọi LLM nên không làm chậm lượt chat đáng kể. Lỗi ở
+    // đây không được làm hỏng lượt chat, nên fallback về chính response của `/chat`.
+    state.currentPatientCase = await api(`/api/v1/cases/${data.case_id}`).catch(() => data);
     state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending");
     state.patientMessages.push({ role: "agent", text: data.response || "Thông tin đã được ghi nhận." });
   } catch (problem) {
