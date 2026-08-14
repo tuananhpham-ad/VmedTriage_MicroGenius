@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src import paths
 from src.main import app
+from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import provider_router
 
 FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "fever" / "part8_cases.json"
@@ -28,7 +29,18 @@ _FIELD_KEY_RE = re.compile(r"^- (\w+) \(", re.MULTILINE)
 
 
 class _ScriptedProvider:
-    """LLM giả lập tra bảng theo field key thấy trong prompt thật - không hard-code thứ tự cụm."""
+    """LLM giả lập tra bảng theo field key thấy trong prompt thật - không hard-code thứ tự cụm.
+
+    Field tri-state KHÔNG có trong `known` được trả `"false"`, không phải bỏ trống. Đây là mô hình
+    đúng của ca gốc Part 8: bản ghi case chỉ liệt kê những gì CÓ, nên với ca lành tính (H1/V1) mọi
+    red flag không được liệt kê nghĩa là người bệnh đã trả lời "không có" - đúng những gì một người
+    bệnh thật đáp lại câu hỏi sàng lọc. Bản cũ để trống hết, tức mô phỏng một người KHÔNG BAO GIỜ phủ
+    định điều gì: cụm nào cũng "chưa thu được gì" nên bị hỏi lại tới hạn mức, ca lành tính không bao
+    giờ kết thúc nổi (và H1 cũng không thể đạt SELF_CARE, vì checklist tự chăm sóc đòi red flag phải
+    ÂM TÍNH chứ không phải chưa biết).
+
+    Field enum/số không có trong `known` vẫn để trống - không bịa được giá trị cụ thể thay người bệnh.
+    """
 
     def __init__(self, known: dict[str, object]) -> None:
         self.known = known
@@ -55,7 +67,8 @@ class _ScriptedProvider:
     def _value_for(self, key: str) -> object:
         value = self.known.get(key)
         if value is None:
-            return None
+            spec = FEVER_PROTOCOL.fields_by_key.get(key)
+            return "false" if spec is not None and spec.tri_state else None
         if isinstance(value, bool):
             return "true" if value else "false"
         return value
@@ -90,6 +103,12 @@ async def _drive_conversation(client: AsyncClient, case_id: str, *, max_turns: i
             assert response.status_code == 200, response.text
             body = response.json()
             turns += 1
+            # Phiên còn chạy thì PHẢI có câu hỏi. Lỗi thật đo được khi chạy LLM thật: cụm cuối của
+            # stage vừa được trả lời -> `run_turn` trả câu hỏi rỗng, session âm thầm nhảy sang cụm
+            # đầu stage sau. Người bệnh nhận tin nhắn trống nhưng lượt kế tiếp vẫn bị trích theo
+            # schema của cụm chưa từng được hỏi (5/40 lượt của ca lành tính rơi vào đúng cảnh này).
+            if body["state"] == "collecting":
+                assert body["next_question"], f"{case_id}: lượt {turns} trả câu hỏi RỖNG - {body}"
 
         assert turns < max_turns, f"{case_id}: hội thoại không kết thúc sau {max_turns} lượt - {body}"
         body["_turns"] = turns

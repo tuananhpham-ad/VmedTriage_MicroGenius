@@ -1,4 +1,4 @@
-"""`fever_case_bridge` - dịch `Session` của agent fever sang `TriageCase` của luồng case/HITL.
+"""`symptom_case_bridge` - dịch `Session` của agent sang `TriageCase` của luồng case/HITL.
 
 Hàm dịch là THUẦN nên test không cần LLM, không cần client HTTP: dựng `Session` bằng tay, kiểm đúng
 những field mà màn hình điều dưỡng/bệnh nhân thực sự đọc. Trọng tâm là hai thứ dễ hỏng nhất khi
@@ -11,12 +11,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.models.schemas import CaseStatus, TriagePriority
-from src.services.sessions import fever_case_bridge
+from src.services.checklists.fever_checklist import FIELDS_BY_KEY
+from src.services.sessions import symptom_case_bridge
 from src.services.symptom_protocol.session import Session, SessionState
 
 
 def _session(**overrides) -> Session:
-    session = Session()
+    # `protocol_name` BẮT BUỘC: bridge resolve protocol từ phiên, bỏ trống là rơi về protocol generic
+    # (đúng hành vi mong muốn cho ca chưa nhận diện được, nhưng không phải thứ test này kiểm).
+    session = Session(protocol_name="fever")
     session.conversation = [
         {"role": "assistant", "content": "Người cần tư vấn bao nhiêu tuổi ạ?"},
         {"role": "user", "content": "Bé 3 tuổi, sốt 39 độ."},
@@ -32,7 +35,7 @@ def _session(**overrides) -> Session:
 
 
 def test_collecting_session_has_no_proposal_and_no_queue_item():
-    case = fever_case_bridge.to_triage_case(_session(), patient_id=7)
+    case = symptom_case_bridge.to_triage_case(_session(), patient_id=7)
 
     assert case.status is CaseStatus.COLLECTING_INFORMATION
     assert case.triage_proposal is None  # chưa chốt thì KHÔNG được đoán trước mức ưu tiên
@@ -41,7 +44,7 @@ def test_collecting_session_has_no_proposal_and_no_queue_item():
 
 
 def test_summary_fields_exist_while_collecting_so_the_patient_sees_labels_not_raw_keys():
-    case = fever_case_bridge.to_triage_case(_session(), patient_id=7)
+    case = symptom_case_bridge.to_triage_case(_session(), patient_id=7)
     by_label = {row.label: row for row in case.summary_fields}
 
     assert by_label["Nhiệt độ đo được (°C)"].value == "39.0"
@@ -52,7 +55,7 @@ def test_summary_fields_exist_while_collecting_so_the_patient_sees_labels_not_ra
 
 
 def test_collecting_session_shows_next_question_to_patient():
-    case = fever_case_bridge.to_triage_case(_session(), patient_id=7)
+    case = symptom_case_bridge.to_triage_case(_session(), patient_id=7)
     # Trong lúc hỏi, "phản hồi cho bệnh nhân" chính là câu hỏi kế tiếp của agent.
     assert case.patient_visible_response == "Bé có bị co giật không ạ?"
     assert case.next_message == "Bé có bị co giật không ạ?"
@@ -60,16 +63,40 @@ def test_collecting_session_shows_next_question_to_patient():
 
 def test_case_id_is_the_agent_session_id():
     session = _session()
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
     # Một phiên hội thoại = một case, không có bảng ánh xạ phụ nào để lệch.
     assert case.case_id == session.session_id
 
 
 def test_unknown_values_are_not_reported_as_collected():
-    case = fever_case_bridge.to_triage_case(_session(), patient_id=7)
-    assert "cyanosis" not in case.structured_data.fields
+    case = symptom_case_bridge.to_triage_case(_session(), patient_id=7)
+    # Field chưa trả lời PHẢI mang đúng "unknown" - không được trông như đã thu thập, và cũng không
+    # được biến mất (xem test dưới: bên triage cần phân biệt "chưa hỏi" với "xác nhận không có").
+    assert case.structured_data.fields["cyanosis"] == "unknown"
     assert case.structured_data.fields["temp_c"] == "39.0"
     assert case.structured_data.symptom_group == "fever"
+    # `missing_fields` KHÔNG đổi hành vi: vẫn là field M0/M1 chưa điền. Đây mới là thứ UI đọc để
+    # hiển thị "Thông tin còn thiếu" - không phải sự vắng mặt của khoá trong `fields`.
+    assert "cyanosis" in case.structured_data.missing_fields  # M0, chưa điền
+    assert "temp_c" not in case.structured_data.missing_fields  # đã điền
+
+
+def test_structured_fields_cover_every_protocol_field_for_triage_model():
+    """JSON gửi bên triage phải có chiều CỐ ĐỊNH: mọi field của protocol đều có mặt.
+
+    Bên triage dùng khối này để dự đoán xác suất. Nếu chỉ gửi field đã điền thì số khoá đổi theo từng
+    phiên, và "người bệnh xác nhận KHÔNG có triệu chứng X" (`"false"`) biến mất y hệt "chưa hỏi tới
+    X" (`"unknown"`) - hai dữ kiện có giá trị hoàn toàn khác nhau.
+    """
+    session = _session()
+    session.answers = {**session.answers, "seizure_occurred": "false"}
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
+    fields = case.structured_data.fields
+
+    assert set(fields) == set(FIELDS_BY_KEY)  # đủ chiều, không thừa không thiếu
+    assert fields["seizure_occurred"] == "false"  # phủ định rõ ràng được giữ, không bị lọc mất
+    assert fields["cyanosis"] == "unknown"  # chưa hỏi tới
+    assert all(value not in (None, "") for value in fields.values())  # chỉ 1 cách biểu diễn "trống"
 
 
 # --- chốt đỏ: vào hàng đợi ưu tiên cao, hiện thông điệp cấp cứu ----------------------------------
@@ -84,7 +111,7 @@ def test_emergency_session_becomes_escalated_case_with_high_priority_queue_item(
         stop_reason="RED_FLAG",
         last_question="",
     )
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
 
     assert case.status is CaseStatus.ESCALATED
     assert case.queue_item is not None
@@ -96,7 +123,7 @@ def test_emergency_session_becomes_escalated_case_with_high_priority_queue_item(
 
 def test_reason_codes_get_vietnamese_labels_for_the_nurse():
     session = _session(state=SessionState.EMERGENCY, triage_level="EMERGENCY", reason_codes=["RF-02", "RF-13"])
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
 
     labels = {finding.code: finding.label for finding in case.red_flags}
     assert labels["RF-02"] == "Đang co giật / vừa co giật"
@@ -105,7 +132,7 @@ def test_reason_codes_get_vietnamese_labels_for_the_nurse():
 
 def test_unknown_reason_code_falls_back_to_the_code_itself():
     session = _session(state=SessionState.EMERGENCY, triage_level="EMERGENCY", reason_codes=["RF-99"])
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
     assert case.red_flags[0].label == "RF-99"
 
 
@@ -119,7 +146,7 @@ def test_finished_session_waits_for_nurse_and_hides_guidance_from_patient():
         stop_reason="SUFFICIENT_EVIDENCE",
         last_question="",
     )
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
 
     assert case.status is CaseStatus.NEEDS_NURSE_REVIEW
     assert case.patient_visible_response is None  # hướng dẫn chỉ hiện SAU khi điều dưỡng duyệt
@@ -131,12 +158,12 @@ def test_finished_session_waits_for_nurse_and_hides_guidance_from_patient():
 def test_confirmed_session_is_still_pending_nurse_review():
     # Bệnh nhân xác nhận phiếu KHÔNG phải một bước duyệt - case vẫn phải qua điều dưỡng.
     session = _session(state=SessionState.CONFIRMED, triage_level="SELF_CARE", last_question="")
-    assert fever_case_bridge.to_triage_case(session, patient_id=7).status is CaseStatus.NEEDS_NURSE_REVIEW
+    assert symptom_case_bridge.to_triage_case(session, patient_id=7).status is CaseStatus.NEEDS_NURSE_REVIEW
 
 
 def test_early_visit_maps_to_urgent_priority():
     session = _session(state=SessionState.AWAITING_CONFIRMATION, triage_level="EARLY_VISIT", last_question="")
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
     assert case.triage_proposal.priority is TriagePriority.URGENT
 
 
@@ -145,13 +172,13 @@ def test_early_visit_maps_to_urgent_priority():
 
 def test_nurse_written_fields_survive_a_rebuild():
     reviewed_at = datetime(2026, 8, 13, tzinfo=timezone.utc)
-    first = fever_case_bridge.to_triage_case(_session(), patient_id=7)
+    first = symptom_case_bridge.to_triage_case(_session(), patient_id=7)
     first.nurse_feedback = "Đã gọi lại cho người nhà."
     first.reviewed_by_id = 42
     first.reviewed_by_name = "ĐD Lan"
     first.reviewed_at = reviewed_at
 
-    rebuilt = fever_case_bridge.to_triage_case(_session(), patient_id=7, previous=first)
+    rebuilt = symptom_case_bridge.to_triage_case(_session(), patient_id=7, previous=first)
 
     assert rebuilt.nurse_feedback == "Đã gọi lại cho người nhà."
     assert rebuilt.reviewed_by_id == 42
@@ -164,7 +191,7 @@ def test_empty_conversation_entries_are_dropped():
     # `ConversationMessage.content` có min_length=1 - một câu hỏi rỗng sẽ làm hỏng cả case.
     session = _session()
     session.conversation.append({"role": "assistant", "content": ""})
-    case = fever_case_bridge.to_triage_case(session, patient_id=7)
+    case = symptom_case_bridge.to_triage_case(session, patient_id=7)
 
     assert len(case.conversation) == 2
     assert [message.role.value for message in case.conversation] == ["system", "patient"]

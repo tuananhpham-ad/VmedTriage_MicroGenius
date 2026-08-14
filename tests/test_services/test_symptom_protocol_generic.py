@@ -103,6 +103,31 @@ def test_next_stage_follows_toy_stage_order():
     assert stage_machine.next_stage(TOY_PROTOCOL, "1") is None
 
 
+def test_advance_crosses_stage_boundary_when_current_stage_is_exhausted():
+    """Cụm cuối của stage vừa được trả lời -> phải đi thẳng sang cụm đầu stage sau.
+
+    `next_cluster` trả `None` ở đây, và đó chính là lỗi đo được khi chạy LLM thật: `run_turn` sinh
+    câu hỏi RỖNG rồi session âm thầm nhảy stage, người bệnh không được hỏi gì nhưng lượt sau vẫn bị
+    trích theo schema của cụm chưa từng hỏi."""
+    answers = {"age_value": 30, "age_unit": "year"}
+    assert stage_machine.next_cluster(TOY_PROTOCOL, "0", answers) is None
+
+    step = stage_machine.advance(TOY_PROTOCOL, "0", answers, asked_ids=frozenset({"T0-01"}))
+    assert step.cluster is not None
+    assert step.cluster.id == "T1-01"
+    assert step.stage == "1"
+    assert step.stop_reason is None
+
+
+def test_advance_reports_stop_reason_instead_of_cluster_at_end_of_protocol():
+    answers = {"age_value": 30, "age_unit": "year", "chest_pain_severe": "false", "resolved_with_rest": "true"}
+    step = stage_machine.advance(
+        TOY_PROTOCOL, "1", answers, asked_ids=frozenset({"T0-01", "T1-01", "T1-02"}), asked_count=3,
+    )
+    assert step.cluster is None
+    assert step.stop_reason == "SUFFICIENT_EVIDENCE"
+
+
 def test_should_stop_red_flag_on_toy_emergency_signal():
     answers = {"chest_pain_severe": "true"}
     assert stage_machine.should_stop(TOY_PROTOCOL, "1", answers, asked_count=1) == "RED_FLAG"
