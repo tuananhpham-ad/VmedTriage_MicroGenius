@@ -57,17 +57,11 @@ input rác/tiếng Anh, báo lỗi sạch sẽ khi gọi sai).
 
 ## ▶ Làm tiếp từ đâu
 
-> **CẬP NHẬT 2026-08-14:** bước 1 dưới đây (test tay với LLM thật) **đã chạy xong** — model chịu trả
-> `negation_evidence` 4/4 lần, không phải chỉnh prompt. Lỗ hổng "than phiền ngoài sốt" cũng **đã vá**
-> bằng `GENERIC_PROTOCOL`. Chỉ còn **Phase 1-4 của `ScreeningGroup`** là chưa làm, và giờ đã có số đo
-> để quyết: ca lành tính hiện tốn **36 lượt** với LLM thật (`scripts/manual_llm_check.py m2m3`).
+> **CẬP NHẬT 2026-08-14 (chiều): TOÀN BỘ PHASE 0-4 ĐÃ XONG.** Ca lành tính từ **36 → 27 lượt** với
+> LLM thật; Stage 3A **11 → 2 lượt**, Stage 3B **5 → 2 lượt**. Xem ca làm việc CUỐI file.
 
-**Phase 0 ĐÃ CODE XONG** (xem mục "Phase 0 — đã làm" bên dưới). Bước kế tiếp:
-
-1. ~~**Test tay với LLM thật** lại 3 kịch bản C1 / M2 / M3~~ — ✅ XONG 2026-08-13/14, xem ca làm việc
-   cuối file. Cả 3 kịch bản đều không tái hiện lỗi.
-2. **Phase 1** (`ScreeningGroup` + câu sàng lọc gộp) trong file plan — **CHƯA LÀM**, đây là việc lớn
-   duy nhất còn lại của cả file này.
+1. ~~**Test tay với LLM thật** lại 3 kịch bản C1 / M2 / M3~~ — ✅ XONG 2026-08-13/14.
+2. ~~**Phase 1-4** (`ScreeningGroup` + câu sàng lọc gộp)~~ — ✅ XONG 2026-08-14.
 
 ---
 
@@ -107,7 +101,8 @@ input rác/tiếng Anh, báo lỗi sạch sẽ khi gọi sai).
 - `tests/test_agents/test_fever_emergency_shortcircuit.py`: 1 test turn-scoping.
 - 2 test batch-negation cũ đã cập nhật theo hợp đồng mới (giờ phải có `negation_evidence`).
 
-File `_guidance/need_to_check_agent.md` chưa được commit (`git status`: untracked).
+~~File `_guidance/need_to_check_agent.md` chưa được commit (`git status`: untracked).~~ — đã được
+commit từ ca sau; hiện nó là file **tracked, có sửa đổi chưa commit**.
 
 ## Vấn đề muốn giải
 
@@ -165,11 +160,16 @@ cần state machine mới. Trạng thái duy nhất phải nhớ thêm là số 
 
 ## Ngoài phạm vi lần này
 
-- **C2** (hiểu nhầm "không sốt xuất huyết" → `fever_status=none`, không tự sửa) và **C3** (né trả lời
-  tuổi/giới → bỏ qua luôn) nằm ở Stage 0/1, không liên quan Stage 3A/3B → cần một ca làm việc riêng.
-- **M1** (tuổi + giới trong cùng 1 câu chỉ nhặt được tuổi) cũng ở Stage 0 → chưa xử lý.
+> **ĐÃ LỖI THỜI 2026-08-14** — giữ lại vì nó ghi đúng phạm vi CỦA CA LÀM VIỆC ĐÓ. C2/C3/M1 sau đó đã
+> được vá ở ca làm việc 2026-08-13 đêm (Phase 1.1-1.4) và kiểm chứng lại bằng LLM thật ngày
+> 2026-08-14: **cả ba đều không tái hiện**. Đừng đọc mục này như danh sách việc còn tồn.
+
+- ~~**C2** (hiểu nhầm "không sốt xuất huyết" → `fever_status=none`, không tự sửa)~~ — ✅ vá bằng
+  `retraction.find_contradictions` + `_contradiction_no_fever_but_hot`.
+- ~~**C3** (né trả lời tuổi/giới → bỏ qua luôn)~~ — ✅ vá bằng `session._record_cluster_outcome`.
+- ~~**M1** (tuổi + giới trong cùng 1 câu chỉ nhặt được tuổi)~~ — ✅ không tái hiện.
 - Nhóm sàng lọc cho các bệnh khác (chest_pain, breathing…): hạ tầng `ScreeningGroup` là generic nên
-  dùng lại được, nhưng nội dung nhóm từng bệnh làm sau.
+  dùng lại được, nhưng nội dung nhóm từng bệnh làm sau — **vẫn còn tồn**, xem mục cuối file.
 
 ---
 
@@ -216,6 +216,19 @@ Cầu nối: `src/services/sessions/fever_case_bridge.py` (mới) — dịch `Se
 
 **Lưu ý phạm vi:** `src/ui/new/` là của Dũng Mai — lần này người dùng cho phép sửa tường minh. Nếu
 lần sau đụng lại thì phải hỏi trước (`_guidance/role_specific.md`).
+
+### Cập nhật 2026-08-13 (yêu cầu của người dùng): tắt panel "Thông tin cần làm rõ" bên bệnh nhân
+
+Panel `<section class="checklist-card"><h2>Thông tin cần làm rõ</h2>` đã **gỡ khỏi sidebar bệnh nhân**
+(`patient.js`). Lý do: nó phơi checklist nội bộ ra cho bệnh nhân, trong khi họ chỉ cần trả lời đúng câu
+trợ lý đang hỏi.
+
+- Hàm `checklistMarkup()` **giữ nguyên, không xoá** — đích đến dự kiến là màn hình **điều dưỡng**, hiển
+  thị **theo từng ca**. Chỗ nối có sẵn: `nurse.js:71`
+  (`summary.missing_information || validation.missing_fields || structured.missing_fields`). Khi làm thì
+  CHUYỂN hàm sang `nurse.js`, đừng viết lại.
+- `summaryMarkup()` (phiếu tóm tắt + nút xác nhận) **vẫn giữ** bên bệnh nhân — đó là bước Stage 6 CS
+  bắt buộc, khác với panel tiến độ. Vì vậy `fetchCase` sau mỗi lượt vẫn cần thiết.
 
 ## ✅ LỖ HỔNG ĐÃ TẠO RA — ĐÃ VÁ 2026-08-14
 
@@ -541,7 +554,190 @@ bao giờ đạt `SELF_CARE` nữa.
    nhiệt độ. Không nên để một mình engineer chốt.
 2. **Theo dõi tải hàng đợi điều dưỡng** sau khi generic protocol lên production (mọi ca ngoài sốt =
    "Khám sớm"). Chỉnh `BUDGET` của `generic_protocol.py` nếu quá tải.
-3. Ca lành tính vẫn dài (36 lượt). Ý tưởng `ScreeningGroup` (sàng lọc theo nhóm cơ quan, ca làm việc
-   2026-08-13 chiều) là hướng rút ngắn — hoãn từ trước, giờ đo lại được rồi thì quyết được.
+3. ~~Ca lành tính vẫn dài (36 lượt)~~ — ✅ ĐÃ LÀM 2026-08-14, còn 27 lượt. Xem ca làm việc cuối file.
 4. Protocol thứ ba (chest_pain riêng) nếu muốn hỏi sâu hơn mức generic: hạ tầng đã sẵn, chỉ cần thêm
    DATA + tài liệu lâm sàng, KHÔNG sửa engine.
+
+---
+
+# CA LÀM VIỆC 2026-08-14 — sàng lọc theo nhóm cơ quan (`ScreeningGroup`), Phase 1→4
+
+> **Trạng thái: XONG. 326/326 test pass** (+33 test mới). Ruff 4 lỗi pre-existing
+> (`eval/scripts/run_eval.py`, `scripts/log_hook.py` ×2, `src/pipeline/weaviate_cloud.py`), không
+> file nào thuộc agent. 8/8 kịch bản `scripts/manual_llm_check.py` chạy với LLM thật: **0 phát hiện
+> mức LỖI**.
+> Plan gốc: `C:\Users\TUAN ANH\.claude\plans\docs-medical-knowledge-fever-knowledge-delightful-cosmos.md`
+
+## Đo được (LLM thật, `gemini-3.1-flash-lite`, kịch bản `m2m3`)
+
+| | Trước | Sau |
+|---|---|---|
+| Ca lành tính, tổng số lượt | 36 | **27** |
+| Stage 3A (11 cụm) | 11 lượt | **2 lượt** |
+| Stage 3B (5 cụm) | 5 lượt | **2 lượt** |
+| Kết luận | `SELF_CARE` | `SELF_CARE` (không đổi) |
+
+3A ra 2 lượt chứ không phải 3 như plan dự tính vì người bệnh đã tự khai tri giác từ sớm nên Q3-01
+không phải hỏi lại — Q3-03 (co giật) + 1 câu sàng lọc đóng 9 cụm.
+
+## Plan viết TRƯỚC Phase 1.1-3, nên chỗ nối đã khác
+
+Plan móc vào `session._walk_to_next_cluster` và `_run_turn_combined`. **Cả hai đã bị xoá** ở ca làm
+việc 2026-08-13 đêm. Chỗ nối thật bây giờ nằm trong `run_turn`, ngay sau `stage_machine.advance()`.
+Đừng đọc plan như hướng dẫn thi công — nó vẫn đúng về Ý ĐỊNH và về nội dung nhóm, sai về file/hàm.
+
+## Ý tưởng cốt lõi: lượt sàng lọc là một `QuestionCluster` TỔNG HỢP
+
+`screening.probe_cluster()` dựng ra một cụm giả (`SCREEN-3A`) có `fields` = hợp của mọi cụm trong các
+nhóm được quét. Nhờ vậy `session.current_cluster`, `_record_cluster_outcome`, log theo `cluster_id`,
+vòng đời phiên… **không cần một nhánh `if` nào**. Cụm này KHÔNG nằm trong `protocol.clusters` nên
+`next_cluster` không bao giờ tự chọn phải nó — nó chỉ sống đúng một lượt.
+
+## HAI lớp đóng, phải có cả hai
+
+Plan chỉ nói lớp 1 và điều đó KHÔNG đủ:
+
+1. **Ghi giá trị âm tính vào `answers`** — cần cho rule engine và cho `self_care_checklist_satisfied`
+   (nó đòi `urine_output == "normal"`, không phải "chưa biết").
+2. **Đóng theo MÃ CỤM** (`screened_cluster_ids`) — cần vì Q3-11/Q3-13 có field mô tả chỉ có nghĩa khi
+   DƯƠNG tính (`rash_type`, `abdominal_pain_location`) mà ta cố ý không bịa giá trị âm tính. Chỉ ghi
+   giá trị thôi thì `cluster_needs_answer` vẫn trả `True` và người bệnh **bị hỏi lại đúng thứ vừa
+   phủ định**. Đây cũng chính là cách phủ định gộp trong phạm vi MỘT cụm đang chạy (qua `asked_ids`).
+
+## 4 ràng buộc an toàn — mỗi cái vá một đường hỏng cụ thể
+
+| Ràng buộc | Chặn cái gì |
+|---|---|
+| **Câu hỏi ghép TĨNH** (`probe_question`, không qua LLM) | Cả cơ chế dựa trên tiền đề "nhóm chỉ được đóng khi người bệnh ĐÃ nghe đọc danh sách dấu hiệu của nó". LLM diễn đạt lại 5 nhóm rất dễ lược vài ý cho gọn ⇒ một câu "không có gì" sẽ đóng cả dấu hiệu chưa bao giờ được đọc lên. Đúng lỗi C1 ở quy mô lớn nhất. Có test canh (`..._reads_out_every_signal_it_may_close`). |
+| **Field vẫn siết `evidence="unasked"`** trong lượt sàng lọc | Câu sàng lọc chỉ đọc Ý ĐẠI DIỆN của nhóm, không đọc từng field. Nới sang `"asked"` cho model ghi thẳng `"false"` cho ~25 field không cần trích dẫn — tức **đi vòng qua đúng cổng verdict+bằng chứng** mà cơ chế này dựng ra. Đường đóng hàng loạt hợp lệ DUY NHẤT là verdict theo nhóm. |
+| **`positive` không ghi `"true"` cho field nào** | "Nhóm này có vấn đề" chưa nói dấu hiệu NÀO. Ghi bừa `"true"` sẽ chốt cấp cứu trên dữ liệu bịa. Nhóm dương tính để nguyên `unknown` ⇒ hỏi sâu từng cụm đúng script chuẩn. |
+| **Q3-01 / Q3-03 / Q3-14 đứng ngoài mọi nhóm** | CS §3.3A cấm suy diễn tri giác + co giật từ phủ định gộp; Q3-14 là thang 0-10, không phủ định gộp được một con số. Không cần luật đặc biệt: chúng đứng trước trong thứ tự tài liệu nên `next_cluster` trả ra trước, và điều kiện "candidate phải thuộc một nhóm" tự loại lượt sàng lọc. |
+
+Về `allow_bare=True` cho verdict nhóm (một chữ "Không" trần ĐƯỢC nhận, khác hẳn field ngoài cụm):
+đây **không phải nới lỏng**, mà là turn-scoping có thật. Verdict chỉ được đọc ở lượt mà tin nhắn
+trước của trợ lý ĐÚNG LÀ câu sàng lọc tĩnh liệt kê chính các nhóm đó (`Session.pending_probe` khác
+rỗng). Ngoài lượt đó, không có đường nào để một verdict lọt vào.
+
+## 2 điều chỉnh so với plan, cả hai do ĐO chứ không phải suy đoán
+
+1. **Vòng sàng lọc thứ hai phải hỏi ÍT HƠN vòng đầu** (`next_probe` đòi tập nhóm là con THỰC SỰ).
+   Plan chỉ có bộ đếm `max_screening_rounds`. Chạy thử lộ ra: nếu vòng đầu không thu được gì (người
+   bệnh trả lời "em không hiểu ý câu hỏi"), tập nhóm y nguyên và vòng hai **đọc lại nguyên văn cùng
+   một danh sách dài** — cách nhanh nhất để người bệnh bỏ cuộc. Vì vậy `Session.screening_rounds`
+   (đếm số) đã thành `Session.screening_history` (lưu các TẬP nhóm đã quét).
+2. **Lượt sàng lọc không bao giờ hỏi lại** (`cluster_resolved=True` vô điều kiện). Đường lùi đúng là
+   quay về hỏi từng cụm theo script chuẩn, không phải đọc lại danh sách.
+
+## Ngân sách (Phase 4)
+
+Một lượt sàng lọc đóng 9 cụm nhưng tính **1** đơn vị ngân sách (CS §6.5 tính theo cụm CÂU HỎI). Nếu
+không trừ ra, ca lành tính vừa được rút ngắn lại bị coi như đã tiêu gần hết ngân sách và bị cắt ở
+Stage 5. `run_turn` truyền `asked_count` tường minh cho `advance`; `Session.screened_cluster_ids` là
+tập trừ ra.
+
+## Files
+
+| File | Thay đổi |
+|---|---|
+| `symptom_protocol/screening.py` | **Mới** — THUẦN (không LLM, không prompt, không log). Phép kiểm bằng chứng được TRUYỀN VÀO dạng hàm `evidence_ok` để không import ngược `intake_agent` và để dùng CHUNG một định nghĩa "bằng chứng hợp lệ" |
+| `symptom_protocol/common_safety/screening_groups.py` | **Mới** — 5 nhóm 3A + 3 nhóm 3B, hàm theo `stage` (giống `clusters.py`). Nội dung nhóm là kiến thức "người bệnh đang nguy kịch", KHÔNG phải kiến thức về sốt |
+| `symptom_protocol/models.py` | `ScreeningGroup` |
+| `symptom_protocol/protocol.py` | `screening_groups`, `max_screening_rounds` (optional ⇒ generic không đổi hành vi) |
+| `symptom_protocol/stage_machine.py` | `cluster_needs_answer`/`cluster_is_skipped` thành public (alias `_`-cũ giữ nguyên) |
+| `symptom_protocol/intake_agent.py` | `_SCREENING_SYSTEM`, `extract_probe_turn()`, nhánh `probe=` trong `run_turn`, `TurnResult.{screened_cluster_ids,next_probe}` |
+| `symptom_protocol/session.py` | `pending_probe`, `screening_history`, `screened_cluster_ids` |
+| `engines/fever_protocol.py` | `SCREENING_GROUPS` (mượn `common_safety`) |
+| `infra/fever_stage_log.py` | 2 event mới: `screen`, `screen_reject` |
+| `scripts/manual_llm_check.py` | Người bệnh mô phỏng biết trả lời câu sàng lọc (quy tắc PHẢI đứng đầu bảng — xem dưới) |
+| `tests/test_services/test_screening.py` | **Mới** — 28 test |
+| `tests/test_api/test_fever_flow.py` | `_ScriptedProvider` trả verdict nhóm; 5 test tích hợp mới |
+
+## Cái bẫy mất nhiều thời gian nhất
+
+`manual_llm_check.BENIGN_RULES` khớp từ khoá theo thứ tự. Câu sàng lọc liệt kê dấu hiệu của NHIỀU
+nhóm nên nó trúng từ khoá của rất nhiều quy tắc — quy tắc trúng trước trả lời cho ĐÚNG MỘT nhóm rồi
+bỏ mặc phần còn lại. Lần chạy đầu Stage 3B tốn **4 lượt thay vì 2** chỉ vì câu sàng lọc trúng quy tắc
+"hoạt động/ngày thường". Quy tắc cho `PROBE_INTRO` **phải đứng đầu bảng**.
+
+Đáng nói là bản thân hành vi của agent lúc đó **đúng**: model chỉ đặt `G3B-FUNC = negative` từ một câu
+trả lời chỉ nói về nhóm đó, ba nhóm kia giữ `unknown`. Đó chính là guard chống C1 ở tầng nhóm đang
+chạy — lỗi nằm ở người bệnh mô phỏng, không phải ở agent.
+
+## Ngoài phạm vi (cố ý)
+
+`GENERIC_PROTOCOL` **không khai** `screening_groups` — hạ tầng generic dùng lại được ngay
+(`common_safety.emergency_scan_groups("2")`), nhưng bật cho generic là đổi hành vi của một protocol
+đang là lưới an toàn cho MỌI than phiền ngoài sốt, nên cần đo riêng. Có test ghim lời hứa "protocol
+không khai nhóm chạy y như cũ".
+
+---
+
+# CA LÀM VIỆC 2026-08-14 — chuyển checklist sang màn hình điều dưỡng
+
+`checklistMarkup()` đã CHUYỂN từ `patient.js` sang `nurse.js` thành `intakeChecklistMarkup(item,
+fallbackMissing)` — đúng đích đến ghi trong ghi chú 2026-08-13 (mục `:220`), và chuyển chứ không viết
+lại như đã dặn.
+
+- Chỗ nối: khối "Thông tin còn thiếu" cũ trong `renderNurseCase` (chỉ liệt kê tag key thô) nay được
+  thay bằng checklist đầy đủ có tiến độ `(đã ghi nhận/tổng)` và ✓/○ theo NHÃN tiếng Việt.
+- Nguồn dữ liệu: `GET /cases/{id}` trả thẳng `TriageCase`, có sẵn `summary_fields` (khác endpoint
+  bệnh nhân — chỗ đó chỉ trả khi `summary_ready`).
+- **Nhánh dự phòng `missing_fields` (key thô) GIỮ LẠI ở bản nurse**, khác với lý do gỡ khỏi bản bệnh
+  nhân: điều dưỡng đọc `urine_output` vẫn hiểu.
+- Thứ tự hiển thị ĐỔI: bên bệnh nhân là "đã có trước, còn thiếu sau"; bên điều dưỡng **còn thiếu lên
+  trước** — đó là thứ họ cần biết trước khi bấm duyệt.
+- Vẫn KHÔNG hiển thị giá trị thô ở khối này: bảng "Thông tin lâm sàng đã thu thập" ngay trên đã là
+  chỗ hiển thị giá trị, khối này chỉ trả lời một câu "đã hỏi đủ chưa".
+
+`src/ui/new/` là vùng của Dũng Mai — lần này người dùng cho phép tường minh ("làm hết những việc còn
+thiếu", trong đó có mục này). Lần sau vẫn phải hỏi trước (`_guidance/role_specific.md`).
+
+---
+
+# ▶ TOÀN BỘ VIỆC CÒN TỒN (rà lại 2026-08-14, gộp từ mọi ca làm việc ở trên)
+
+## A. Việc code còn hở
+
+1. **`§2.5` của `agent_conversation_policy.md` — CHƯA TRIỂN KHAI.** Thiết kế nói: khi
+   `answer_quality == "asks_question"`, hệ thống được trả lời về **lý do cần thu thập thông tin** /
+   **cách trả lời câu hỏi**, còn mọi câu hỏi lâm sàng khác (chẩn đoán, thuốc, tiên lượng) phải trả
+   một **thông điệp TĨNH**. Thực tế: `asks_question` được model gán và ghi vào log, nhưng **không
+   dòng code nào đọc nó** — grep `asks_question` trong `src/` chỉ ra 3 chỗ, cả 3 đều là khai báo
+   hằng/prompt.
+   *Rủi ro hiện tại thấp, không phải lỗ hổng an toàn:* `_QUESTION_ONLY_SYSTEM` đã cấm LLM chẩn đoán,
+   nên hành vi thật là "lờ câu hỏi của người bệnh, hỏi tiếp câu kế tiếp". Đó là vấn đề TRẢI NGHIỆM
+   (người bệnh hỏi mà không được đáp), không phải model tự do phán bệnh.
+
+## B. Việc hoãn CÓ Ý THỨC (hạ tầng đã sẵn, chỉ thiếu DATA + duyệt lâm sàng)
+
+2. **`screening_groups` cho `GENERIC_PROTOCOL`** — dùng lại được ngay
+   (`common_safety.emergency_scan_groups("2")`), nhưng nó đổi hành vi của protocol đang làm lưới an
+   toàn cho MỌI than phiền ngoài sốt ⇒ phải đo riêng.
+3. **Safety overlay theo nhóm than phiền** (§7 policy): đau ngực/khó thở, thần kinh cấp, đau
+   bụng/xuất huyết tiêu hoá, sản khoa, phản vệ, ngộ độc, chấn thương, sức khoẻ tâm thần. Nội dung lâm
+   sàng từng overlay phải do người có thẩm quyền duyệt.
+4. **Protocol thứ ba (`chest_pain` riêng)** nếu muốn hỏi sâu hơn mức generic — chỉ thêm DATA, KHÔNG
+   sửa engine.
+5. **Fact ledger append-only + provenance đầy đủ** — hiện chỉ có snapshot + log event. Nâng lên
+   ledger khi có yêu cầu audit thật.
+
+## C. KHÔNG THỂ đóng bằng code — cần người
+
+6. **Review lâm sàng `_as_float()`** (treo từ 2026-08-13). Code đã sửa và test xanh, nhưng nó ĐỔI
+   KẾT LUẬN TRIAGE: sốt 40°C kèm rối loạn tri giác từ "khám sớm" thành EMERGENCY. Cần người có
+   chuyên môn y xác nhận — engineer không nên chốt một mình.
+7. **Theo dõi tải hàng đợi điều dưỡng** sau khi generic protocol lên production (mọi than phiền ngoài
+   sốt vào hàng đợi ở mức "Khám sớm"). Chỉ đo được trên dữ liệu thật; chỉnh `BUDGET` của
+   `generic_protocol.py` nếu quá tải.
+
+## D. Điều kiện NGOÀI KỸ THUẬT, bắt buộc có trước production (§7 policy)
+
+8. Người có thẩm quyền **duyệt rule/red flag và các ngưỡng lâm sàng** (nhiệt độ, tuổi, thai kỳ, suy
+   giảm miễn dịch) — bao trùm cả mục 6.
+9. **Policy retention / access / redaction** cho log hội thoại y tế. Hiện `logs/` chỉ nằm trong
+   `.gitignore` và có cờ `FEVER_LOG_REDACT=1`; đó là cơ chế, chưa phải chính sách.
+10. **UI nói rõ người dùng đang tương tác với AI** và điểm chuyển sang người thật — **một phần đã có,
+    cần rà lại**: màn hình `disclaimer` (`patient.js:40`) và Điều khoản (`auth.js:59`) đã nói "hỗ trợ
+    ghi nhận triệu chứng ban đầu, không thay thế chẩn đoán"; điểm bàn giao cũng hiện rõ ("Thông tin
+    đang chờ nhân viên y tế duyệt"). Cái CHƯA có là câu nói thẳng **"bạn đang trò chuyện với trợ lý
+    AI"** ngay trong ô chat — hiện chỉ có nhãn "Trợ lý". Ai duyệt pháp lý cần quyết mức này đủ chưa.

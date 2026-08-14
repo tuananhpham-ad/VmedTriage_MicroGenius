@@ -24,8 +24,8 @@ from src.services.agents.intake_agent import _parse_json_object
 from src.services.engines.semantic_mapper import _contains_any
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
-from src.services.symptom_protocol import retraction, rule_engine, stage_machine
-from src.services.symptom_protocol.models import QuestionCluster
+from src.services.symptom_protocol import retraction, rule_engine, screening, stage_machine
+from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
 logger = logging.getLogger("vmedtriage.symptom_intake")
@@ -273,6 +273,151 @@ def extract_turn(
         )
 
     return extraction
+
+
+_SCREENING_SYSTEM = """Bạn là bộ trích xuất thông tin y tế cho một hệ thống phân loại mức độ khẩn cấp.
+
+Hôm nay là ngày {today} (định dạng YYYY-MM-DD).
+
+BỐI CẢNH: trợ lý VỪA đọc cho người bệnh nghe một danh sách dấu hiệu, chia thành các NHÓM dưới đây.
+Tin nhắn bạn sắp đọc là câu trả lời cho ĐÚNG danh sách đó.
+
+CÁC NHÓM ĐÃ ĐỌC CHO NGƯỜI BỆNH:
+{group_specs}
+
+ĐÃ BIẾT VỀ NGƯỜI BỆNH (đừng hỏi lại, đừng ghi đè nếu tin nhắn không nhắc tới):
+{known_facts}
+
+NHIỆM VỤ 1 - kết luận cho TỪNG nhóm, dùng đúng một trong ba giá trị:
+- "negative": người bệnh nói RÕ là KHÔNG có dấu hiệu nào của nhóm đó.
+- "positive": có ít nhất một dấu hiệu trong nhóm.
+- "unknown": tin nhắn không nhắc tới nhóm đó, hoặc câu trả lời mơ hồ.
+
+QUY TẮC BẮT BUỘC:
+- "negative" PHẢI kèm "evidence": đoạn TRÍCH NGUYÊN VĂN từ tin nhắn người bệnh. Chép Y HỆT ký tự -
+  không diễn giải lại, không dịch. Không trích được đoạn nào thì PHẢI trả "unknown".
+- Một câu phủ định CHUNG cho cả danh sách ("không có dấu hiệu nào cả", "không, tất cả đều bình
+  thường") là "negative" cho MỌI nhóm - trích chính câu đó làm evidence cho từng nhóm.
+- Nhưng nếu người bệnh chỉ nói về MỘT VÀI nhóm, các nhóm còn lại là "unknown", TUYỆT ĐỐI KHÔNG phải
+  "negative". Im lặng không bao giờ là phủ định.
+- KHÔNG chẩn đoán bệnh, KHÔNG đề xuất mức độ khẩn cấp, KHÔNG đưa hướng xử trí.
+
+NHIỆM VỤ 2 - nếu người bệnh nói RÕ một chi tiết cụ thể, điền thêm trường tương ứng dưới đây. Mỗi
+trường điền được PHẢI kèm "evidence_span" trích nguyên văn; không trích được thì để "unknown".
+
+CÁC TRƯỜNG CÓ THỂ ĐIỀN THÊM:
+{field_specs}
+
+Chỉ trả về MỘT JSON object, không kèm giải thích, theo đúng định dạng:
+{{"groups": {{"<mã nhóm>": {{"verdict": "negative|positive|unknown", "evidence": "<trích nguyên văn>"}}, ...}},
+  "<field_key>": {{"value": <giá trị>, "evidence_span": "<trích nguyên văn>"}}, ...,
+  "answer_quality": "answered|partial|evasive|non_answer|correction|asks_question"}}"""
+
+
+def _group_specs(groups: tuple[ScreeningGroup, ...]) -> str:
+    """Danh sách nhóm cho prompt. Định dạng `* <mã>` cố ý KHÁC dòng field (`- <key> (`) - hai loại
+    dòng lẫn nhau thì cả người đọc log lẫn bộ tra bảng trong test đều nhặt nhầm mã nhóm thành key."""
+    return "\n".join(f"* {group.id}: {group.probe_hint}" for group in groups)
+
+
+def extract_probe_turn(
+    protocol: SymptomProtocol,
+    cluster: QuestionCluster,
+    groups: tuple[ScreeningGroup, ...],
+    message: str,
+    *,
+    answers: dict[str, TriState],
+    safety_keys: tuple[str, ...] = (),
+    session_id: str | None = None,
+    turn: int = 0,
+    stage: str | None = None,
+    credential: provider_router.LLMCredential | None = None,
+) -> tuple[Extraction, screening.ScreeningOutcome]:
+    """Call LLM của một lượt SÀNG LỌC GỘP: verdict theo nhóm + field người bệnh nói rõ.
+
+    **Vì sao field vẫn bị siết `evidence="unasked"` dù câu hỏi vừa đọc chính các dấu hiệu đó.** Câu
+    sàng lọc chỉ đọc lên Ý ĐẠI DIỆN của từng nhóm, không đọc từng field một. Nới sang `"asked"` sẽ cho
+    model ghi thẳng `"false"` cho ~25 field mà không cần trích dẫn gì - tức là đi vòng qua đúng cổng
+    verdict+bằng chứng mà cả cơ chế này dựng ra để chặn. Đường đóng hàng loạt hợp lệ DUY NHẤT là
+    verdict theo nhóm.
+
+    Không bao giờ ném ra ngoài - lỗi LLM rơi về "không thu được gì", hội thoại tự về đường hỏi từng
+    cụm (an toàn: hỏi thừa, không bỏ sót)."""
+    log_stage = stage or cluster.stage
+    schema_keys = cluster.fields + tuple(k for k in safety_keys if k not in cluster.fields)
+
+    if session_id is not None:
+        stage_log.step(
+            session_id, turn=turn, stage=log_stage, cluster_id=cluster.id, event="retrieve",
+            input={"cluster_id": cluster.id, "groups": [group.id for group in groups]},
+            output={"fields": list(schema_keys), "schema_size": len(schema_keys)},
+        )
+
+    system_prompt = _SCREENING_SYSTEM.format(
+        today=_today_iso(),
+        group_specs=_group_specs(groups),
+        known_facts=_known_facts(protocol, answers),
+        field_specs=_field_specs(protocol, schema_keys),
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    parsed, parse_error, provider_name, model_name, response_text, latency_ms = _invoke_json(messages, credential)
+
+    if session_id is not None:
+        stage_log.llm_io(
+            session_id, turn=turn, stage=log_stage, cluster_id=cluster.id, purpose="extract",
+            provider=provider_name, model=model_name, messages=messages, response_text=response_text,
+            parsed=parsed, tokens=None, latency_ms=latency_ms, parse_error=parse_error,
+        )
+
+    parsed = parsed or {}
+    extraction = Extraction(
+        cluster_fields=_collect_fields(
+            protocol, cluster.fields, parsed, batch_negation=False, message=message, evidence="unasked",
+        ),
+        safety_fields=_collect_fields(
+            protocol, tuple(k for k in safety_keys if k not in cluster.fields), parsed,
+            batch_negation=False, message=message, evidence="unasked",
+        ),
+        answer_quality=_answer_quality(parsed),
+        llm_ok=parse_error is None,
+    )
+    outcome = screening.apply_verdicts(
+        protocol, log_stage, groups, parsed, answers,
+        # `allow_bare=True`: một chữ "Không" trần ĐƯỢC nhận ở đây, khác hẳn field ngoài cụm đang hỏi.
+        # Lý do là turn-scoping có thật chứ không phải nới lỏng: verdict chỉ được đọc ở lượt mà tin
+        # nhắn trước của trợ lý ĐÚNG LÀ câu sàng lọc tĩnh liệt kê chính các nhóm này (`session` chỉ
+        # truyền `probe` khi nó vừa phát ra câu đó). "Không" ở đây là câu trả lời trực tiếp cho danh
+        # sách vừa đọc lên, không phải model tự nói thay người bệnh về thứ chưa ai hỏi.
+        evidence_ok=lambda evidence: _evidence_in_message(evidence, message, allow_bare=True),
+    )
+
+    if session_id is not None:
+        stage_log.step(
+            session_id, turn=turn, stage=log_stage, cluster_id=cluster.id, event="screen",
+            input={"groups": [group.id for group in groups]},
+            output={
+                "negative": list(outcome.negative_group_ids),
+                "positive": list(outcome.positive_group_ids),
+                "closed_clusters": sorted(outcome.closed_cluster_ids),
+            },
+        )
+        if outcome.rejected_group_ids:
+            stage_log.step(
+                session_id, turn=turn, stage=log_stage, cluster_id=cluster.id, event="screen_reject",
+                input=None, output={"groups": list(outcome.rejected_group_ids)},
+            )
+        stage_log.step(
+            session_id, turn=turn, stage=log_stage, cluster_id=cluster.id, event="extract",
+            input=None, output={**outcome.negatives, **extraction.all_fields},
+            answers_delta=_answers_delta(answers, {**outcome.negatives, **extraction.all_fields}),
+            answer_quality=extraction.answer_quality,
+        )
+
+    return extraction, outcome
 
 
 def extract_cluster(
@@ -562,6 +707,14 @@ class TurnResult:
     "chưa xong" thì `next_cluster` sẽ chọn lại chính nó ở lượt sau ⇒ lặp vô hạn."""
     reopened_cluster_ids: frozenset[str] = frozenset()
     """Cụm phải mở lại vì field bên trong vừa bị xoá (đính chính) hoặc đang mâu thuẫn."""
+    screened_cluster_ids: frozenset[str] = frozenset()
+    """Cụm được ĐÓNG bởi một verdict phủ định của lượt sàng lọc gộp - người bệnh đã nghe đọc danh
+    sách dấu hiệu của chúng và trả lời không có. Session ghi chúng là đã hoàn tất, nhưng đếm chúng
+    NGOÀI ngân sách câu hỏi: một lượt sàng lọc đóng 5 cụm mà chỉ tốn đúng một câu hỏi."""
+    next_probe: tuple[ScreeningGroup, ...] = ()
+    """Lượt tới là câu SÀNG LỌC GỘP cho các nhóm này (rỗng = câu hỏi cụm thường). Session phải giữ
+    lại để lượt sau biết đọc câu trả lời theo verdict nhóm - đọc nhầm thành cụm thường sẽ không có
+    đường nào đóng nhóm, và câu sàng lọc dài kia thành ra hỏi phí."""
     protocol_name: str = ""
     """Protocol sẽ chạy từ lượt sau. Chỉ khác rỗng ở lượt mở (`run_open_turn`), nơi protocol được
     CHỌN chứ không phải cho trước."""
@@ -697,6 +850,9 @@ def run_turn(
     credential: provider_router.LLMCredential | None = None,
     select_protocol=None,
     protocol_for=None,
+    probe: tuple[ScreeningGroup, ...] = (),
+    screened_ids: frozenset[str] = frozenset(),
+    screening_history: dict[str, tuple[frozenset[str], ...]] | None = None,
 ) -> TurnResult:
     """Một lượt hỏi-đáp. MỘT luồng duy nhất cho mọi stage (không còn chia hướng C/E):
 
@@ -710,6 +866,8 @@ def run_turn(
 
     `cluster`: cụm mà `message` đang trả lời.
     `asked_ids`: cụm KHÔNG được chọn lại (đã hoàn tất + đã bỏ dở không giải quyết được).
+    `probe`: khác rỗng ⇒ `cluster` là cụm sàng lọc TỔNG HỢP và `message` đang trả lời câu hỏi gộp
+    liệt kê các nhóm này (xem `screening.py`).
     """
     credential = credential or protocol.default_credential
     stage_log.step(
@@ -717,14 +875,30 @@ def run_turn(
         input=None, output={"text": message},
     )
 
-    safety_keys = _safety_extra_keys(protocol, stage, cluster, answers, asked_ids)
-    extraction = extract_turn(
-        protocol, cluster, message, answers=answers, safety_keys=safety_keys,
-        session_id=session_id, turn=turn, stage=stage, credential=credential,
-    )
+    if probe:
+        # `lookahead=0`: field của các cụm sắp hỏi ĐÃ nằm trong `cluster.fields` của cụm sàng lọc
+        # (chính các nhóm đang được quét), thêm nữa chỉ làm schema phình ra - mà schema càng rộng thì
+        # model càng có xu hướng điền bừa cho đủ, đúng cơ chế của lỗi C1.
+        safety_keys = _safety_extra_keys(protocol, stage, cluster, answers, asked_ids, lookahead=0)
+        extraction, outcome = extract_probe_turn(
+            protocol, cluster, probe, message, answers=answers, safety_keys=safety_keys,
+            session_id=session_id, turn=turn, stage=stage, credential=credential,
+        )
+    else:
+        safety_keys = _safety_extra_keys(protocol, stage, cluster, answers, asked_ids)
+        extraction = extract_turn(
+            protocol, cluster, message, answers=answers, safety_keys=safety_keys,
+            session_id=session_id, turn=turn, stage=stage, credential=credential,
+        )
+        outcome = None
 
     opportunistic = scan_opportunistic_fields(protocol, message)
-    merged = _merge_answers(answers, opportunistic, extraction.safety_fields, extraction.cluster_fields)
+    # Giá trị âm tính của lượt sàng lọc đứng TRƯỚC field trích được: người bệnh nói rõ một chi tiết
+    # ("có, bé không tiểu từ sáng") phải thắng phủ định gộp của chính nhóm đó.
+    screened_negatives = outcome.negatives if outcome is not None else {}
+    merged = _merge_answers(
+        answers, opportunistic, screened_negatives, extraction.safety_fields, extraction.cluster_fields,
+    )
     merged = _apply_derived_fields(protocol, merged)
 
     # Đính chính + mâu thuẫn PHẢI chạy TRƯỚC rule_engine: nếu chạy sau, mức triage của chính lượt này
@@ -732,6 +906,9 @@ def run_turn(
     merged, reopened = retraction.apply_retraction(protocol, answers, merged)
     contradicted, contradiction_clusters = retraction.find_contradictions(protocol, merged)
     reopened = reopened | frozenset(contradiction_clusters)
+    # Cụm vừa bị đính chính mở lại thì KHÔNG được tính là đã đóng bởi sàng lọc: field bên trong vừa bị
+    # xoá hoặc đang chọi nhau, phải hỏi cho rõ dù người bệnh đã phủ định cả nhóm ở đầu lượt.
+    screened_closed = (outcome.closed_cluster_ids if outcome is not None else frozenset()) - reopened
     if reopened:
         stage_log.step(
             session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="extract",
@@ -788,6 +965,7 @@ def run_turn(
             next_cluster=None, llm_used=True, emergency=True,
             protocol_name=active.name if protocol_switched else "",
             answer_quality=extraction.answer_quality, reopened_cluster_ids=reopened,
+            screened_cluster_ids=screened_closed,
             triage_level=rule_result.triage_level,
             reason_codes=rule_result.reason_codes, triggered_rules=rule_result.triggered_rules,
         )
@@ -811,6 +989,12 @@ def run_turn(
         and retry_count < MAX_RETRIES_PER_CLUSTER
         and _worth_retrying(active, cluster, merged)
     )
+    if probe:
+        # Lượt sàng lọc KHÔNG BAO GIỜ hỏi lại. Người bệnh vừa nghe một danh sách dài mà không trả lời
+        # được thì đọc lại đúng danh sách đó lần nữa chỉ làm họ bỏ cuộc. Đường lùi đúng là quay về hỏi
+        # từng cụm một theo script chuẩn - việc `advance` tự làm khi cụm sàng lọc được đánh dấu xong.
+        cluster_resolved = True
+        retry_this_cluster = False
 
     with stage_log.tool(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id,
@@ -824,6 +1008,7 @@ def run_turn(
         # protocol (`Q3-03` là cụm co giật ở cả hai), nên mang tập "đã hỏi" của protocol cũ sang sẽ
         # bỏ qua nhầm cụm của protocol mới. Cụm nào thực sự đã có đủ dữ liệu vẫn bị `next_cluster` bỏ
         # qua theo DỮ LIỆU (`_cluster_needs_answer`), nên không ai bị hỏi lại điều đã trả lời.
+        closed_now = (asked_ids | {cluster.id} | screened_closed) - reopened
         if protocol_switched:
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
@@ -833,7 +1018,11 @@ def run_turn(
         else:
             step = stage_machine.advance(
                 active, stage, merged,
-                asked_ids=(asked_ids | {cluster.id}) - reopened,
+                asked_ids=closed_now,
+                # CS §6.5 tính ngân sách theo CỤM CÂU HỎI, không phải field đơn lẻ - và một lượt sàng
+                # lọc là ĐÚNG MỘT câu hỏi dù nó đóng 5 cụm. Không trừ ra thì ca lành tính vừa được rút
+                # ngắn lại bị coi như đã tiêu gần hết ngân sách và bị cắt ở Stage 5.
+                asked_count=len(closed_now - (screened_ids | screened_closed)),
                 known_triage_level=rule_result.triage_level,
             )
         following = step.cluster
@@ -842,16 +1031,30 @@ def run_turn(
             "stage": step.stage, "stop_reason": step.stop_reason, "retry": retry_this_cluster,
         }
 
-    question, question_llm_used = (
-        _generate_question(
-            active, following, answers=merged,
-            missing_keys=_missing_in_cluster(active, following, merged),
-            rephrase=retry_this_cluster,
-            conversation=conversation, credential=credential,
+    next_probe: tuple[ScreeningGroup, ...] = ()
+    if following is not None and not protocol_switched and not retry_this_cluster:
+        next_probe = screening.next_probe(
+            active, step.stage, merged, following,
+            closed_ids=closed_now,
+            history=(screening_history or {}).get(step.stage, ()),
         )
-        if following is not None
-        else ("", False)
-    )
+        if next_probe:
+            following = screening.probe_cluster(active, step.stage, next_probe)
+
+    if next_probe:
+        # Câu sàng lọc là văn bản TĨNH, không qua LLM - xem `screening.probe_question`.
+        question, question_llm_used = following.script_hint, False
+    else:
+        question, question_llm_used = (
+            _generate_question(
+                active, following, answers=merged,
+                missing_keys=_missing_in_cluster(active, following, merged),
+                rephrase=retry_this_cluster,
+                conversation=conversation, credential=credential,
+            )
+            if following is not None
+            else ("", False)
+        )
     stage_log.step(
         session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="agent_message",
         input=None, output={"text": question}, llm_used=question_llm_used,
@@ -865,6 +1068,8 @@ def run_turn(
         cluster_resolved=cluster_resolved,
         retried_same_cluster=retry_this_cluster,
         reopened_cluster_ids=reopened,
+        screened_cluster_ids=screened_closed,
+        next_probe=next_probe,
         protocol_name=active.name if protocol_switched else "",
         triage_level=rule_result.triage_level,
         reason_codes=rule_result.reason_codes, triggered_rules=rule_result.triggered_rules,
@@ -957,15 +1162,24 @@ def run_open_turn(
         )
 
     step = stage_machine.advance(protocol, protocol.stage_order[0], merged)
-    question, question_llm_used = (
-        _generate_question(
-            protocol, step.cluster, answers=merged,
-            missing_keys=_missing_in_cluster(protocol, step.cluster, merged),
-            conversation=conversation, credential=credential,
+    following = step.cluster
+    # Lời kể mở đầu có thể đã trả lời xong cả Stage 0/1/2 ("bé 4 tuổi, sốt 38.5 từ hôm qua, đã uống
+    # hạ sốt"), lúc đó cụm kế tiếp đã nằm ở stage quét đỏ - lượt sàng lọc gộp phải áp dụng được ngay,
+    # không đợi tới lượt sau.
+    next_probe = screening.next_probe(protocol, step.stage, merged, following)
+    if next_probe:
+        following = screening.probe_cluster(protocol, step.stage, next_probe)
+        question, question_llm_used = following.script_hint, False
+    else:
+        question, question_llm_used = (
+            _generate_question(
+                protocol, following, answers=merged,
+                missing_keys=_missing_in_cluster(protocol, following, merged),
+                conversation=conversation, credential=credential,
+            )
+            if following is not None
+            else ("", False)
         )
-        if step.cluster is not None
-        else ("", False)
-    )
     stage_log.step(
         session_id, turn=turn, stage="OPEN", cluster_id="OPEN", event="agent_message",
         input=None, output={"text": question}, llm_used=question_llm_used,
@@ -973,9 +1187,9 @@ def run_open_turn(
 
     return TurnResult(
         answers=merged, extracted=extraction.all_fields, agent_message=question,
-        next_cluster=step.cluster, next_stage=step.stage, stop_reason=step.stop_reason,
+        next_cluster=following, next_stage=step.stage, stop_reason=step.stop_reason,
         llm_used=True, emergency=False, protocol_name=protocol_name,
-        answer_quality=extraction.answer_quality,
+        answer_quality=extraction.answer_quality, next_probe=next_probe,
         triage_level=rule_result.triage_level,
         reason_codes=rule_result.reason_codes, triggered_rules=rule_result.triggered_rules,
     )

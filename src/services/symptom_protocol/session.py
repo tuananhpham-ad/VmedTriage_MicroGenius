@@ -29,8 +29,8 @@ from src.services.infra import console_log
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra.provider_router import LLMCredential
 from src.services.symptom_protocol import intake_agent as agent
-from src.services.symptom_protocol import registry, rule_engine, stage_machine
-from src.services.symptom_protocol.models import QuestionCluster
+from src.services.symptom_protocol import registry, rule_engine, screening, stage_machine
+from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
 
@@ -70,6 +70,18 @@ class Session:
     """Cụm đã hỏi lại đủ số lần cho phép mà vẫn không thu được gì - bỏ qua để không treo hội thoại,
     nhưng ghi lại để phiếu bàn giao nói rõ đây là thông tin CHƯA HỎI ĐƯỢC, không phải "không có"."""
     retry_count_by_cluster: dict[str, int] = field(default_factory=dict)
+    screened_cluster_ids: set[str] = field(default_factory=set)
+    """Cụm được đóng bởi một verdict phủ định của lượt SÀNG LỌC GỘP, thay vì được hỏi riêng. Chúng
+    cũng nằm trong `completed_cluster_ids` (đã hỏi thật - người bệnh đã nghe đọc danh sách dấu hiệu
+    của chúng); tập này tồn tại riêng chỉ để trừ ra khỏi NGÂN SÁCH câu hỏi."""
+    screening_history: dict[str, tuple[frozenset[str], ...]] = field(default_factory=dict)
+    """Các TẬP NHÓM đã sàng lọc ở mỗi stage, theo thứ tự. Số phần tử là số vòng đã dùng (chống lặp vô
+    hạn, `SymptomProtocol.max_screening_rounds`); phần tử cuối cho `next_probe` biết vòng sau có thật
+    sự hỏi ÍT HƠN vòng trước không - nếu không thì đó là đọc lại nguyên văn cùng một danh sách dài."""
+    pending_probe: tuple[ScreeningGroup, ...] = ()
+    """Nhóm mà câu hỏi VỪA PHÁT RA đang sàng lọc. Đây cũng là guard turn-scoping của cả cơ chế: chỉ
+    khi tập này khác rỗng thì verdict theo nhóm mới được đọc, nên một câu "không" trần không bao giờ
+    đóng được nhóm nào ngoài đúng danh sách vừa đọc lên cho người bệnh."""
     current_cluster: QuestionCluster | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
     turn_count: int = 0
@@ -100,8 +112,14 @@ class Session:
 
     def closed_ids_for_current_protocol(self) -> frozenset[str]:
         """Mã cụm đã đóng CỦA protocol đang chạy - dạng `stage_machine` hiểu được."""
+        return self._ids_for_current_protocol(self.closed_cluster_ids)
+
+    def screened_ids_for_current_protocol(self) -> frozenset[str]:
+        return self._ids_for_current_protocol(self.screened_cluster_ids)
+
+    def _ids_for_current_protocol(self, keys: set[str]) -> frozenset[str]:
         prefix = f"{self.protocol_name}:"
-        return frozenset(key[len(prefix):] for key in self.closed_cluster_ids if key.startswith(prefix))
+        return frozenset(key[len(prefix):] for key in keys if key.startswith(prefix))
 
 
 class SessionNotFoundError(ValueError):
@@ -168,6 +186,13 @@ class ProtocolSessionStore:
         step = stage_machine.advance(protocol, first_stage, {})
         cluster = step.cluster
         session.stage = step.stage
+        # Stage đầu của fever là nhân khẩu nên không lượt sàng lọc nào phát ra ở đây - nhưng quyết
+        # định đó thuộc về `next_probe`, không phải một giả định ngầm của store: một protocol khai
+        # nhóm sàng lọc ngay ở stage đầu sẽ đi đúng nhánh này mà không phải sửa gì.
+        session.pending_probe = screening.next_probe(protocol, step.stage, {}, cluster)
+        if session.pending_probe:
+            cluster = screening.probe_cluster(protocol, step.stage, session.pending_probe)
+            session.screening_history[step.stage] = (frozenset(g.id for g in session.pending_probe),)
         session.current_cluster = cluster
         session.last_question = cluster.script_hint if cluster is not None else ""
         if session.last_question:
@@ -235,6 +260,9 @@ class ProtocolSessionStore:
             # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
             select_protocol=None if session.protocol_pinned else registry.select_protocol,
             protocol_for=None if session.protocol_pinned else registry.protocol_for,
+            probe=session.pending_probe,
+            screened_ids=session.screened_ids_for_current_protocol(),
+            screening_history=session.screening_history,
         )
 
         session.answers = result.answers
@@ -263,6 +291,7 @@ class ProtocolSessionStore:
             session.escalation_lock = True
             session.state = SessionState.EMERGENCY
             session.current_cluster = None
+            session.pending_probe = ()
             session.last_question = result.agent_message
             session.stop_reason = "RED_FLAG"
             stage_log.finish(session_id, triage_level=result.triage_level, stop_reason="RED_FLAG", turns=session.turn_count)
@@ -357,6 +386,14 @@ class ProtocolSessionStore:
             session.completed_cluster_ids -= reopened
             session.unresolved_cluster_ids -= reopened
 
+        # Cụm đóng bởi verdict phủ định của lượt sàng lọc: đánh dấu hoàn tất (người bệnh ĐÃ nghe đọc
+        # danh sách dấu hiệu của chúng và trả lời không có) nhưng ghi riêng để trừ khỏi ngân sách.
+        for cluster_id in result.screened_cluster_ids:
+            screened_key = session.cluster_key(cluster_id)
+            session.completed_cluster_ids.add(screened_key)
+            session.screened_cluster_ids.add(screened_key)
+            session.retry_count_by_cluster.pop(screened_key, None)
+
         key = session.cluster_key(cluster.id)
         if result.cluster_resolved:
             session.completed_cluster_ids.add(key)
@@ -389,8 +426,14 @@ class ProtocolSessionStore:
                 stage_log.stage_enter(session.session_id, result.next_stage)
             session.stage = result.next_stage or result.next_cluster.stage
             session.current_cluster = result.next_cluster
+            session.pending_probe = result.next_probe
+            if result.next_probe:
+                stage = session.stage
+                probed = frozenset(group.id for group in result.next_probe)
+                session.screening_history[stage] = session.screening_history.get(stage, ()) + (probed,)
             return
 
+        session.pending_probe = ()
         self._finish(session, result.stop_reason or "BUDGET_EXHAUSTED")
 
     def _finish(self, session: Session, stop_reason: str) -> None:

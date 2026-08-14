@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
 from src.services.infra.provider_router import LLMCredential
-from src.services.symptom_protocol.models import FieldSpec, QuestionCluster, RuleMatch
+from src.services.symptom_protocol.models import FieldSpec, QuestionCluster, RuleMatch, ScreeningGroup
 
 RouteFn = Callable[[dict[str, object]], str]
 BudgetKeyFn = Callable[[dict[str, object], str, "str | None"], str]
@@ -98,6 +98,15 @@ class SymptomProtocol:
 
     opportunistic_keywords: tuple[tuple[str, tuple[str, ...]], ...]
     """Quét từ khoá nhẹ bổ trợ (kỹ thuật `_contains_any`), mỗi phần tử `(field_key, keywords)`."""
+
+    screening_groups: tuple[ScreeningGroup, ...] = ()
+    """Nhóm cơ quan được sàng lọc bằng một câu hỏi gộp (xem `ScreeningGroup`). Rỗng (mặc định) =
+    protocol hỏi tuần tự từng cụm như trước - `screening.py` không có gì để làm nên không lượt nào
+    đổi hành vi."""
+
+    max_screening_rounds: int = 2
+    """Số lượt sàng lọc tối đa cho MỖI stage. Chống lặp vô hạn khi người bệnh trả lời mãi không rõ:
+    hết hạn mức thì tự rơi về đường hỏi từng cụm, không có nhánh nào làm hội thoại treo."""
 
     field_dependencies: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
     """`{field cha: (field con...)}` - khi field cha bị PHỦ ĐỊNH ("false"/"none"), các field con mất

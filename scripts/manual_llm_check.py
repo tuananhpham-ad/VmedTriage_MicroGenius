@@ -33,6 +33,7 @@ from src.paths import LOGS_DIR  # noqa: E402
 from src.services.checklists.fever_checklist import FIELDS_BY_KEY  # noqa: E402
 from src.services.engines.fever_protocol import EMERGENCY_TRI_STATE_FIELDS  # noqa: E402
 from src.services.sessions.symptom_session import session_store  # noqa: E402
+from src.services.symptom_protocol import screening  # noqa: E402
 from src.services.symptom_protocol.session import SessionState  # noqa: E402
 
 # Cùng trần với `tests/test_api/test_fever_flow.py` - "kết thúc trong 60 lượt" là cùng một hợp đồng,
@@ -55,6 +56,12 @@ DEFAULT_DELAY_SECONDS = 3.0
 # "cho", "thuốc"; một lần chạy đã mất 4 lượt vì lý do này. Chỉ dùng cụm >= 2 âm tiết, và xếp quy tắc
 # ĐẶC THÙ lên trước quy tắc chung ("sốt" trúng mọi câu hỏi về thuốc hạ sốt nếu để lên đầu).
 BENIGN_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    # PHẢI đứng đầu bảng: câu sàng lọc gộp (`symptom_protocol/screening.py`) liệt kê dấu hiệu của
+    # NHIỀU nhóm cùng lúc, nên nó trúng từ khoá của rất nhiều quy tắc bên dưới - quy tắc trúng trước
+    # sẽ trả lời cho ĐÚNG MỘT nhóm rồi bỏ mặc phần còn lại. Đo được: Stage 3B tốn 4 lượt thay vì 2
+    # chỉ vì câu sàng lọc trúng quy tắc "hoạt động/ngày thường". Người bệnh thật nhìn thấy cả danh
+    # sách thì trả lời cho cả danh sách, và đó chính là câu mà `PROBE_OUTRO` hướng dẫn họ nói.
+    ((screening.PROBE_INTRO.casefold(),), "Không có dấu hiệu nào trong số đó cả"),
     (("bao nhiêu tuổi", "bé hay người lớn", "mấy tuổi", "độ tuổi"), "Tôi 30 tuổi, tôi tự hỏi cho mình"),
     (("nam hay nữ", "giới tính", "bé trai hay bé gái"), "Nữ"),
     (("nhiệt kế",), "Có nhiệt kế điện tử ở nhà"),

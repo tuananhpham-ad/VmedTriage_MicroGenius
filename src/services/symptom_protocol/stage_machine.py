@@ -23,8 +23,14 @@ def is_filled(value: object) -> bool:
     return value is not None and value != "unknown" and value != ""
 
 
-def _cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+def cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+    """Cụm còn field nào chưa có câu trả lời xác định không. Public vì `screening.py` phải dùng ĐÚNG
+    định nghĩa này để biết một nhóm cơ quan đã giải quyết xong chưa - hai định nghĩa lệch nhau sẽ làm
+    câu sàng lọc liệt kê nhóm mà `next_cluster` không còn định hỏi (hoặc ngược lại)."""
     return any(not is_filled(answers.get(key)) for key in cluster.fields)
+
+
+_cluster_needs_answer = cluster_needs_answer
 
 
 def _cluster_is_optional_tier(protocol: SymptomProtocol, cluster: QuestionCluster) -> bool:
@@ -34,11 +40,18 @@ def _cluster_is_optional_tier(protocol: SymptomProtocol, cluster: QuestionCluste
     return all(protocol.fields_by_key[key].tier in ("O", "H") for key in cluster.fields)
 
 
-def _cluster_is_skipped(protocol: SymptomProtocol, stage: str, cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+def cluster_is_skipped(protocol: SymptomProtocol, stage: str, cluster: QuestionCluster, answers: dict[str, object]) -> bool:
+    """Cụm này có bị bỏ qua theo điều kiện tuổi/giới/nhánh không. Public vì `screening.py` phải tôn
+    trọng đúng các điều kiện đó: một nhóm chỉ còn cụm bị skip (vd `G3B-COG` = Q3-02, tự loại khi dưới
+    16 tuổi) phải được coi là ĐÃ giải quyết, nếu không câu sàng lọc sẽ liệt kê dấu hiệu không áp dụng
+    được cho người bệnh này."""
     emergency_scan_stage, early_visit_scan_stage = protocol.gate_stages
     if stage == early_visit_scan_stage and protocol.provisional_emergency_signal(answers):
         return True
     return protocol.skip_rule(cluster, answers)
+
+
+_cluster_is_skipped = cluster_is_skipped
 
 
 def next_cluster(

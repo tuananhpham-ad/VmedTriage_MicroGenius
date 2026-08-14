@@ -20,6 +20,7 @@ from typing import Literal
 
 from src.services.checklists.fever_checklist import FIELDS_BY_KEY, QUESTION_CLUSTERS
 from src.services.symptom_protocol.common_safety import rules as common_rules
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months
 from src.services.symptom_protocol.common_safety.predicates import array_has_any as _array_has_any
@@ -624,6 +625,23 @@ def _contradiction_no_fever_but_hot(answers: dict[str, object]) -> tuple[str, ..
 
 CONTRADICTION_RULES: tuple = (_contradiction_no_fever_but_hot,)
 
+
+# ---------------------------------------------------------------------------------------------
+# Sàng lọc theo nhóm cơ quan (`symptom_protocol/screening.py`)
+# ---------------------------------------------------------------------------------------------
+#
+# Stage 3A đi tuần tự là 11 lượt, Stage 3B là 5 - kể cả với ca lành tính mà tất cả cùng ra âm tính,
+# đúng nhóm ca ta muốn kết thúc sớm nhất (đo được: ca lành tính tốn 36 lượt khi chạy LLM thật).
+# Gộp thành nhóm rút xuống 3 lượt cho 3A (Q3-01 + Q3-03 hỏi riêng + 1 câu sàng lọc) và 2 lượt cho 3B
+# (1 câu sàng lọc + Q3-14).
+#
+# Nội dung nhóm nằm ở `common_safety` chứ không phải ở đây: chúng gộp các cụm dấu hiệu NGUY KỊCH phổ
+# quát, không phải kiến thức về sốt (xem docstring `common_safety/screening_groups.py`).
+SCREENING_GROUPS: tuple = (
+    common_screening.emergency_scan_groups(GATE_STAGES[0])
+    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+)
+
 # Xoá nhầm 2 field này là đắt nhất: chúng kéo theo TOÀN BỘ phần đặc điểm sốt (12 field) và làm câu
 # chuyện lâm sàng đổi hẳn. Giữ đúng 2 field - mỗi field ở đây tốn của người bệnh một lượt xác nhận.
 CONFIRM_BEFORE_RETRACT: frozenset[str] = frozenset({"fever_reported", "fever_status"})
@@ -648,6 +666,7 @@ FEVER_PROTOCOL = SymptomProtocol(
     emergency_message=EMERGENCY_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=OPPORTUNISTIC_KEYWORDS,
+    screening_groups=SCREENING_GROUPS,
     field_dependencies=FIELD_DEPENDENCIES,
     contradiction_rules=CONTRADICTION_RULES,
     confirm_before_retract=CONFIRM_BEFORE_RETRACT,

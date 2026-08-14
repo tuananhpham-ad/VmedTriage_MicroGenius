@@ -55,7 +55,7 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
 export function renderPatientChat(root, { navigate, logout }) {
   const current = state.currentPatientCase;
   const messages = state.patientMessages.length ? state.patientMessages : initialMessages(current);
-  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section><section class="checklist-card"><h2>Thông tin cần làm rõ</h2><div id="checklist">${checklistMarkup(current)}</div></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
+  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
   root.querySelector("[data-home]").addEventListener("click", () => navigate("patient-home"));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
   root.querySelectorAll("[data-symptom]").forEach((button) => button.addEventListener("click", () => { root.querySelector("#patient-message").value = button.dataset.symptom; root.querySelector("#patient-message").focus(); }));
@@ -74,25 +74,10 @@ function initialMessages(current) {
 
 function messageMarkup(message) { return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`; }
 
-// Agent fever trả về `summary_fields` (nhãn tiếng Việt sẵn, kèm cờ is_missing) - dùng thẳng, KHÔNG
-// hiển thị giá trị thô (`alert`, `none_gt_6h`, `true`) vì đó là mã nội bộ cho điều dưỡng đọc, không
-// phải thứ để đưa cho bệnh nhân. Bệnh nhân chỉ cần thấy tiến độ: đã ghi nhận gì, còn thiếu gì.
-function checklistMarkup(current) {
-  const rows = current?.summary_fields || [];
-  if (rows.length) {
-    const collected = rows.filter((row) => !row.is_missing);
-    const missing = rows.filter((row) => row.is_missing);
-    const progress = `<p class="muted-copy">Đã ghi nhận ${collected.length}/${rows.length} thông tin cần thiết.</p>`;
-    const list = [...collected, ...missing]
-      .slice(0, 12)
-      .map((row) => `<div class="check-row"><span>${row.is_missing ? "○" : "✓"}</span>${escapeHtml(row.label)}</div>`)
-      .join("");
-    return progress + list;
-  }
-  const missing = current?.validation?.missing_fields || current?.structured_data?.missing_fields || [];
-  if (!missing.length) return `<p class="muted-copy">Trợ lý sẽ ghi nhận thông tin cần thiết khi bạn trò chuyện.</p>`;
-  return missing.map((item) => `<div class="check-row"><span>○</span>${escapeHtml(item.replaceAll("_", " "))}</div>`).join("");
-}
+// Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`,
+// `intakeChecklistMarkup`) ngày 2026-08-14, đúng đích đến ghi trong ghi chú 2026-08-13. Nó phơi ra
+// checklist nội bộ mà bệnh nhân không cần thấy - họ chỉ cần trả lời câu trợ lý đang hỏi - trong khi
+// điều dưỡng thì cần biết chính xác ca này còn thiếu gì trước khi duyệt.
 
 // Stage 6 CS: hết phiên hỏi-đáp, agent dựng phiếu tóm tắt và chờ bệnh nhân xác nhận ĐÚNG/CHƯA ĐÚNG
 // trước khi bàn giao điều dưỡng. `case_id` chính là `session_id` của phiên agent nên gọi thẳng

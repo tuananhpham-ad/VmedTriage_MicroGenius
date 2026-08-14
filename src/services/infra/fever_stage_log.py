@@ -61,6 +61,8 @@ EventType = Literal[
     "llm_request",
     "llm_response",
     "extract",
+    "screen",
+    "screen_reject",
     "rule_gate",
     "route_decided",
     "agent_message",
@@ -77,6 +79,12 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "llm_request",
         "llm_response",
         "extract",
+        # Lượt sàng lọc theo nhóm cơ quan (`symptom_protocol/screening.py`): `screen` ghi verdict của
+        # từng nhóm, `screen_reject` ghi nhóm bị TỪ CHỐI phủ định vì model không trích được câu nào
+        # trong tin nhắn. Tách khỏi `extract` vì đây là lớp quyết định "đóng cả nhóm cụm hay không" -
+        # khi cần lần lại "vì sao ca này không bị hỏi về xuất huyết", đó là dòng phải grep đầu tiên.
+        "screen",
+        "screen_reject",
         "rule_gate",
         "route_decided",
         "agent_message",
