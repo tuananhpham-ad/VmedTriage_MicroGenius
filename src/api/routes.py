@@ -32,9 +32,10 @@ from src.services.infra.auth import (
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.sessions import fever_case_bridge, fever_session
+from src.services.sessions import symptom_case_bridge, symptom_session
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.case_store import case_store
+from src.services.symptom_protocol.session import EmptyMessageError, SessionNotFoundError
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
 
@@ -166,14 +167,19 @@ def update_current_user(
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
-    """Nhận tin nhắn tự do của bệnh nhân và chạy AGENT FEVER (`symptom_protocol/`).
+    """Nhận tin nhắn tự do của bệnh nhân và chạy AGENT triệu chứng (`symptom_protocol/`).
 
-    Trước đây endpoint này chạy pipeline rule-based `src/agents/graph.py`. Đã chuyển sang agent fever
-    vì agent hỏi theo cụm/stage đúng tài liệu CS, chốt đỏ ngay khi phát hiện red flag, và mọi kết
-    luận vẫn do rule engine THUẦN quyết định (LLM chỉ trích xuất field, không xếp mức khẩn cấp).
+    Trước đây endpoint này chạy pipeline rule-based `src/agents/graph.py`. Đã chuyển sang agent vì
+    agent hỏi theo cụm/stage đúng tài liệu CS, chốt đỏ ngay khi phát hiện red flag, và mọi kết luận
+    vẫn do rule engine THUẦN quyết định (LLM chỉ trích xuất field, không xếp mức khẩn cấp).
+
+    Phiên mở ở LƯỢT MỞ, không ghim sẵn protocol nào: tin nhắn đầu là lời kể tự do, protocol
+    (`fever` / `general`) chỉ được chọn sau khi đã trích xuất được lời kể đó. Ghim sẵn fever ở đây
+    từng khiến người nhắn "tôi đau ngực, đi vài bước là hụt hơi" bị hỏi "bé hay người lớn, bao nhiêu
+    tuổi" rồi đi hết bộ câu hỏi về sốt, và không luật đỏ nào quét được ca đó.
 
     HỢP ĐỒNG API KHÔNG ĐỔI (`ChatRequest`/`ChatResponse`) và case vẫn được ghi vào `case_store` qua
-    `fever_case_bridge` - hàng đợi điều dưỡng, lịch sử bệnh nhân và luồng duyệt HITL chạy y như cũ.
+    `symptom_case_bridge` - hàng đợi điều dưỡng, lịch sử bệnh nhân và luồng duyệt HITL chạy y như cũ.
     `case_id` chính là `session_id` của phiên agent."""
     patient_id = int(request.state.auth.sub)
     previous = case_store.get(payload.case_id) if payload.case_id else None
@@ -181,20 +187,20 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
 
     session_id = payload.case_id
-    if session_id is None or fever_session.session_store.get(session_id) is None:
+    if session_id is None or symptom_session.session_store.get(session_id) is None:
         # Chưa có phiên (case mới, hoặc phiên đã mất do restart server - store là in-memory): mở
         # phiên mới rồi đưa luôn tin nhắn đầu tiên vào, không bắt người dùng gõ lại.
-        session_id = fever_session.start_session().session_id
+        session_id = symptom_session.session_store.start_session().session_id
         previous = None
 
     try:
-        session = fever_session.submit_message(session_id, payload.message)
-    except fever_session.EmptyMessageError as error:
+        session = symptom_session.session_store.submit_message(session_id, payload.message)
+    except EmptyMessageError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except fever_session.SessionNotFoundError as error:
+    except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
-    triage_case = fever_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+    triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     case_store.save(triage_case)
     return _patient_chat_response(triage_case)
 

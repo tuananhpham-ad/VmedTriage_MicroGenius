@@ -19,6 +19,13 @@ from __future__ import annotations
 from typing import Literal
 
 from src.services.checklists.fever_checklist import FIELDS_BY_KEY, QUESTION_CLUSTERS
+from src.services.symptom_protocol.common_safety import rules as common_rules
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
+from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
+from src.services.symptom_protocol.common_safety.predicates import age_in_months
+from src.services.symptom_protocol.common_safety.predicates import array_has_any as _array_has_any
+from src.services.symptom_protocol.common_safety.predicates import as_float as _as_float
+from src.services.symptom_protocol.common_safety.predicates import is_true as _is_true
 from src.services.symptom_protocol.models import QuestionCluster, RuleMatch
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
@@ -47,21 +54,13 @@ BUDGET: dict[str, tuple[int, int]] = {
     "ROUTE_DENGUE_CONTEXT": (12, 16),
 }
 
-# Field M0 "đỏ tuyệt đối" dùng cho provisional scan (should_stop) VÀ cho hướng E quét field an toàn
-# ngoài cụm hiện tại (`intake_agent._run_turn_combined`). Value coi là dương tính: chuỗi tri-state
-# "true", hoặc enum/giá trị cụ thể liệt kê trong `_EMERGENCY_ENUM_MATCHES`.
-EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = (
-    "seizure_active_now",
-    "seizure_occurred",
-    "neck_stiffness",
-    "focal_neuro_deficit",
-    "cyanosis",
-    "stridor_or_drooling",
-    "cold_clammy_skin",
-    "capillary_refill_ge_3s",
-    "non_blanching_rash",
-    "mucosal_bleeding",
-    "gi_bleeding",
+# Field M0 "đỏ tuyệt đối" dùng cho provisional scan (should_stop) VÀ cho việc quét kèm field an toàn
+# ngoài cụm đang hỏi. Value coi là dương tính: chuỗi tri-state "true", hoặc enum/giá trị cụ thể liệt
+# kê trong `_EMERGENCY_ENUM_MATCHES`.
+#
+# `worse_after_defervescence` (mệt hơn DÙ ĐÃ hạ sốt - RF-29 theo QĐ 2760) là dấu hiệu đỏ của riêng
+# fever, nên nó nối thêm vào bộ phổ quát chứ không nằm trong `common_safety`.
+EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = common_rules.EMERGENCY_TRI_STATE_FIELDS + (
     "worse_after_defervescence",
 )
 # Field "hay được tự nguyện nói trước" (nhóm b trong docstring `SymptomProtocol.safety_signal_fields`)
@@ -77,33 +76,14 @@ _EARLY_VOLUNTEERED_FIELDS: tuple[str, ...] = (
     "urine_output",
 )
 SAFETY_SIGNAL_FIELDS: tuple[str, ...] = EMERGENCY_TRI_STATE_FIELDS + _EARLY_VOLUNTEERED_FIELDS
-_EMERGENCY_ENUM_MATCHES: dict[str, frozenset[str]] = {
-    "consciousness_level": frozenset({"difficult_to_rouse", "unresponsive"}),
-    "breathing_difficulty": frozenset({"severe"}),
-    "urine_output": frozenset({"none_gt_6h"}),
-    "feeding_intake": frozenset({"unable"}),
-    "vomiting_severity": frozenset({"unable_to_keep_fluids"}),
-    "abdominal_pain_severity": frozenset({"severe"}),
-}
+_EMERGENCY_ENUM_MATCHES: dict[str, frozenset[str]] = common_rules.EMERGENCY_ENUM_MATCHES
 
-CHRONIC_SEVERE = frozenset({"cardiac", "pulmonary", "renal", "hepatic", "hematologic_thalassemia", "malignancy"})
+CHRONIC_SEVERE = common_rules.CHRONIC_SEVERE
 
-EMERGENCY_MESSAGE = (
-    "Đây là tình huống cần được cấp cứu ngay bây giờ — vui lòng gọi 115 hoặc đến ngay cơ sở y tế/"
-    "khoa cấp cứu gần nhất, không chờ thêm. Thông tin đã được chuyển cho điều dưỡng ưu tiên hỗ trợ."
-)
-
-# Quét cơ hội: các field an toàn cốt lõi thường được người dùng chủ động mô tả ngay từ câu đầu tiên,
-# trước khi tới lượt hỏi cụm tương ứng (đúng ví dụ O1, Part 8 CS). Danh sách CỐ Ý ngắn - chỉ phủ field
-# M0 có hậu quả bỏ sót cao nhất; không thay thế LLM extraction theo cụm, chỉ bổ trợ.
-OPPORTUNISTIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("seizure_active_now", ("đang co giật", "dang co giat", "co giật ngay", "co giat ngay")),
-    ("seizure_occurred", ("co giật", "co giat")),
-    ("non_blanching_rash", ("ban tím không mất", "ban tim khong mat", "ấn không mất", "an khong mat")),
-    ("cyanosis", ("tím môi", "tim moi", "tím tái", "tim tai")),
-    ("neck_stiffness", ("cứng gáy", "cung gay")),
-    ("cold_clammy_skin", ("lạnh ẩm", "lanh am", "nổi vân tím", "noi van tim")),
-)
+# Quét cơ hội: field an toàn cốt lõi thường được người dùng chủ động mô tả ngay từ câu đầu tiên, trước
+# khi tới lượt hỏi cụm tương ứng (đúng ví dụ O1, Part 8 CS). Toàn bộ danh sách là dấu hiệu đỏ phổ quát
+# nên nằm ở `common_safety` - fever chưa có từ khoá đặc thù nào cần nối thêm.
+OPPORTUNISTIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = common_rules.OPPORTUNISTIC_KEYWORDS
 
 
 # Nhãn tiếng Việt của từng `RF-xx`, chép nguyên văn cột tên dấu hiệu ở bảng KM §6.1. Rule engine chỉ
@@ -155,30 +135,6 @@ REASON_CODE_LABELS: dict[str, str] = {
     "RF-43": "Ổ nhiễm khuẩn khu trú tiến triển",
     "RF-44": 'Mức lo lắng người chăm sóc rất cao / "trông khác hẳn"',
 }
-
-
-def _is_filled(value: object) -> bool:
-    return value is not None and value != "unknown" and value != ""
-
-
-def _is_true(value: object) -> bool:
-    return value is True or value == "true"
-
-
-def _in(value: object, allowed: frozenset[str]) -> bool:
-    return isinstance(value, str) and value in allowed
-
-
-def _array_has_any(value: object, items: frozenset[str]) -> bool:
-    if not isinstance(value, (list, tuple, set)):
-        return False
-    return any(item in items for item in value)
-
-
-def _array_has_non_empty_excluding(value: object, excluded: frozenset[str]) -> bool:
-    if not isinstance(value, (list, tuple, set)):
-        return False
-    return any(item not in excluded for item in value)
 
 
 def _fever_present(a: dict[str, object]) -> bool:
@@ -234,24 +190,6 @@ def _travel_within_months(a: dict[str, object], months: float) -> bool | None:
     if not deltas:
         return None
     return min(deltas) <= months
-
-
-def age_in_months(answers: dict[str, object]) -> float | None:
-    value = answers.get("age_value")
-    unit = answers.get("age_unit")
-    if not _is_filled(value) or not _is_filled(unit):
-        return None
-    try:
-        numeric = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    if unit == "day":
-        return numeric / 30.0
-    if unit == "month":
-        return numeric
-    if unit == "year":
-        return numeric * 12.0
-    return None
 
 
 def conservatism_tier(a: dict[str, object]) -> int:
@@ -374,11 +312,36 @@ def budget_key(answers: dict[str, object], route: str, known_triage_level: str |
 # ---------------------------------------------------------------------------------------------
 
 
+def _no_fever_confirmed(answers: dict[str, object]) -> bool:
+    """Người bệnh đã xác nhận RÕ RÀNG là không sốt.
+
+    Chỉ nhận giá trị xác định (`"false"` / `"none"`) - `"unknown"` KHÔNG được coi là không sốt, nếu
+    không thì mọi cụm sốt bị skip ngay từ lượt đầu khi chưa hỏi gì."""
+    return answers.get("fever_reported") == "false" or answers.get("fever_status") == "none"
+
+
+def _skip_when_no_fever(answers: dict[str, object]) -> bool:
+    """Đã xác nhận không sốt thì mọi cụm đặc điểm sốt đều vô nghĩa.
+
+    Lỗi thật trong transcript `logs/fever/a421eb5f-...`: người dùng nói "à tôi nhầm, tôi không bị
+    sốt" nhưng hệ thống vẫn hỏi hết Q2-01…Q2-05 ("sốt bao lâu rồi", "có rét run không", "đã uống hạ
+    sốt chưa") vì không cụm nào trong Stage 2 có skip condition."""
+    return _no_fever_confirmed(answers)
+
+
+def _skip_q1_02(answers: dict[str, object]) -> bool:
+    return _no_fever_confirmed(answers)
+
+
 def _skip_q1_03(answers: dict[str, object]) -> bool:
+    if _no_fever_confirmed(answers):
+        return True
     return answers.get("fever_status") != "subjective"
 
 
 def _skip_q2_05(answers: dict[str, object]) -> bool:
+    if _no_fever_confirmed(answers):
+        return True
     age_months = age_in_months(answers)
     young = age_months is not None and age_months < 3
     old = age_months is not None and age_months >= 65 * 12
@@ -418,7 +381,13 @@ def _skip_q5_06(answers: dict[str, object]) -> bool:
 
 
 _SKIP_RULES: dict[str, object] = {
+    "Q1-02": _skip_q1_02,
     "Q1-03": _skip_q1_03,
+    # Stage 2 (đặc điểm sốt) - toàn bộ cụm đều vô nghĩa khi đã xác nhận không sốt.
+    "Q2-01": _skip_when_no_fever,
+    "Q2-02": _skip_when_no_fever,
+    "Q2-03": _skip_when_no_fever,
+    "Q2-04": _skip_when_no_fever,
     "Q2-05": _skip_q2_05,
     "Q3-02": _skip_q3_02,
     "Q4-01": _skip_q4_01,
@@ -446,8 +415,8 @@ def self_care_checklist_satisfied(answers: dict[str, object]) -> bool:
     age_months = age_in_months(answers)
     if age_months is None or age_months < 6:
         return False
-    duration = answers.get("fever_duration_days")
-    if isinstance(duration, (int, float)) and duration >= 5:
+    duration = _as_float(answers.get("fever_duration_days"))
+    if duration is not None and duration >= 5:
         return False
     if answers.get("consciousness_level") != "alert":
         return False
@@ -468,106 +437,6 @@ def self_care_checklist_satisfied(answers: dict[str, object]) -> bool:
 # ---------------------------------------------------------------------------------------------
 
 
-def _r_e_01(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _in(a.get("consciousness_level"), frozenset({"difficult_to_rouse", "unresponsive"})):
-        return RuleMatch("R-E-01", ("RF-01",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_02(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    complex_features = _array_has_any(
-        a.get("seizure_features"), frozenset({"focal", "duration_gt_5min", "recurrent_24h", "incomplete_recovery"})
-    )
-    if _is_true(a.get("seizure_occurred")) or _is_true(a.get("seizure_active_now")) or complex_features:
-        codes = ["RF-02"]
-        if complex_features:
-            codes.append("RF-03")
-        return RuleMatch("R-E-02", tuple(codes), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_03(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("neck_stiffness")) or _is_true(a.get("bulging_fontanelle")) or _is_true(a.get("photophobia")):
-        return RuleMatch("R-E-03", ("RF-04",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_04(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    age_months = age_in_months(a)
-    if _is_true(a.get("new_confusion")) and age_months is not None and age_months >= 16 * 12:
-        return RuleMatch("R-E-04", ("RF-05",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_05(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("focal_neuro_deficit")):
-        return RuleMatch("R-E-05", ("RF-06",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_06(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if a.get("breathing_difficulty") == "severe" or _is_true(a.get("cyanosis")) or _is_true(a.get("stridor_or_drooling")):
-        codes = []
-        if a.get("breathing_difficulty") == "severe":
-            codes.append("RF-07")
-        if _is_true(a.get("cyanosis")):
-            codes.append("RF-08")
-        if _is_true(a.get("stridor_or_drooling")):
-            codes.append("RF-10")
-        return RuleMatch("R-E-06", tuple(codes), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_07(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    age_months = age_in_months(a)
-    young = age_months is not None and age_months < 5 * 12
-    if young and (_is_true(a.get("chest_indrawing")) or _is_true(a.get("nasal_flaring_grunting"))):
-        return RuleMatch("R-E-07", ("RF-09",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_08(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    spo2 = a.get("spo2_percent")
-    if isinstance(spo2, (int, float)) and spo2 <= 92:
-        return RuleMatch("R-E-08", ("RF-11",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_09(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("cold_clammy_skin")) or _is_true(a.get("capillary_refill_ge_3s")):
-        return RuleMatch("R-E-09", ("RF-13",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_10(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if a.get("urine_output") == "none_gt_6h":
-        return RuleMatch("R-E-10", ("RF-14",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_11(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if a.get("feeding_intake") == "unable" or a.get("vomiting_severity") == "unable_to_keep_fluids":
-        return RuleMatch("R-E-11", ("RF-15",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_12(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("non_blanching_rash")):
-        return RuleMatch("R-E-12", ("RF-18",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_13(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("mucosal_bleeding")) or _is_true(a.get("gi_bleeding")):
-        codes = []
-        if _is_true(a.get("mucosal_bleeding")):
-            codes.append("RF-19")
-        if _is_true(a.get("gi_bleeding")):
-            codes.append("RF-20")
-        return RuleMatch("R-E-13", tuple(codes), "EMERGENCY", "now")
-    return None
-
-
 def _r_e_14(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
     age_months = age_in_months(a)
     if age_months is not None and age_months < 3 and _fever_present(a):
@@ -576,8 +445,8 @@ def _r_e_14(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
 
 
 def _r_e_16(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    temp = a.get("temp_c")
-    if not (isinstance(temp, (int, float)) and temp >= 40.0):
+    temp = _as_float(a.get("temp_c"))
+    if not (temp is not None and temp >= 40.0):
         return None
     heat_exposure = _is_true(a.get("heat_exposure_context"))
     if a.get("consciousness_level") not in ("alert", None) or heat_exposure:
@@ -595,8 +464,8 @@ def _r_e_18(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
     at_risk = _is_true(a.get("known_neutropenia")) or _array_has_any(a.get("immunocompromise_cause"), frozenset({"chemotherapy_6w"}))
     if not at_risk:
         return None
-    temp = a.get("temp_c")
-    threshold_met = isinstance(temp, (int, float)) and temp >= 38.3
+    temp = _as_float(a.get("temp_c"))
+    threshold_met = temp is not None and temp >= 38.3
     if threshold_met or _is_true(a.get("fever_reported")):
         return RuleMatch("R-E-18", ("RF-30",), "EMERGENCY", "now")
     return None
@@ -611,28 +480,11 @@ def _r_e_19(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
     return None
 
 
-def _r_e_20(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if a.get("abdominal_pain_severity") == "severe" or _is_true(a.get("abdominal_guarding")):
-        return RuleMatch("R-E-20", ("RF-39",), "EMERGENCY", "now")
-    return None
-
-
 def _r_e_15(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    temp = a.get("temp_c")
-    hypothermia = (isinstance(temp, (int, float)) and temp < 36.0) or _is_true(a.get("hypothermia_reported"))
+    temp = _as_float(a.get("temp_c"))
+    hypothermia = (temp is not None and temp < 36.0) or _is_true(a.get("hypothermia_reported"))
     if hypothermia and conservatism_tier(a) >= 1:
         return RuleMatch("R-E-15", ("RF-24",), "EMERGENCY", "now")
-    return None
-
-
-def _r_e_21(a: dict[str, object], matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if not (_is_true(a.get("is_pregnant")) or _is_true(a.get("postpartum_6w"))):
-        return None
-    flags = a.get("obstetric_red_flags")
-    has_flags = isinstance(flags, (list, tuple)) and len(flags) > 0
-    other_emergency_matched = any(m.level == "EMERGENCY" for m in matches)
-    if has_flags or other_emergency_matched:
-        return RuleMatch("R-E-21", ("RF-32",), "EMERGENCY", "now")
     return None
 
 
@@ -640,22 +492,22 @@ def _r_v_01(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
     age_months = age_in_months(a)
     if age_months is None or not (3 <= age_months < 6):
         return None
-    temp = a.get("temp_c")
-    if isinstance(temp, (int, float)) and temp >= 39.0:
+    temp = _as_float(a.get("temp_c"))
+    if temp is not None and temp >= 39.0:
         return RuleMatch("R-V-01", ("RF-23",), "EARLY_VISIT", "within_24h")
     return None
 
 
 def _r_v_02(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    duration = a.get("fever_duration_days")
-    if isinstance(duration, (int, float)) and duration >= 5:
+    duration = _as_float(a.get("fever_duration_days"))
+    if duration is not None and duration >= 5:
         return RuleMatch("R-V-02", ("RF-26",), "EARLY_VISIT", "within_24h")
     return None
 
 
 def _r_v_03(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    duration = a.get("fever_duration_days")
-    if isinstance(duration, (int, float)) and duration >= 7:
+    duration = _as_float(a.get("fever_duration_days"))
+    if duration is not None and duration >= 7:
         return RuleMatch("R-V-03", ("RF-27",), "EARLY_VISIT", "within_24h")
     return None
 
@@ -663,85 +515,6 @@ def _r_v_03(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
 def _r_v_04(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
     if _is_true(a.get("rigors")):
         return RuleMatch("R-V-04", ("RF-28",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_05(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    spo2 = a.get("spo2_percent")
-    spo2_band = isinstance(spo2, (int, float)) and 93 <= spo2 <= 95
-    if spo2_band or _is_true(a.get("rapid_breathing")):
-        return RuleMatch("R-V-05", ("RF-11",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_06(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    signs = a.get("dehydration_signs")
-    many_signs = isinstance(signs, (list, tuple)) and len(signs) >= 2
-    reduced_combo = a.get("urine_output") == "reduced" and a.get("feeding_intake") == "reduced"
-    if many_signs or reduced_combo:
-        return RuleMatch("R-V-06", ("RF-16",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_07(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("dizziness_on_standing")):
-        return RuleMatch("R-V-07", ("RF-17",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_08(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("jaundice_new")):
-        return RuleMatch("R-V-08", ("RF-21",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_09(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("immunocompromised")) and not _is_true(a.get("known_neutropenia")):
-        return RuleMatch("R-V-09", ("RF-31",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_10(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("is_pregnant")) or _is_true(a.get("postpartum_6w")):
-        return RuleMatch("R-V-10", ("RF-32",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_11(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    device = a.get("indwelling_device")
-    has_device = isinstance(device, (list, tuple)) and _array_has_non_empty_excluding(device, frozenset({"none"}))
-    if _is_true(a.get("recent_surgery_30d")) or has_device:
-        codes = []
-        if _is_true(a.get("recent_surgery_30d")):
-            codes.append("RF-33")
-        if has_device:
-            codes.append("RF-34")
-        return RuleMatch("R-V-11", tuple(codes), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_12(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _array_has_any(a.get("chronic_conditions"), CHRONIC_SEVERE):
-        return RuleMatch("R-V-12", ("RF-36",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_13(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    age_months = age_in_months(a)
-    if age_months is not None and age_months >= 75 * 12:
-        return RuleMatch("R-V-13", ("RF-37",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_14(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if a.get("vomiting_severity") == "frequent":
-        return RuleMatch("R-V-14", ("RF-40",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_15(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("joint_limb_swelling")) or _is_true(a.get("non_weight_bearing")):
-        return RuleMatch("R-V-15", ("RF-41",), "EARLY_VISIT", "within_24h")
     return None
 
 
@@ -756,26 +529,6 @@ def _r_v_16(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
     return None
 
 
-def _r_v_17(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("localized_infection_signs")):
-        return RuleMatch("R-V-17", ("RF-43",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _r_v_18(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    concern = a.get("caregiver_concern_level")
-    high_concern = isinstance(concern, (int, float)) and concern >= 8
-    if high_concern or _is_true(a.get("looks_very_unwell")):
-        return RuleMatch("R-V-18", ("RF-44",), "EARLY_VISIT", "within_4h")
-    return None
-
-
-def _r_v_19(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("chest_pain")) or _is_true(a.get("hemoptysis")):
-        return RuleMatch("R-V-19", ("RF-12",), "EARLY_VISIT", "within_4h")
-    return None
-
-
 def _r_v_20(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
     if not _is_true(a.get("malaria_risk_area")):
         return None
@@ -785,16 +538,7 @@ def _r_v_20(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch 
     return None
 
 
-def _r_g_01(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
-    if _is_true(a.get("lives_alone")) or a.get("caregiver_available") == "false":
-        return RuleMatch("R-G-01", ("RF-38",), "EARLY_VISIT", "within_24h")
-    return None
-
-
-def _fallback_rule(_a: dict[str, object]) -> RuleMatch:
-    # R-G-02(a) + CS Part 6 "Dừng hẳn" (c): không bao giờ mặc định về SELF_CARE khi checklist §5.4
-    # chưa thoả - an toàn hơn luôn là EARLY_VISIT (P0-6: mơ hồ giữa 2 mức luôn chọn mức thận trọng hơn).
-    return RuleMatch("R-G-02", (), "EARLY_VISIT", "within_24h")
+_fallback_rule = common_rules.default_early_visit_rule
 
 
 def _self_care_default_rule(_a: dict[str, object]) -> RuleMatch:
@@ -804,14 +548,103 @@ def _self_care_default_rule(_a: dict[str, object]) -> RuleMatch:
 # Thứ tự khai báo QUAN TRỌNG: R-E-15 (hạ thân nhiệt) và R-E-21 (sản khoa) phải đứng SAU mọi rule
 # R-E-xx khác trong cùng nhóm EMERGENCY, vì R-E-21 cần biết ĐÃ có rule EMERGENCY nào khác khớp chưa
 # (đúng logic gốc trước khi tách generic engine).
+#
+# Danh sách viết THẲNG từng rule thay vì `*common_rules.EMERGENCY_RULES`: thứ tự ở đây đan xen rule
+# phổ quát với rule đặc thù fever (R-E-14 sốt ở trẻ <3 tháng nằm giữa R-E-13 và R-E-16), nên nối khối
+# sẽ làm sai thứ tự - và thứ tự là một phần của hợp đồng, không phải chi tiết trình bày.
 RULE_CATALOG: tuple = (
-    _r_e_01, _r_e_02, _r_e_03, _r_e_04, _r_e_05, _r_e_06, _r_e_07, _r_e_08, _r_e_09, _r_e_10,
-    _r_e_11, _r_e_12, _r_e_13, _r_e_14, _r_e_16, _r_e_17, _r_e_18, _r_e_19, _r_e_20,
-    _r_e_15, _r_e_21,
-    _r_v_01, _r_v_02, _r_v_03, _r_v_04, _r_v_05, _r_v_06, _r_v_07, _r_v_08, _r_v_09, _r_v_10,
-    _r_v_11, _r_v_12, _r_v_13, _r_v_14, _r_v_15, _r_v_16, _r_v_17, _r_v_18, _r_v_19, _r_v_20,
-    _r_g_01,
+    common_rules.r_e_01, common_rules.r_e_02, common_rules.r_e_03, common_rules.r_e_04,
+    common_rules.r_e_05, common_rules.r_e_06, common_rules.r_e_07, common_rules.r_e_08,
+    common_rules.r_e_09, common_rules.r_e_10, common_rules.r_e_11, common_rules.r_e_12,
+    common_rules.r_e_13,
+    _r_e_14, _r_e_16, _r_e_17, _r_e_18, _r_e_19,
+    common_rules.r_e_20,
+    _r_e_15, common_rules.r_e_21,
+    _r_v_01, _r_v_02, _r_v_03, _r_v_04,
+    common_rules.r_v_05, common_rules.r_v_06, common_rules.r_v_07, common_rules.r_v_08,
+    common_rules.r_v_09, common_rules.r_v_10, common_rules.r_v_11, common_rules.r_v_12,
+    common_rules.r_v_13, common_rules.r_v_14, common_rules.r_v_15,
+    _r_v_16,
+    common_rules.r_v_17, common_rules.r_v_18, common_rules.r_v_19,
+    _r_v_20,
+    common_rules.r_g_01,
 )
+
+
+# ---------------------------------------------------------------------------------------------
+# Đính chính lời khai (`symptom_protocol/retraction.py`)
+# ---------------------------------------------------------------------------------------------
+
+# Field cha bị phủ định => field con mất ý nghĩa, phải xoá khỏi hồ sơ. Lỗi thật: sau khi người dùng
+# nói "à tôi nhầm, tôi không bị sốt", phiếu bàn giao vẫn còn "39 độ, sốt 2 ngày".
+FIELD_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "fever_reported": (
+        "fever_status", "temp_c", "temp_site", "temp_measured_at", "temp_device_type",
+        "fever_onset_at", "fever_duration_days", "rigors", "antipyretic_taken", "antipyretic_drug",
+        "antipyretic_response", "worse_after_defervescence",
+    ),
+    "fever_status": (
+        "temp_c", "temp_site", "temp_measured_at", "fever_onset_at", "fever_duration_days",
+        "rigors", "antipyretic_taken", "antipyretic_drug", "antipyretic_response",
+        "worse_after_defervescence",
+    ),
+    "antipyretic_taken": ("antipyretic_drug", "antipyretic_response", "worse_after_defervescence"),
+    "is_pregnant": ("gestational_weeks", "obstetric_red_flags"),
+    "immunocompromised": ("immunocompromise_cause", "known_neutropenia"),
+    "recent_surgery_30d": ("surgical_site_signs",),
+    # `non_blanching_rash` CỐ Ý không nằm dưới `rash_present`: nó là red flag M0 (RF-18) và "không có
+    # ban" không làm nó VÔ NGHĨA - nó làm nó ÂM TÍNH, mà âm tính là dữ kiện phải giữ. Bản đầu có xếp
+    # nó vào đây và đo được hậu quả khi chạy LLM thật: một câu "Không, không bị co giật" khiến model
+    # tiện tay ghi `rash_present=false`, retraction xoá luôn `non_blanching_rash` đã xác nhận "false"
+    # ở lượt trước về "unknown" -> checklist tự chăm sóc không bao giờ đủ và cụm ban bị hỏi lại. Nếu
+    # hai field CHỌI nhau (không ban nhưng có ban không mất khi ấn kính) thì đó là việc của
+    # `contradiction_rules` - hỏi lại, chứ không phải im lặng xoá một dấu hiệu đỏ.
+    "rash_present": ("rash_type",),
+}
+
+# Ngưỡng "có sốt" theo nhiệt độ đo được (KM §2: >= 38.0°C là sốt). Dùng RIÊNG cho việc phát hiện mâu
+# thuẫn, không phải để tự kết luận có sốt.
+_FEVER_TEMP_THRESHOLD_C = 38.0
+
+
+def _contradiction_no_fever_but_hot(answers: dict[str, object]) -> tuple[str, ...]:
+    """Hồ sơ ghi "không sốt" nhưng người bệnh khai nhiệt độ từ 38°C trở lên.
+
+    Vá nửa sau của bug C2: model hiểu nhầm "bé không sốt xuất huyết" thành `fever_status=none`, rồi
+    dù người dùng nói rõ "39.2 độ, đo ở nách" ba lượt sau, hệ thống VẪN không sửa lại. `apply_retraction`
+    không bắt được ca này vì nó chỉ so "dương -> âm", còn đây là "unknown -> âm" ngay lượt đầu.
+
+    Không tự chọn bên nào đúng - trả về 2 field để engine mở lại cụm và hỏi cho rõ."""
+    temp = _as_float(answers.get("temp_c"))
+    if temp is None or temp < _FEVER_TEMP_THRESHOLD_C:
+        return ()
+    if answers.get("fever_reported") == "false" or answers.get("fever_status") == "none":
+        return ("fever_reported", "fever_status", "temp_c")
+    return ()
+
+
+CONTRADICTION_RULES: tuple = (_contradiction_no_fever_but_hot,)
+
+
+# ---------------------------------------------------------------------------------------------
+# Sàng lọc theo nhóm cơ quan (`symptom_protocol/screening.py`)
+# ---------------------------------------------------------------------------------------------
+#
+# Stage 3A đi tuần tự là 11 lượt, Stage 3B là 5 - kể cả với ca lành tính mà tất cả cùng ra âm tính,
+# đúng nhóm ca ta muốn kết thúc sớm nhất (đo được: ca lành tính tốn 36 lượt khi chạy LLM thật).
+# Gộp thành nhóm rút xuống 3 lượt cho 3A (Q3-01 + Q3-03 hỏi riêng + 1 câu sàng lọc) và 2 lượt cho 3B
+# (1 câu sàng lọc + Q3-14).
+#
+# Nội dung nhóm nằm ở `common_safety` chứ không phải ở đây: chúng gộp các cụm dấu hiệu NGUY KỊCH phổ
+# quát, không phải kiến thức về sốt (xem docstring `common_safety/screening_groups.py`).
+SCREENING_GROUPS: tuple = (
+    common_screening.emergency_scan_groups(GATE_STAGES[0])
+    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+)
+
+# Xoá nhầm 2 field này là đắt nhất: chúng kéo theo TOÀN BỘ phần đặc điểm sốt (12 field) và làm câu
+# chuyện lâm sàng đổi hẳn. Giữ đúng 2 field - mỗi field ở đây tốn của người bệnh một lượt xác nhận.
+CONFIRM_BEFORE_RETRACT: frozenset[str] = frozenset({"fever_reported", "fever_status"})
 
 
 FEVER_PROTOCOL = SymptomProtocol(
@@ -833,5 +666,14 @@ FEVER_PROTOCOL = SymptomProtocol(
     emergency_message=EMERGENCY_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=OPPORTUNISTIC_KEYWORDS,
+    screening_groups=SCREENING_GROUPS,
+    field_dependencies=FIELD_DEPENDENCIES,
+    contradiction_rules=CONTRADICTION_RULES,
+    confirm_before_retract=CONFIRM_BEFORE_RETRACT,
     derive_fields=derive_duration,
+    reason_code_labels=REASON_CODE_LABELS,
+    # Protocol sốt biết trước than phiền là gì nên không có field `chief_complaint` để hỏi.
+    default_chief_complaint="Sốt",
+    onset_field="fever_onset_at",
+    severity_field="temp_c",
 )

@@ -16,8 +16,8 @@ Bố cục `logs/<namespace>/<session_id>/`:
     stage-<STAGE>.jsonl  - mọi step của mọi lượt diễn ra khi đang ở stage đó
     llm-io.jsonl         - nguyên văn prompt gửi LLM + nguyên văn response (tách khỏi file stage vì
                            quá dài, dòng stage chỉ giữ `io_ref` trỏ sang)
-    rule-engine.jsonl    - phụ dòng `tool_call` (tool=red_flag_engine.evaluate) từ file stage, để dễ
-                           grep riêng kết quả rule engine qua mọi stage
+    rule-engine.jsonl    - phụ dòng `tool_call` của rule engine (xem `_RULE_ENGINE_TOOLS`) từ file
+                           stage, để dễ grep riêng kết quả rule engine qua mọi stage
 
 CẢNH BÁO PHI: `user_message`/`agent_message`/nội dung `llm-io.jsonl` chứa nguyên văn hội thoại người
 bệnh. `logs/` đã nằm trong `.gitignore`. Đặt `FEVER_LOG_REDACT=1` để thay các trường văn bản tự do
@@ -61,6 +61,8 @@ EventType = Literal[
     "llm_request",
     "llm_response",
     "extract",
+    "screen",
+    "screen_reject",
     "rule_gate",
     "route_decided",
     "agent_message",
@@ -77,6 +79,12 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "llm_request",
         "llm_response",
         "extract",
+        # Lượt sàng lọc theo nhóm cơ quan (`symptom_protocol/screening.py`): `screen` ghi verdict của
+        # từng nhóm, `screen_reject` ghi nhóm bị TỪ CHỐI phủ định vì model không trích được câu nào
+        # trong tin nhắn. Tách khỏi `extract` vì đây là lớp quyết định "đóng cả nhóm cụm hay không" -
+        # khi cần lần lại "vì sao ca này không bị hỏi về xuất huyết", đó là dòng phải grep đầu tiên.
+        "screen",
+        "screen_reject",
         "rule_gate",
         "route_decided",
         "agent_message",
@@ -86,6 +94,13 @@ EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 ToolName = str
+
+# Tool nào được PHỤ thêm vào `rule-engine.jsonl`. Phải liệt kê cả hai tên vì có HAI engine cùng tồn
+# tại: `red_flag_engine.evaluate` (engine fever cũ, `fever_red_flag_engine.py`) và
+# `rule_engine.evaluate` (engine dùng chung của `symptom_protocol/`, đường mà `/chat` đang chạy).
+# Trước đây điều kiện chỉ khớp tên cũ nên `rule-engine.jsonl` KHÔNG BAO GIỜ được ghi cho đường agent
+# mới - file luôn rỗng dù rule engine chạy mỗi lượt.
+_RULE_ENGINE_TOOLS: frozenset[str] = frozenset({"red_flag_engine.evaluate", "rule_engine.evaluate"})
 """Tên tool dạng `"<module>.<method>"` (vd `"rule_engine.evaluate"`, `"stage_machine.next_cluster"`).
 Không còn là enum đóng theo từng symptom_group cụ thể - `_validate_tool_name` chỉ kiểm ĐỊNH DẠNG,
 không kiểm danh sách cứng, để mọi protocol cắm vào engine chung (`symptom_protocol/`) đều dùng được
@@ -251,7 +266,7 @@ def step(
         if _redact_enabled():
             record = _redact_payload(record)
         _append_jsonl(_stage_path(session_id, stage), record)
-        if tool == "red_flag_engine.evaluate":
+        if tool in _RULE_ENGINE_TOOLS:
             _append_jsonl(_rule_engine_path(session_id), record)
 
 

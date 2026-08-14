@@ -21,8 +21,10 @@ import pytest
 from src import paths
 from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
+from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import fever_stage_log, provider_router
 from src.services.symptom_protocol import intake_agent as _engine
+from src.services.symptom_protocol import retraction
 
 O1_USER_MESSAGE = (
     "Con em 3 tuổi, sốt 2 ngày 38,5 độ, bé vẫn tỉnh táo, chơi đùa bình thường, ăn uống tốt, "
@@ -161,6 +163,44 @@ def test_batch_negation_with_fabricated_evidence_is_rejected():
     assert "false" not in collected.values()
 
 
+def test_bare_negation_word_is_not_evidence_for_an_unasked_field():
+    """Lỗi thật đo được khi chạy LLM thật (2026-08-13, gemini-3.1-flash-lite).
+
+    Người bệnh trả lời "Không, không bị co giật" cho cụm co giật; model tiện tay ghi
+    `rash_present="false"` kèm trích dẫn "Không" - đúng chữ có trong tin nhắn nên guard chấp nhận, dù
+    người bệnh chưa hề được hỏi về ban. Đây là lỗi C1 ở dạng nhỏ hơn: một hạt phủ định trần chứng minh
+    được MỌI thứ, tức là không chứng minh được gì."""
+    message = "Không, không bị co giật"
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, ("rash_present",),
+        {"rash_present": {"value": "false", "evidence_span": "Không"}},
+        message=message, evidence="unasked",
+    )
+    assert collected["rash_present"] == "unknown"
+
+
+def test_specific_evidence_is_still_accepted_for_an_unasked_field():
+    """Mặt đối xứng: bằng chứng NHẮC TỚI chính triệu chứng đó vẫn được nhận - guard không được siết
+    tới mức loại luôn phủ định thật (ca lành tính sẽ không bao giờ kết thúc)."""
+    message = "Người không nổi ban gì cả, chỉ sốt thôi"
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, ("rash_present",),
+        {"rash_present": {"value": "false", "evidence_span": "không nổi ban gì cả"}},
+        message=message, evidence="unasked",
+    )
+    assert collected["rash_present"] == "false"
+
+
+def test_bare_negation_still_valid_for_batch_negation_of_the_asked_cluster():
+    """Trong phạm vi cụm VỪA ĐƯỢC HỎI thì "Không" là câu trả lời trực tiếp, không phải suy diễn -
+    turn-scoping (`batch_negation=False` cho safety keys) đã chặn cờ này lan ra ngoài cụm."""
+    cluster = CLUSTERS_BY_ID["Q3-04"]
+    collected = agent._collect(
+        cluster, {"cluster_all_negative": True, "negation_evidence": "Không"}, "Không",
+    )
+    assert set(collected.values()) == {"false"}
+
+
 def test_batch_negation_evidence_tolerates_case_and_whitespace():
     cluster = CLUSTERS_BY_ID["Q3-04"]
     parsed = {"cluster_all_negative": True, "negation_evidence": "KHÔNG   có   gì  cả"}
@@ -209,6 +249,20 @@ def test_merge_answers_allows_user_to_correct_a_determined_value():
 def test_merge_answers_still_writes_unknown_for_new_key():
     merged = _engine._merge_answers({}, {"cyanosis": "unknown"})
     assert merged["cyanosis"] == "unknown"
+
+
+def test_retraction_never_erases_a_confirmed_red_flag_negative():
+    """"Không có ban" KHÔNG làm `non_blanching_rash` vô nghĩa - nó làm field đó âm tính, mà âm tính
+    là dữ kiện phải giữ. Lỗi thật đo được khi chạy LLM thật: `non_blanching_rash` đã xác nhận "false"
+    ở lượt trước bị xoá về "unknown" -> checklist tự chăm sóc không bao giờ đủ, cụm ban bị hỏi lại."""
+    before = {"non_blanching_rash": "false", "rash_present": "unknown", "rash_type": "petechial"}
+    after = {"non_blanching_rash": "false", "rash_present": "false", "rash_type": "petechial"}
+
+    cleaned, reopened = retraction.apply_retraction(FEVER_PROTOCOL, before, after)
+
+    assert cleaned["non_blanching_rash"] == "false"
+    assert cleaned["rash_type"] == "unknown"  # kiểu ban thì đúng là vô nghĩa khi không có ban
+    assert "Q3-11" in reopened
 
 
 def test_non_batch_negation_cluster_ignores_cluster_all_negative_flag():

@@ -17,7 +17,6 @@ import pytest
 from src import paths
 from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
-from src.services.engines import fever_stage_machine as fsm
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import fever_stage_log, provider_router
 from src.services.symptom_protocol import intake_agent as _engine
@@ -73,27 +72,46 @@ def test_emergency_response_has_no_question_mark_and_no_disease_name(monkeypatch
         assert disease_word not in result.agent_message.casefold()
 
 
-# --- hướng E vẫn đúng 1 call nhưng có cả extracted lẫn next_question -----------------------------
+# --- stage ngoài gate: 2 call TÁCH BIỆT (extract -> chọn cụm -> hỏi) ----------------------------
 
 
-def test_non_gate_stage_still_uses_single_combined_call(monkeypatch):
-    fake = _fake_complete({"extracted": {"fever_reported": "true"}, "next_question": "Bé sốt được mấy ngày rồi ạ?"})
+def test_non_gate_stage_uses_two_calls_extract_then_question(monkeypatch):
+    """Thay cho `test_non_gate_stage_still_uses_single_combined_call` cũ.
+
+    Hợp đồng CŨ: stage ngoài gate dùng 1 call gộp trả `{"extracted": ..., "next_question": ...}`.
+    Hợp đồng MỚI: MỌI stage đi chung 1 luồng 2 call - extract trước, chọn cụm kế tiếp bằng RULE trên
+    `answers` đã merge, rồi mới sinh câu hỏi. Lý do đổi (xem docstring `intake_agent.run_turn`): bản
+    gộp phải đoán trước cụm kế tiếp trên `answers` CŨ, nên lời đính chính ngay trong lượt đó không kịp
+    đổi hướng - đúng bug "vừa nói không sốt vẫn bị hỏi sốt mấy ngày rồi".
+
+    Test này vì vậy đo hợp đồng mới, KHÔNG phải nới lỏng test cũ cho qua."""
+    fake = Mock(
+        side_effect=[
+            provider_router.CompletionResult(
+                text=json.dumps({"fever_reported": "true"}), provider="openrouter", model="openai/gpt-4o-mini",
+            ),
+            provider_router.CompletionResult(
+                text="Bé sốt được mấy ngày rồi ạ?", provider="openrouter", model="openai/gpt-4o-mini",
+            ),
+        ]
+    )
     monkeypatch.setattr(provider_router, "complete", fake)
 
     session_id = "self-care-stage1"
     fever_stage_log.start(session_id, route="ROUTE_STANDARD", budget=16)
     cluster = CLUSTERS_BY_ID["Q1-01"]
-    next_cluster = fsm.next_cluster("1", {"fever_reported": "true"}, asked_ids=frozenset({"Q1-01"}))
 
     result = agent.run_turn(
-        session_id, turn=1, stage="1", cluster=cluster, message="Dạ bé đang sốt ạ",
-        answers={}, next_cluster=next_cluster,
+        session_id, turn=1, stage="1", cluster=cluster, message="Dạ bé đang sốt ạ", answers={},
     )
 
-    assert fake.call_count == 1
+    assert fake.call_count == 2
     assert result.emergency is False
-    assert result.extracted == {"fever_reported": "true"}
+    assert result.answers["fever_reported"] == "true"
     assert result.agent_message == "Bé sốt được mấy ngày rồi ạ?"
+    # Cụm kế tiếp do RULE chọn sau khi đã merge, không phải do LLM đề xuất.
+    assert result.next_cluster is not None
+    assert result.next_cluster.id != cluster.id
 
 
 # --- turn-scoping: cờ phủ định gộp KHÔNG lan sang field của cụm khác (lỗi C1) --------------------
