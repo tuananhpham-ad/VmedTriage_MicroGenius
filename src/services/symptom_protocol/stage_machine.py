@@ -8,6 +8,7 @@ tôn trọng điều kiện skip, và biết khi nào nên dừng".
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from src.services.symptom_protocol.models import QuestionCluster
@@ -16,12 +17,14 @@ from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for
 StopReason = Literal["RED_FLAG", "SUFFICIENT_EVIDENCE", "BUDGET_EXHAUSTED", "USER_CANNOT_CONTINUE"]
 
 
-def _is_filled(value: object) -> bool:
+def is_filled(value: object) -> bool:
+    """Field đã có câu trả lời XÁC ĐỊNH chưa. Nguồn duy nhất của khái niệm này cho toàn hệ thống -
+    `intake_agent` và `retraction` cùng dùng, để "đã điền" không có 2 định nghĩa lệch nhau."""
     return value is not None and value != "unknown" and value != ""
 
 
 def _cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
-    return any(not _is_filled(answers.get(key)) for key in cluster.fields)
+    return any(not is_filled(answers.get(key)) for key in cluster.fields)
 
 
 def _cluster_is_optional_tier(protocol: SymptomProtocol, cluster: QuestionCluster) -> bool:
@@ -66,6 +69,55 @@ def next_stage(protocol: SymptomProtocol, stage: str) -> str | None:
     if index + 1 >= len(protocol.stage_order):
         return None
     return protocol.stage_order[index + 1]
+
+
+@dataclass(frozen=True, slots=True)
+class Advance:
+    """Kết quả duyệt tới cụm kế tiếp, có thể đã BĂNG QUA ranh giới stage."""
+
+    cluster: QuestionCluster | None
+    stage: str
+    """Stage của `cluster`, hoặc stage cuối cùng đã tới nếu dừng."""
+    stop_reason: StopReason | None
+    """Chỉ khác `None` khi `cluster is None` - lý do phiên nên kết thúc."""
+
+
+def advance(
+    protocol: SymptomProtocol,
+    stage: str,
+    answers: dict[str, object],
+    *,
+    asked_ids: frozenset[str] = frozenset(),
+    asked_count: int | None = None,
+    known_triage_level: str | None = None,
+) -> Advance:
+    """Cụm kế tiếp THẬT SỰ sẽ được hỏi, băng qua stage nếu stage hiện tại đã hết cụm.
+
+    `next_cluster` một mình KHÔNG đủ để sinh câu hỏi: nó chỉ nhìn trong MỘT stage, nên khi cụm cuối
+    của stage vừa được trả lời nó trả `None` - và người bệnh nhận về một tin nhắn RỖNG trong khi phiên
+    vẫn đang chờ họ trả lời cụm đầu của stage sau (lỗi thật, đo được ở 5/40 lượt khi chạy LLM thật:
+    lượt 1, 3, 8, 16, 22 của ca lành tính đều trả câu hỏi rỗng). Hàm này là chỗ DUY NHẤT biết cách đi
+    tiếp, để `intake_agent` (sinh câu hỏi) và `session` (cập nhật trạng thái) không thể lệch nhau về
+    việc "cụm kế tiếp là cụm nào".
+
+    Hàm THUẦN - không side-effect, không log."""
+    current_stage = stage
+    count = len(asked_ids) if asked_count is None else asked_count
+    while True:
+        stop = should_stop(
+            protocol, current_stage, answers, asked_count=count,
+            known_triage_level=known_triage_level,
+        )
+        if stop is not None:
+            return Advance(None, current_stage, stop)
+        cluster = next_cluster(protocol, current_stage, answers, asked_ids=asked_ids)
+        if cluster is not None:
+            return Advance(cluster, current_stage, None)
+        following = next_stage(protocol, current_stage)
+        if following is None:
+            stop = "SUFFICIENT_EVIDENCE" if protocol.self_care_checklist_satisfied(answers) else "BUDGET_EXHAUSTED"
+            return Advance(None, current_stage, stop)
+        current_stage = following
 
 
 def should_stop(

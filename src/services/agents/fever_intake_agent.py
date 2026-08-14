@@ -64,14 +64,14 @@ def run_turn(
     cluster: QuestionCluster,
     message: str,
     answers: dict[str, TriState],
-    next_cluster: QuestionCluster | None = None,
     asked_ids: frozenset[str] = frozenset(),
+    retry_count: int = 0,
     credential: provider_router.LLMCredential | None = None,
 ) -> FeverTurnResult:
     return _engine.run_turn(
         FEVER_PROTOCOL, session_id,
         turn=turn, stage=stage, cluster=cluster, message=message, answers=answers,
-        next_cluster=next_cluster, asked_ids=asked_ids, credential=credential,
+        asked_ids=asked_ids, retry_count=retry_count, credential=credential,
     )
 
 

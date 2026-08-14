@@ -13,10 +13,11 @@ Muốn thêm symptom_group mới (vd chest_pain): viết `chest_pain_protocol.py
 from __future__ import annotations
 
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
+from src.services.sessions.symptom_session import session_store
 from src.services.symptom_protocol.protocol import SymptomProtocol  # noqa: F401 - re-export cho type hint
 from src.services.symptom_protocol.session import (
     EmptyMessageError,
-    ProtocolSessionStore,
+    ProtocolSessionStore,  # noqa: F401 - re-export, caller cũ vẫn import từ đây
     SessionNotFoundError,
     SessionState,
 )
@@ -36,11 +37,11 @@ __all__ = [
     "submit_message",
 ]
 
-session_store = ProtocolSessionStore(FEVER_PROTOCOL)
-
-
 def start_session(credential=None) -> FeverSession:
-    return session_store.start_session(credential)
+    """Mở phiên GHIM sẵn protocol sốt - endpoint này là lối vào chuyên biệt, caller đã tuyên bố đây
+    là ca sốt nên không có lượt mở (không phải đoán protocol). Ô chat tự do đi đường khác, xem
+    `symptom_session.py`."""
+    return session_store.start_session(credential, protocol_name=FEVER_PROTOCOL.name)
 
 
 def get_session(session_id: str) -> FeverSession:

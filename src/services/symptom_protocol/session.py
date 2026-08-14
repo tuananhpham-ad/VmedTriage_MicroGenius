@@ -12,8 +12,10 @@ Vòng đời một phiên:
         │                                                            │
         └────────────(người dùng xác nhận phiếu)────────────────────┴──> CONFIRMED
 
-Mỗi symptom_group tạo MỘT `ProtocolSessionStore(protocol)` của riêng mình (session của các bệnh khác
-nhau không lẫn vào nhau) - xem `fever_session.py` để biết cách "bind" cho fever.
+MỘT store phục vụ MỌI protocol (`registry.PROTOCOL_REGISTRY`). Trước đây mỗi bệnh một store riêng,
+nhưng điều đó không sống được cùng lượt mở: lúc mở phiên chưa biết đây là ca gì, và `case_id` =
+`session_id` phải tra được ở đúng một chỗ dù protocol nào đang chạy. Phiên vẫn không lẫn nhau vì
+protocol nằm TRONG `Session.protocol_name`, không phải trong store.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from src.services.infra import console_log
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra.provider_router import LLMCredential
 from src.services.symptom_protocol import intake_agent as agent
-from src.services.symptom_protocol import rule_engine, stage_machine
+from src.services.symptom_protocol import registry, rule_engine, stage_machine
 from src.services.symptom_protocol.models import QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
@@ -39,13 +41,35 @@ class SessionState(str, Enum):
     EMERGENCY = "emergency"
 
 
+class SessionPhase(str, Enum):
+    OPENING = "opening"
+    """Người bệnh chưa được hỏi gì - tin nhắn đầu là lời kể tự do. NGOÀI `STAGE_ORDER` của mọi
+    protocol (xem `registry.OPENING_PROTOCOL`)."""
+    COLLECTING = "collecting"
+
+
 @dataclass(slots=True)
 class Session:
     session_id: str = field(default_factory=lambda: str(uuid4()))
     state: SessionState = SessionState.COLLECTING
+    phase: SessionPhase = SessionPhase.COLLECTING
+    protocol_name: str = ""
+    """Protocol đang chạy. Rỗng khi còn ở lượt mở (chưa chọn được). Mọi nơi cần protocol phải đi qua
+    `ProtocolSessionStore._protocol(session)` chứ không đọc `store.protocol` - nếu không, phiên đã
+    chuyển sang protocol khác vẫn bị chấm bằng luật của protocol cũ."""
+    protocol_pinned: bool = False
+    """Caller đã TUYÊN BỐ protocol khi mở phiên (endpoint chuyên biệt như `/api/v1/fever/*`) ⇒ hệ
+    thống không được tự đổi sang protocol khác. Phiên mở từ ô chat tự do thì ngược lại: protocol do
+    hệ thống chọn, nên hệ thống cũng được quyền chọn lại khi lời khai đổi."""
     stage: str = ""
     answers: dict[str, object] = field(default_factory=dict)
-    asked_ids: set[str] = field(default_factory=set)
+    completed_cluster_ids: set[str] = field(default_factory=set)
+    """Cụm đã thu được câu trả lời. Trước đây là `asked_ids` và được `add()` VÔ ĐIỀU KIỆN mỗi lượt,
+    nên gõ "." hay né tránh cũng tính là đã hỏi xong - cụm không bao giờ được hỏi lại (bug C3)."""
+    unresolved_cluster_ids: set[str] = field(default_factory=set)
+    """Cụm đã hỏi lại đủ số lần cho phép mà vẫn không thu được gì - bỏ qua để không treo hội thoại,
+    nhưng ghi lại để phiếu bàn giao nói rõ đây là thông tin CHƯA HỎI ĐƯỢC, không phải "không có"."""
+    retry_count_by_cluster: dict[str, int] = field(default_factory=dict)
     current_cluster: QuestionCluster | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
     turn_count: int = 0
@@ -55,8 +79,29 @@ class Session:
     reason_codes: list[str] = field(default_factory=list)
     triggered_rules: list[str] = field(default_factory=list)
     stop_reason: str | None = None
+    escalation_lock: bool = False
+    """Rule engine đã chốt cấp cứu. Khoá QUYẾT ĐỊNH, không khoá DỮ KIỆN: người bệnh vẫn sửa được lời
+    khai và bản sửa vẫn vào phiếu bàn giao, nhưng hệ thống không tự hạ mức - việc đó thuộc về điều
+    dưỡng (P0-6)."""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     credential: LLMCredential | None = None
+
+    @property
+    def closed_cluster_ids(self) -> set[str]:
+        """Cụm không được chọn lại nữa, dạng khoá `"<protocol>:<cluster_id>"`."""
+        return self.completed_cluster_ids | self.unresolved_cluster_ids
+
+    def cluster_key(self, cluster_id: str) -> str:
+        """Trạng thái cụm lưu kèm TÊN PROTOCOL. Mã cụm dùng chung giữa các protocol (`Q3-03` là cụm
+        co giật ở cả fever lẫn generic - cùng một định nghĩa trong `common_safety`), nên nếu chỉ lưu
+        mã thì một phiên đổi protocol giữa chừng sẽ coi các cụm của protocol mới là "đã hỏi rồi" và
+        bỏ qua sạch."""
+        return f"{self.protocol_name}:{cluster_id}"
+
+    def closed_ids_for_current_protocol(self) -> frozenset[str]:
+        """Mã cụm đã đóng CỦA protocol đang chạy - dạng `stage_machine` hiểu được."""
+        prefix = f"{self.protocol_name}:"
+        return frozenset(key[len(prefix):] for key in self.closed_cluster_ids if key.startswith(prefix))
 
 
 class SessionNotFoundError(ValueError):
@@ -68,12 +113,23 @@ class EmptyMessageError(ValueError):
 
 
 class ProtocolSessionStore:
-    """Store + toàn bộ vòng đời phiên cho MỘT `SymptomProtocol`. Mỗi symptom_group giữ một instance
-    riêng (không dùng chung 1 store giữa các bệnh, để `Session` của bệnh này không lẫn với bệnh kia)."""
+    """Store + toàn bộ vòng đời phiên, phục vụ MỌI protocol trong `registry.PROTOCOL_REGISTRY`.
 
-    def __init__(self, protocol: SymptomProtocol) -> None:
-        self.protocol = protocol
+    `default_protocol` quyết định cách mở phiên khi caller không nói rõ protocol:
+
+    - `None` (dùng cho ô chat tự do): phiên bắt đầu ở **lượt mở** - người bệnh kể tự do, protocol
+      được chọn SAU khi trích xuất được lời kể đó.
+    - một protocol cụ thể (dùng cho endpoint chuyên biệt như `/api/v1/fever/*`): phiên vào thẳng
+      protocol đó, không có lượt mở - caller đã tuyên bố đây là ca gì."""
+
+    def __init__(self, default_protocol: SymptomProtocol | None = None) -> None:
+        self.protocol = default_protocol
         self._sessions: dict[str, Session] = {}
+
+    def _protocol(self, session: Session) -> SymptomProtocol:
+        """Protocol THẬT SỰ đang chạy cho phiên này. Mọi đường trong store phải đi qua đây - đọc
+        `self.protocol` sẽ chấm phiên bằng luật của protocol mặc định thay vì protocol đã chọn."""
+        return registry.protocol_for(session.protocol_name)
 
     def create(self, credential: LLMCredential | None = None) -> Session:
         session = Session(credential=credential)
@@ -86,18 +142,32 @@ class ProtocolSessionStore:
     def _require(self, session_id: str) -> Session:
         session = self.get(session_id)
         if session is None:
-            raise SessionNotFoundError(f"Không tìm thấy phiên hỏi-đáp {self.protocol.name}.")
+            raise SessionNotFoundError("Không tìm thấy phiên hỏi-đáp.")
         return session
 
-    def start_session(self, credential: LLMCredential | None = None) -> Session:
-        protocol = self.protocol
+    def start_session(
+        self, credential: LLMCredential | None = None, *, protocol_name: str | None = None,
+    ) -> Session:
+        pinned = protocol_name or (self.protocol.name if self.protocol is not None else None)
+        if pinned is None:
+            return self._start_open_session(credential)
+
+        protocol = registry.protocol_for(pinned)
         session = self.create(credential or protocol.default_credential)
+        session.protocol_name = protocol.name
+        session.protocol_pinned = True
+        session.phase = SessionPhase.COLLECTING
         first_stage = protocol.stage_order[0]
         session.stage = first_stage
         stage_log.start(session.session_id, route=None, budget=0, namespace=protocol.name)
         stage_log.stage_enter(session.session_id, first_stage)
 
-        cluster = stage_machine.next_cluster(protocol, first_stage, {})
+        # `advance` chứ không phải `next_cluster`: stage đầu có thể không có cụm nào cần hỏi (protocol
+        # generic, hoặc mọi cụm của stage 0 đều bị skip) - lúc đó vẫn phải đi tiếp chứ không mở phiên
+        # với câu hỏi rỗng.
+        step = stage_machine.advance(protocol, first_stage, {})
+        cluster = step.cluster
+        session.stage = step.stage
         session.current_cluster = cluster
         session.last_question = cluster.script_hint if cluster is not None else ""
         if session.last_question:
@@ -108,14 +178,32 @@ class ProtocolSessionStore:
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
 
+    def _start_open_session(self, credential: LLMCredential | None) -> Session:
+        """Phiên bắt đầu bằng lượt mở: chưa có protocol, chưa có stage, chưa có cụm nào."""
+        session = self.create(credential)
+        session.phase = SessionPhase.OPENING
+        session.stage = ""
+        session.current_cluster = None
+        session.last_question = registry.OPENING_QUESTION
+        session.conversation.append({"role": "assistant", "content": session.last_question})
+        stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
+
+        provider = (session.credential.provider if session.credential else None) or "server/fallback"
+        console_log.session_start(session.session_id, label="symptom intake", llm=provider)
+        console_log.agent_question(session.session_id, session.last_question, llm_used=False)
+        return session
+
     def submit_message(self, session_id: str, message: str) -> Session:
-        protocol = self.protocol
         session = self._require(session_id)
         if session.state != SessionState.COLLECTING:
             return session
         cleaned = (message or "").strip()
         if not cleaned:
             raise EmptyMessageError("Nội dung tin nhắn không được để trống.")
+        if session.phase is SessionPhase.OPENING:
+            return self._submit_open_message(session, cleaned)
+
+        protocol = self._protocol(session)
         if session.current_cluster is None:
             # Không còn cụm nào để hỏi (lẽ ra đã finish) - phòng vệ, không nên xảy ra trong luồng bình thường.
             return session
@@ -126,42 +214,53 @@ class ProtocolSessionStore:
         console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
         session.conversation.append({"role": "user", "content": cleaned})
 
-        next_hint: QuestionCluster | None = None
-        if stage not in protocol.gate_stages:
-            # Hướng E: cụm kế tiếp phải chọn TRƯỚC khi biết kết quả extract lượt này (mục 2 kiến trúc).
-            next_hint, _stage, _stop = self._walk_to_next_cluster(
-                stage, session.answers, session.asked_ids | {cluster.id}, known_triage_level=session.triage_level,
-            )
-
         result = agent.run_turn(
-            protocol,
+            # Phiên không ghim thì schema trích xuất được nới thêm vài field NHẬN DIỆN protocol khác:
+            # không có chúng, một phiên đang chạy `general` không có chỗ nào để ghi câu "bé sốt 39 độ"
+            # nên không bao giờ chuyển lại được sang protocol sốt.
+            protocol if session.protocol_pinned else registry.with_switch_detection(protocol),
             session_id,
             turn=session.turn_count,
             stage=stage,
             cluster=cluster,
             message=cleaned,
             answers=session.answers,
-            next_cluster=next_hint,
-            asked_ids=frozenset(session.asked_ids),
+            protocol_name=session.protocol_name,
+            asked_ids=session.closed_ids_for_current_protocol(),
+            retry_count=session.retry_count_by_cluster.get(session.cluster_key(cluster.id), 0),
             conversation=list(session.conversation),
             credential=session.credential,
+            # Phiên đã ghim protocol thì KHÔNG truyền hàm chọn - caller tuyên bố đây là ca gì, hệ
+            # thống không được tự chuyển hướng khỏi tuyên bố đó. (Người bệnh rút lời khai vẫn được
+            # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
+            select_protocol=None if session.protocol_pinned else registry.select_protocol,
+            protocol_for=None if session.protocol_pinned else registry.protocol_for,
         )
 
         session.answers = result.answers
-        session.asked_ids.add(cluster.id)
+        # Ghi nhận kết quả cụm TRƯỚC khi đổi `protocol_name`: cụm vừa hỏi thuộc protocol CŨ, ghi nó
+        # dưới tên protocol mới sẽ làm cụm cùng mã của protocol mới bị coi là đã hỏi rồi.
+        self._record_cluster_outcome(session, cluster, result)
+        if result.protocol_name and result.protocol_name != session.protocol_name:
+            console_log.session_start(
+                session.session_id, label=f"đổi protocol -> {result.protocol_name}", llm="rule",
+            )
+            session.protocol_name = result.protocol_name
         session.llm_used_last_turn = result.llm_used
         if result.agent_message:
             session.conversation.append({"role": "assistant", "content": result.agent_message})
+        closed = len(session.closed_cluster_ids)
         console_log.extraction(
             session.session_id, result.extracted,
-            percent=round(100 * len(session.asked_ids) / max(len(session.asked_ids) + 1, 1)),
-            filled=len(session.asked_ids), total=len(session.asked_ids) + 1,
+            percent=round(100 * closed / max(closed + 1, 1)),
+            filled=closed, total=closed + 1,
         )
 
         if result.emergency:
             session.triage_level = result.triage_level
             session.reason_codes = list(result.reason_codes)
             session.triggered_rules = list(result.triggered_rules)
+            session.escalation_lock = True
             session.state = SessionState.EMERGENCY
             session.current_cluster = None
             session.last_question = result.agent_message
@@ -180,66 +279,122 @@ class ProtocolSessionStore:
             session.triggered_rules = list(result.triggered_rules)
 
         session.last_question = result.agent_message
-        self._progress(session, result.next_cluster)
+        self._progress(session, result)
         return session
 
-    def _walk_to_next_cluster(
-        self,
-        stage: str,
-        answers: dict[str, object],
-        asked_ids: set[str],
-        *,
-        known_triage_level: str | None = None,
-    ) -> tuple[QuestionCluster | None, str, str | None]:
-        """Đi tới cụm khả dụng kế tiếp, băng qua ranh giới stage nếu cần, dừng lại đúng lúc theo
-        `should_stop`. Hàm THUẦN, không side-effect - dùng để "peek" (hướng E) lẫn "progress" thật
-        sau lượt (mọi hướng)."""
-        protocol = self.protocol
-        current_stage = stage
-        while True:
-            route = protocol.determine_route(answers)
-            stop = stage_machine.should_stop(
-                protocol, current_stage, answers, asked_count=len(asked_ids), route=route,
-                known_triage_level=known_triage_level,
-            )
-            if stop is not None:
-                return None, current_stage, stop
-            cluster = stage_machine.next_cluster(protocol, current_stage, answers, asked_ids=frozenset(asked_ids))
-            if cluster is not None:
-                return cluster, current_stage, None
-            following = stage_machine.next_stage(protocol, current_stage)
-            if following is None:
-                stop = "SUFFICIENT_EVIDENCE" if protocol.self_care_checklist_satisfied(answers) else "BUDGET_EXHAUSTED"
-                return None, current_stage, stop
-            current_stage = following
+    def _submit_open_message(self, session: Session, message: str) -> Session:
+        """Lượt mở: lời kể tự do của người bệnh, và là lượt CHỌN protocol.
 
-    def _progress(self, session: Session, immediate_next: QuestionCluster | None) -> None:
-        """Cập nhật `session.stage`/`session.current_cluster` cho lượt kế tiếp, hoặc kết thúc phiên."""
-        protocol = self.protocol
-        if immediate_next is not None:
-            if immediate_next.stage != session.stage:
-                stage_log.stage_enter(session.session_id, immediate_next.stage)
-            session.stage = immediate_next.stage
-            session.current_cluster = immediate_next
-            return
+        Không dùng `_record_cluster_outcome`: chưa có cụm nào được hỏi nên không có cụm nào để đánh
+        dấu xong. Đây cũng là lý do lượt mở nằm ngoài `STAGE_ORDER` chứ không phải một stage `"-1"`."""
+        session.turn_count += 1
+        console_log.user_message(session.session_id, message, turn=session.turn_count)
+        session.conversation.append({"role": "user", "content": message})
 
-        following_stage = stage_machine.next_stage(protocol, session.stage)
-        if following_stage is None:
-            self._finish(session, "SUFFICIENT_EVIDENCE" if protocol.self_care_checklist_satisfied(session.answers) else "BUDGET_EXHAUSTED")
-            return
-
-        stage_log.stage_enter(session.session_id, following_stage)
-        cluster, final_stage, stop = self._walk_to_next_cluster(
-            following_stage, session.answers, session.asked_ids, known_triage_level=session.triage_level,
+        result = agent.run_open_turn(
+            registry.OPENING_PROTOCOL,
+            session.session_id,
+            turn=session.turn_count,
+            message=message,
+            answers=session.answers,
+            select_protocol=registry.select_protocol,
+            protocol_for=registry.protocol_for,
+            conversation=list(session.conversation),
+            credential=session.credential,
         )
-        if stop is not None:
-            self._finish(session, stop)
+
+        session.answers = result.answers
+        session.llm_used_last_turn = result.llm_used
+        session.last_question = result.agent_message
+        if result.agent_message:
+            session.conversation.append({"role": "assistant", "content": result.agent_message})
+        console_log.extraction(session.session_id, result.extracted, percent=0, filled=0, total=1)
+
+        if result.emergency:
+            session.protocol_name = result.protocol_name
+            session.triage_level = result.triage_level
+            session.reason_codes = list(result.reason_codes)
+            session.triggered_rules = list(result.triggered_rules)
+            session.escalation_lock = True
+            session.state = SessionState.EMERGENCY
+            session.phase = SessionPhase.COLLECTING
+            session.current_cluster = None
+            session.stop_reason = "RED_FLAG"
+            stage_log.finish(
+                session.session_id, triage_level=result.triage_level, stop_reason="RED_FLAG",
+                turns=session.turn_count,
+            )
+            console_log.red_flag(session.session_id, list(result.reason_codes))
+            console_log.session_end(session.session_id, state="emergency", turns=session.turn_count, percent=100)
+            return session
+
+        if result.harvested_nothing:
+            # Vẫn ở lượt mở: hỏi lại câu mở, KHÔNG chọn protocol. Chọn protocol từ một tin nhắn không
+            # có thông tin nào là đoán mò, và đoán sai ở đây kéo dài suốt cả phiên.
+            return session
+
+        session.protocol_name = result.protocol_name
+        session.phase = SessionPhase.COLLECTING
+        if result.triage_level is not None:
+            session.triage_level = result.triage_level
+            session.reason_codes = list(result.reason_codes)
+            session.triggered_rules = list(result.triggered_rules)
+        # `_progress` tự ghi `stage_enter` (stage hiện tại là "" nên luôn khác stage đích).
+        self._progress(session, result)
+        return session
+
+    def _record_cluster_outcome(self, session: Session, cluster: QuestionCluster, result) -> None:
+        """Quyết định cụm vừa hỏi đã XONG chưa. Đây là chỗ vá bug C3.
+
+        Bản cũ `asked_ids.add(cluster.id)` vô điều kiện: gõ "." hay né tránh cũng được tính là đã hỏi
+        xong, cụm không bao giờ quay lại, field trống suốt cả phiên. Giờ chỉ đánh dấu xong khi THẬT
+        SỰ thu được gì; không thì hỏi lại, tối đa `MAX_RETRIES_PER_CLUSTER` lần rồi mới bỏ qua và ghi
+        vào `unresolved_cluster_ids`."""
+        # Cụm bị mở lại do đính chính/mâu thuẫn: field bên trong vừa bị xoá hoặc đang chọi nhau, phải
+        # được phép hỏi lại dù trước đó đã hoàn tất.
+        if result.reopened_cluster_ids:
+            reopened = {session.cluster_key(cluster_id) for cluster_id in result.reopened_cluster_ids}
+            session.completed_cluster_ids -= reopened
+            session.unresolved_cluster_ids -= reopened
+
+        key = session.cluster_key(cluster.id)
+        if result.cluster_resolved:
+            session.completed_cluster_ids.add(key)
+            session.retry_count_by_cluster.pop(key, None)
             return
-        session.stage = final_stage
-        session.current_cluster = cluster
+
+        retries = session.retry_count_by_cluster.get(key, 0) + 1
+        session.retry_count_by_cluster[key] = retries
+        stage_log.step(
+            session.session_id, turn=session.turn_count, stage=session.stage, cluster_id=cluster.id,
+            event="extract", input=None,
+            output={"retry": retries, "answer_quality": result.answer_quality},
+        )
+        # Theo ĐÚNG quyết định của agent (`retried_same_cluster`), không tự tính lại: agent còn bỏ hỏi
+        # lại khi cụm chỉ còn field tuỳ chọn (`_worth_retrying`). Nếu ở đây vẫn để cụm "chưa xong"
+        # trong khi agent đã đi tiếp thì cụm đó không nằm trong `closed_cluster_ids`, `next_cluster`
+        # chọn lại chính nó ở lượt sau và hội thoại quay vòng.
+        if not result.retried_same_cluster or retries > agent.MAX_RETRIES_PER_CLUSTER:
+            session.unresolved_cluster_ids.add(key)
+
+    def _progress(self, session: Session, result) -> None:
+        """Cập nhật `session.stage`/`session.current_cluster` cho lượt kế tiếp, hoặc kết thúc phiên.
+
+        KHÔNG tự duyệt lại: cụm kế tiếp đã do `run_turn` chọn bằng `stage_machine.advance` và CÂU HỎI
+        đã được sinh cho đúng cụm đó. Bản cũ duyệt lần hai ở đây, nên khi cụm cuối stage vừa được trả
+        lời thì agent trả tin nhắn rỗng còn session lại âm thầm nhảy sang cụm mới - người bệnh không
+        được hỏi gì nhưng lượt sau vẫn bị trích theo schema của cụm đó."""
+        if result.next_cluster is not None:
+            if result.next_stage and result.next_stage != session.stage:
+                stage_log.stage_enter(session.session_id, result.next_stage)
+            session.stage = result.next_stage or result.next_cluster.stage
+            session.current_cluster = result.next_cluster
+            return
+
+        self._finish(session, result.stop_reason or "BUDGET_EXHAUSTED")
 
     def _finish(self, session: Session, stop_reason: str) -> None:
-        result = rule_engine.evaluate(self.protocol, session.answers)
+        result = rule_engine.evaluate(self._protocol(session), session.answers)
         session.triage_level = result.triage_level
         session.reason_codes = list(result.reason_codes)
         session.triggered_rules = list(result.triggered_rules)
