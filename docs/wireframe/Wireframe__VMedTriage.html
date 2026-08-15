@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>VMedTriage — Wireframe</title>
+<style>
+  :root{
+    --bg:#e9e9e7;
+    --paper:#ffffff;
+    --line:#8f8f8f;
+    --line-soft:#c7c7c5;
+    --text:#2b2b2b;
+    --muted:#8a8a8a;
+    --hitl:#c0392b;
+    --hitl-bg:#fdecea;
+    --warn:#b8860b;
+    --warn-bg:#fdf6e3;
+    --chip:#f0f0ee;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Comic Sans MS","Segoe Print","Marker Felt",cursive, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  header.app-head{
+    background:var(--paper); border-bottom:2px solid var(--line);
+    padding:14px 20px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    position:sticky; top:0; z-index:10;
+  }
+  header.app-head h1{ font-size:18px; margin:0; letter-spacing:.5px;}
+  header.app-head .sub{ font-size:12px; color:var(--muted); margin-top:2px;}
+  nav.tabs{ display:flex; gap:6px; flex-wrap:wrap; margin-left:auto;}
+  nav.tabs button{
+    font-family:inherit; font-size:12px; padding:7px 10px; border-radius:6px;
+    border:1.5px dashed var(--line); background:var(--paper); cursor:pointer; color:var(--text);
+  }
+  nav.tabs button.active{ background:var(--text); color:#fff; border-style:solid;}
+  nav.tabs button .hitl-dot{ display:inline-block; width:6px;height:6px;border-radius:50%; background:var(--hitl); margin-left:4px; vertical-align:middle;}
+
+  #screens{ max-width:1180px; margin:0 auto; }
+  #screens .screen-section{ padding:22px 20px 80px; display:none; }
+  #screens .screen-section.active{ display:block; }
+
+  .layout{ display:grid; grid-template-columns:420px 1fr; gap:26px; align-items:start;}
+  @media (max-width:920px){ .layout{ grid-template-columns:1fr; } }
+
+  .screen-meta h2{ font-size:20px; margin:0 0 2px; }
+  .screen-meta .role-tag{
+    display:inline-block; font-size:11px; padding:2px 8px; border:1px solid var(--line);
+    border-radius:20px; color:var(--muted); margin-bottom:14px;
+  }
+
+  .state-toggle{ display:flex; gap:6px; margin-bottom:16px; }
+  .state-toggle button{
+    font-family:inherit; font-size:11px; padding:5px 9px; border-radius:5px;
+    border:1.5px dashed var(--line-soft); background:var(--paper); cursor:pointer;
+  }
+  .state-toggle button.active{ background:var(--warn-bg); border-color:var(--warn); border-style:solid; font-weight:bold;}
+  .state-toggle button.err.active{ background:#fdecea; border-color:var(--hitl); }
+
+  /* device canvas */
+  .canvas-wrap{ display:flex; justify-content:center; }
+  .canvas{
+    width:360px; min-height:640px; background:var(--paper);
+    border:2.5px solid var(--line); border-radius:14px; padding:0;
+    position:relative; box-shadow:4px 4px 0 rgba(0,0,0,0.06);
+    overflow:hidden;
+  }
+  .canvas .bar{ height:14px; border-bottom:2px solid var(--line); display:flex; align-items:center; justify-content:center;}
+  .canvas .bar .notch{ width:60px; height:5px; background:var(--line-soft); border-radius:3px;}
+  .screen-body{ padding:16px 14px; font-size:13px; line-height:1.5; position:relative;}
+
+  .wf-topbar{ display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--muted); border-bottom:1.5px dashed var(--line-soft); padding-bottom:8px; margin-bottom:12px;}
+  .wf-logo{ font-weight:bold; letter-spacing:1px; color:var(--text); font-size:13px; border:1.5px solid var(--line); padding:2px 8px; border-radius:4px;}
+
+  .wf-h{ font-weight:bold; font-size:14px; margin:0 0 10px; }
+  .wf-p{ margin:0 0 10px; color:#444; }
+  .wf-box{ border:1.5px dashed var(--line-soft); border-radius:6px; padding:9px 10px; margin-bottom:10px; background:#fbfbfa;}
+  .wf-input{ border:1.5px solid var(--line); border-radius:5px; padding:9px 10px; margin-bottom:9px; color:var(--muted); font-size:12.5px; background:#fff;}
+  .wf-btn{ border:2px solid var(--text); border-radius:6px; padding:9px 10px; text-align:center; font-weight:bold; font-size:12.5px; margin-bottom:9px; background:#fff; cursor:default;}
+  .wf-btn.secondary{ border-style:dashed; font-weight:normal; }
+  .wf-btn.danger{ border-color:var(--hitl); color:var(--hitl); }
+  .wf-radio{ font-size:12px; color:#444; margin-bottom:8px; }
+  .wf-link{ font-size:12px; text-decoration:underline; color:#444; }
+  .chip-row{ display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 10px;}
+  .chip{ border:1.3px solid var(--line); border-radius:20px; padding:4px 10px; font-size:11.5px; background:var(--chip);}
+  .bubble-agent{ background:#f1f1ef; border-radius:10px 10px 10px 2px; padding:8px 10px; font-size:12.5px; margin-bottom:8px; max-width:88%;}
+  .bubble-user{ background:#e6f0ff; border-radius:10px 10px 2px 10px; padding:8px 10px; font-size:12.5px; margin-bottom:8px; max-width:80%; margin-left:auto; text-align:right;}
+  .queue-row{ display:flex; justify-content:space-between; align-items:center; border:1.3px solid var(--line-soft); border-radius:6px; padding:8px 10px; margin-bottom:7px; font-size:12px;}
+  .queue-row .dot{ width:9px;height:9px;border-radius:50%; display:inline-block; margin-right:6px;}
+  .dot-red{ background:#c0392b;} .dot-yellow{ background:#c9a30a;} .dot-green{ background:#3a8a3a;}
+  .field-row{ display:flex; justify-content:space-between; font-size:12px; padding:5px 0; border-bottom:1px dashed #e2e2e0;}
+  .field-missing{ color:var(--warn); font-weight:bold; }
+  .banner-err{ background:#fdecea; border:1.5px dashed var(--hitl); color:#8b241a; border-radius:6px; padding:8px 10px; font-size:12px; margin-bottom:10px;}
+  .banner-emerg{ background:#fdecea; border:2px solid var(--hitl); color:#7a1f16; border-radius:8px; padding:12px; font-size:12.5px; }
+  .badge-empty{ text-align:center; color:var(--muted); font-size:12px; padding:30px 10px; border:1.5px dashed var(--line-soft); border-radius:8px;}
+
+  /* numbered annotation dots on canvas */
+  .anno-dot{
+    position:absolute; width:20px; height:20px; border-radius:50%; background:var(--text); color:#fff;
+    font-size:11px; font-weight:bold; display:flex; align-items:center; justify-content:center;
+    border:2px solid #fff; box-shadow:0 0 0 1.5px var(--text);
+  }
+  .hitl-flag{
+    display:inline-flex; align-items:center; gap:5px; background:var(--hitl-bg); color:var(--hitl);
+    border:1.5px solid var(--hitl); border-radius:6px; padding:3px 8px; font-size:11px; font-weight:bold; margin-bottom:10px;
+  }
+
+  /* right side notes */
+  .notes h3{ font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 10px; }
+  .anno-list{ list-style:none; margin:0 0 20px; padding:0; }
+  .anno-list li{ display:flex; gap:10px; margin-bottom:10px; font-size:13px; align-items:flex-start; }
+  .anno-list .num{ flex:0 0 auto; width:20px; height:20px; border-radius:50%; background:var(--text); color:#fff; font-size:11px; font-weight:bold; display:flex; align-items:center; justify-content:center;}
+  .note-block{ border:1.5px dashed var(--line-soft); border-radius:8px; padding:12px 14px; margin-bottom:14px; background:#fafaf9;}
+  .note-block.hitl{ border-color:var(--hitl); background:var(--hitl-bg); }
+  .note-block.hitl h4{ color:var(--hitl); }
+  .note-block h4{ margin:0 0 6px; font-size:12.5px; text-transform:uppercase; letter-spacing:.4px;}
+  .note-block p, .note-block ul{ font-size:12.5px; color:#333; margin:0 0 6px; line-height:1.5;}
+  .note-block ul{ padding-left:16px; }
+  footer.legend{ max-width:1180px; margin:30px auto 0; padding:14px 20px; font-size:11.5px; color:var(--muted); border-top:2px dashed var(--line-soft);}
+</style>
+</head>
+<body>
+
+<header class="app-head">
+  <div>
+    <h1>VMedTriage — Wireframe tương tác</h1>
+    <div class="sub">Low-fidelity · 7 màn hình MVP · chấm đỏ trên tab = có checkpoint HITL</div>
+  </div>
+  <nav class="tabs" id="tabs"></nav>
+</header>
+
+<main id="screens"></main>
+
+<footer class="legend">
+  ⬤ số = phần tử có tương tác (xem chú thích bên phải) &nbsp;·&nbsp; khung đỏ nét đứt = trạng thái lỗi &nbsp;·&nbsp; nhãn cam = thiếu dữ liệu &nbsp;·&nbsp; nhãn đỏ "HITL" = điểm bắt buộc con người xác nhận
+</footer>
+
+<script>
+const screens = [
+  {
+    id:"w01", label:"W-01 Đăng nhập", role:"Bệnh nhân / Nhân viên y tế", hitl:false,
+    states:["normal","error"],
+    render(state){
+      return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-01</span></div>
+        ${state==='error' ? `<div class="banner-err">⚠ Email hoặc mật khẩu không đúng</div>` : ''}
+        <div class="wf-input" style="position:relative">Email / Số điện thoại<div class="anno-dot" style="top:-10px;right:-10px">1</div></div>
+        <div class="wf-input">Mật khẩu</div>
+        <div class="wf-btn" style="position:relative">Đăng nhập<div class="anno-dot" style="top:-10px;right:-10px">2</div></div>
+        <div class="wf-radio">Chọn vai trò: ( ) Bệnh nhân &nbsp; ( ) Nhân viên y tế</div>
+        <div class="wf-link" style="position:relative">Chưa có tài khoản? Đăng ký<div class="anno-dot" style="top:-8px;right:-10px">3</div></div>
+      `;
+    },
+    annos:[
+      "Input email/mật khẩu — nếu để trống, nút Đăng nhập bị disable (xám)",
+      "Nút <b>Đăng nhập</b> thành công → role Bệnh nhân vào <b>W-02</b>; role Nhân viên y tế vào <b>W-06</b>",
+      "Link <b>Đăng ký</b> → chuyển sang form đăng ký (cùng khung, dạng tab)"
+    ],
+    empty:null,
+    error:"Sai email/mật khẩu → inline error đỏ phía trên form, giữ nguyên giá trị email đã nhập. Lỗi mạng/server → toast riêng \"Không thể kết nối, vui lòng thử lại\".",
+    hitlNote:null
+  },
+  {
+    id:"w02", label:"W-02 Disclaimer", role:"Bệnh nhân", hitl:false,
+    states:["normal"],
+    render(){
+      return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-02</span></div>
+        <div class="wf-box">
+          <div class="wf-h">⚠ Thông tin quan trọng</div>
+          <div class="wf-p">— Đây là công cụ hỗ trợ sơ bộ, KHÔNG thay thế chẩn đoán của bác sĩ</div>
+          <div class="wf-p">— Mọi đề xuất đều được nhân viên y tế xác nhận trước khi gửi tới bạn</div>
+          <div class="wf-p">— Trường hợp khẩn cấp, gọi 115 ngay lập tức</div>
+        </div>
+        <div class="wf-btn" style="position:relative">Tôi đã hiểu, bắt đầu<div class="anno-dot" style="top:-10px;right:-10px">1</div></div>
+      `;
+    },
+    annos:["Nút <b>Tôi đã hiểu, bắt đầu</b> → <b>W-03</b>. Không có nút \"Bỏ qua\" — bắt buộc xem mỗi lần bắt đầu phiên mới."],
+    empty:"Không áp dụng — nội dung tĩnh, cố định.",
+    error:"Không áp dụng — không phụ thuộc dữ liệu động.",
+    hitlNote:null
+  },
+  {
+    id:"w03", label:"W-03 Khai báo triệu chứng", role:"Bệnh nhân", hitl:false,
+    states:["normal","empty","error"],
+    render(state){
+      if(state==='error'){
+        return `
+        <div class="wf-topbar"><span>← Quay lại</span><span class="wf-logo">VMedTriage</span></div>
+        <div class="banner-err">⚠ Mất kết nối, đang thử kết nối lại... (lịch sử chat vẫn được giữ nguyên)</div>
+        <div class="bubble-agent">Bạn đang gặp triệu chứng gì?</div>
+        <div class="bubble-user">Đau ngực</div>
+        <div class="bubble-agent">Cơn đau có lan ra tay trái hoặc hàm không?</div>
+        <div class="wf-input" style="opacity:.5">Nhập câu trả lời... (tạm khoá)</div>
+        `;
+      }
+      if(state==='empty'){
+        return `
+        <div class="wf-topbar"><span>← Quay lại</span><span class="wf-logo">VMedTriage</span></div>
+        <div class="wf-p">Bạn đang gặp triệu chứng gì?</div>
+        <div class="chip-row" style="position:relative">
+          <div class="chip">Sốt</div><div class="chip">Đau bụng</div><div class="chip">Đau ngực</div><div class="chip">Khó thở</div><div class="chip">Đau đầu</div>
+          <div class="anno-dot" style="top:-10px;right:-10px">1</div>
+        </div>
+        <div class="bubble-agent">Vui lòng chọn 1 nhóm triệu chứng bên trên để bắt đầu.</div>
+        `;
+      }
+      return `
+        <div class="wf-topbar"><span>← Quay lại</span><span class="wf-logo">VMedTriage</span></div>
+        <div class="bubble-agent">Bạn đang gặp triệu chứng gì?</div>
+        <div class="chip-row" style="position:relative">
+          <div class="chip">Sốt</div><div class="chip">Đau bụng</div><div class="chip">Đau ngực</div><div class="chip">Khó thở</div><div class="chip">Đau đầu</div>
+          <div class="anno-dot" style="top:-10px;right:-10px">1</div>
+        </div>
+        <div class="bubble-user">Đau ngực</div>
+        <div class="bubble-agent">Cơn đau có lan ra tay trái hoặc hàm không?</div>
+        <div class="wf-input" style="position:relative">Nhập câu trả lời...<div class="anno-dot" style="top:-10px;right:-10px">2</div></div>
+        <div class="wf-btn secondary" style="position:relative">Gửi<div class="anno-dot" style="top:-10px;right:-10px">3</div></div>
+      `;
+    },
+    annos:[
+      "Chọn <b>chip nhóm triệu chứng</b> → agent bắt đầu hỏi checklist tương ứng của nhóm đó",
+      "Bệnh nhân trả lời tự do hoặc chọn gợi ý",
+      "Nút <b>Gửi</b> → agent hỏi câu tiếp theo; nếu đủ checklist → tạo phiếu tóm tắt → <b>W-05</b>. Nếu phát hiện red-flag giữa chừng → ngắt ngay, chuyển <b>W-04</b>"
+    ],
+    empty:"Chưa chọn nhóm triệu chứng nào — agent nhắc chọn 1 chip để bắt đầu, không để khung chat trống trơn.",
+    error:"Bỏ trống/nhập không rõ → agent hỏi lại tối đa 1 lần rồi đánh dấu field \"Thiếu thông tin\" và tiếp tục (không chặn luồng). Mất kết nối → banner đỏ phía trên, giữ nguyên lịch sử chat, không bắt trả lời lại từ đầu.",
+    hitlNote:null
+  },
+  {
+    id:"w04", label:"W-04 Banner khẩn cấp", role:"Bệnh nhân", hitl:true,
+    states:["normal"],
+    render(){
+      return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-04</span></div>
+        <div class="banner-emerg">
+          <b>Ca của bạn đang được ưu tiên xem xét</b><br><br>
+          Nhân viên y tế đang xem xét thông tin bạn cung cấp với mức độ ưu tiên cao nhất.<br><br>
+          → Nhân viên y tế đang nhận thông tin<br>
+        </div>
+        <div class="wf-btn danger" style="margin-top:10px;position:relative">Tôi đã đọc, tiếp tục<div class="anno-dot" style="top:-10px;right:-10px;box-shadow:0 0 0 1.5px var(--hitl);background:var(--hitl)">1</div></div>
+      `;
+    },
+    annos:["Nút <b>Tôi đã đọc, tiếp tục</b> → <b>W-05</b>. Ca đã được đẩy vào hàng đợi với mức \"Cấp cứu\" ngay lập tức, không chờ trả lời hết checklist."],
+    empty:"Không áp dụng — nội dung cố định.",
+    error:"Không áp dụng — cố ý không phụ thuộc dữ liệu động để luôn hiển thị được kể cả khi phần khác của hệ thống lỗi.",
+    hitlNote:"<b>Checkpoint HITL quan trọng.</b> Banner này chỉ hiển thị khi AI phát hiện red-flag, và luôn yêu cầu bệnh nhân xác nhận đã đọc trước khi tiếp tục. Tuyệt đối không cho phép bỏ qua."
+  },
+  {
+    id:"w05", label:"W-05 Kết quả", role:"Bệnh nhân", hitl:true,
+    states:["waiting","approved","error"],
+    render(state){
+      if(state==='error'){
+        return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-05</span></div>
+        <div class="banner-err">⚠ Không thể tải kết quả</div>
+        <div class="wf-btn secondary">Thử lại</div>
+        `;
+      }
+      if(state==='approved'){
+        return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-05</span></div>
+        <div class="hitl-flag">🔒 Đã duyệt bởi nhân viên y tế</div>
+        <div class="wf-box">
+          <div class="wf-h">✅ Mức độ: Khám sớm</div>
+          <div class="wf-p">Hướng dẫn xử trí: (nội dung do điều dưỡng xác nhận)</div>
+        </div>
+        <div class="wf-p" style="font-size:11.5px;color:var(--muted)">⚠ Đây không phải chẩn đoán, hãy gặp bác sĩ để được tư vấn đầy đủ</div>
+        `;
+      }
+      return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>W-05</span></div>
+        <div class="wf-box" style="position:relative">
+          <div class="wf-h">⏳ Chưa duyệt</div>
+          <div class="wf-p">Nhân viên y tế sẽ xem xét và gửi hướng dẫn xử trí sớm nhất có thể (ước tính ~5-10 phút)</div>
+          <div class="anno-dot" style="top:-10px;right:-10px">1</div>
+        </div>
+      `;
+    },
+    annos:["Trạng thái \"Chưa duyệt\" luôn hiển thị kèm thời gian ước tính — tránh bệnh nhân nghĩ hệ thống bị treo. Không có điều hướng tiếp — đây là màn hình kết thúc luồng."],
+    empty:"Trạng thái chờ ban đầu chính là 'empty state' của màn hình này — xem toggle 'waiting'.",
+    error:"Chờ quá lâu (>15 phút, ca không Cấp cứu) → gợi ý thêm gọi 115 nếu trở nặng. Lỗi tải dữ liệu → thông báo + nút Thử lại (xem toggle 'error').",
+    hitlNote:"<b>Checkpoint HITL cốt lõi.</b> Nội dung \"Hướng dẫn xử trí\" CHỈ hiển thị khi flag DB = đã duyệt (do nhân viên y tế xác nhận ở W-07). Tuyệt đối không hiển thị đề xuất thô của AI khi chưa qua duyệt."
+  },
+  {
+    id:"w06", label:"W-06 Hàng đợi", role:"Nhân viên y tế", hitl:true,
+    states:["normal","empty","error"],
+    render(state){
+      if(state==='empty'){
+        return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>Hàng đợi</span></div>
+        <div class="badge-empty">Không có ca nào đang chờ duyệt 🎉</div>
+        `;
+      }
+      if(state==='error'){
+        return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>Hàng đợi</span></div>
+        <div class="banner-err">⚠ Không tải được danh sách mới nhất — đang hiển thị dữ liệu đã lưu trước đó</div>
+        <div class="queue-row"><span><span class="dot dot-red"></span>Cấp cứu · BN #102</span><span>2p</span></div>
+        <div class="queue-row"><span><span class="dot dot-yellow"></span>Khám sớm · BN #098</span><span>5p</span></div>
+        <div class="wf-btn secondary">Thử lại</div>
+        `;
+      }
+      return `
+        <div class="wf-topbar"><span class="wf-logo">VMedTriage</span><span>Hàng đợi</span></div>
+        <div class="queue-row" style="border-color:var(--hitl);position:relative"><span><span class="dot dot-red"></span>Cấp cứu · BN #102</span><span>2p</span><div class="anno-dot" style="top:-10px;right:-10px">1</div></div>
+        <div class="queue-row"><span><span class="dot dot-yellow"></span>Khám sớm · BN #098</span><span>5p</span></div>
+        <div class="queue-row"><span><span class="dot dot-yellow"></span>Khám sớm · BN #101</span><span>8p</span></div>
+        <div class="queue-row"><span><span class="dot dot-green"></span>Tự theo dõi · BN #095</span><span>12p</span></div>
+        <div class="wf-btn secondary" style="margin-top:6px;">Làm mới (polling tự động)</div>
+      `;
+    },
+    annos:["Chọn 1 dòng ca → <b>W-07</b>. Ca <b>Cấp cứu</b> chờ quá X phút chưa mở ra xem cần highlight đặc biệt (viền đỏ) để tránh bỏ sót."],
+    empty:"Hàng đợi rỗng → hiện thông điệp rõ ràng thay vì để trang trắng (xem toggle 'empty').",
+    error:"Mất kết nối khi tải danh sách → giữ nguyên danh sách cũ đã tải, kèm nút Thử lại — không xoá trắng dữ liệu đang có (xem toggle 'error').",
+    hitlNote:"Điểm bắt đầu vùng xác nhận của con người — mọi ca trong danh sách đều đang chờ một quyết định từ nhân viên y tế."
+  },
+  {
+    id:"w07", label:"W-07 Duyệt ca", role:"Nhân viên y tế", hitl:true,
+    states:["normal","missing","error"],
+    render(state){
+      const feverMissing = state==='missing';
+      return `
+        <div class="wf-topbar"><span>← Hàng đợi</span><span class="wf-logo">Ca #102</span></div>
+        ${state==='error' ? `<div class="banner-err">⚠ Không thể lưu quyết định — vui lòng thử lại (màn hình sẽ không đóng cho đến khi lưu thành công)</div>` : ''}
+        <div class="wf-box">
+          <div class="wf-h">PHIẾU TÓM TẮT · Nhóm: Đau ngực</div>
+          <div class="field-row"><span>Thời gian khởi phát</span><span>${feverMissing ? '<span class="field-missing">Thiếu thông tin</span>' : '30 phút trước'}</span></div>
+          <div class="field-row"><span>Mức độ đau</span><span>8/10</span></div>
+          <div class="field-row"><span>Kèm khó thở</span><span>Có</span></div>
+          <div class="field-row"><span>Vã mồ hôi lạnh</span><span>${feverMissing ? '<span class="field-missing">Thiếu thông tin</span>' : 'Không rõ'}</span></div>
+        </div>
+        <div class="hitl-flag">🚩 Red-flag: Có (đau ngực + khó thở)</div>
+        <div class="wf-p"><b>Mức ưu tiên AI đề xuất: Cấp cứu</b></div>
+        <div class="wf-btn" style="position:relative">Duyệt nguyên trạng<div class="anno-dot" style="top:-10px;right:-10px">1</div></div>
+        <div class="wf-btn secondary" style="position:relative">Chỉnh sửa mức ưu tiên ▾<div class="anno-dot" style="top:-10px;right:-10px">2</div></div>
+        <div class="wf-btn danger" style="position:relative">Escalate thủ công<div class="anno-dot" style="top:-10px;right:-10px;box-shadow:0 0 0 1.5px var(--hitl);background:var(--hitl)">3</div></div>
+      `;
+    },
+    annos:[
+      "<b>Duyệt nguyên trạng</b> → flag = đã duyệt, mức ưu tiên giữ như AI đề xuất → quay về W-06",
+      "<b>Chỉnh sửa mức ưu tiên</b> → mở dropdown chọn lại mức, ghi log giá trị cũ/mới → quay về W-06",
+      "<b>Escalate thủ công</b> → luôn set mức Cấp cứu bất kể AI đề xuất gì → quay về W-06"
+    ],
+    empty:"Không áp dụng cho màn hình này (luôn có 1 ca cụ thể khi vào W-07).",
+    error:"Field bị bỏ trống ở W-03 → nhãn cam \"Thiếu thông tin\" (xem toggle 'missing'), không để trống gây hiểu lầm là không có triệu chứng. Lỗi submit → không cho thoát màn hình cho đến khi lưu thành công (xem toggle 'error').",
+    hitlNote:"<b>Checkpoint xác nhận con người quan trọng và bắt buộc nhất toàn hệ thống.</b> Không có đường nào khác để dữ liệu từ W-03 đến được kết quả ở W-05 mà bỏ qua bước này."
+  },
+];
+
+const stateLabels = {normal:"Bình thường", empty:"Rỗng", error:"Lỗi", waiting:"Chờ duyệt", approved:"Đã duyệt", missing:"Thiếu dữ liệu"};
+
+const tabsEl = document.getElementById('tabs');
+const screensEl = document.getElementById('screens');
+let currentState = {};
+
+screens.forEach((s,i)=>{
+  currentState[s.id] = s.states[0];
+
+  const tabBtn = document.createElement('button');
+  tabBtn.textContent = s.label.replace('W-0'+(i+1)+' ','').length ? s.label : s.label;
+  tabBtn.textContent = s.label;
+  if(s.hitl){ const d=document.createElement('span'); d.className='hitl-dot'; tabBtn.appendChild(d); }
+  tabBtn.onclick = ()=> showScreen(s.id);
+  tabBtn.dataset.id = s.id;
+  tabsEl.appendChild(tabBtn);
+
+  const sec = document.createElement('div');
+  sec.className = 'screen-section';
+  sec.id = 'sec-'+s.id;
+  screensEl.appendChild(sec);
+});
+
+function buildSection(s){
+  const sec = document.getElementById('sec-'+s.id);
+  const state = currentState[s.id];
+  const toggles = s.states.map(st=>{
+    const errClass = (st==='error'||st==='missing') ? 'err' : '';
+    return `<button class="${errClass} ${st===state?'active':''}" data-state="${st}">${stateLabels[st]||st}</button>`;
+  }).join('');
+
+  sec.innerHTML = `
+    <div class="layout">
+      <div>
+        <div class="screen-meta">
+          <h2>${s.label}</h2>
+          <div class="role-tag">${s.role}</div>
+        </div>
+        ${s.states.length>1 ? `<div class="state-toggle">${toggles}</div>` : ''}
+        <div class="canvas-wrap">
+          <div class="canvas">
+            <div class="bar"><div class="notch"></div></div>
+            <div class="screen-body">${s.render(state)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <h3>Bấm vào → đi đâu</h3>
+        <ul class="anno-list">
+          ${s.annos.map((a,idx)=>`<li><span class="num">${idx+1}</span><span>${a}</span></li>`).join('')}
+        </ul>
+        <div class="note-block">
+          <h4>Trạng thái rỗng</h4>
+          <p>${s.empty || '—'}</p>
+        </div>
+        <div class="note-block">
+          <h4>Trạng thái lỗi</h4>
+          <p>${s.error || '—'}</p>
+        </div>
+        ${s.hitlNote ? `<div class="note-block hitl"><h4>🔒 HITL checkpoint</h4><p>${s.hitlNote}</p></div>` : ''}
+      </div>
+    </div>
+  `;
+
+  sec.querySelectorAll('.state-toggle button').forEach(btn=>{
+    btn.onclick = ()=>{ currentState[s.id] = btn.dataset.state; buildSection(s); };
+  });
+}
+
+function showScreen(id){
+  screens.forEach(s=>{
+    document.getElementById('sec-'+s.id).classList.toggle('active', s.id===id);
+  });
+  tabsEl.querySelectorAll('button').forEach(b=> b.classList.toggle('active', b.dataset.id===id));
+}
+
+screens.forEach(buildSection);
+showScreen('w01');
+</script>
+</body>
+</html>

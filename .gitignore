@@ -29,13 +29,17 @@ env/
 Thumbs.db
 
 # Data (never commit large data)
-data/
+data/*
+!data/README.md
 *.db
 *.sqlite3
 
 # Logs
 logs/
 *.log
+eval/results/logging/*
+!eval/results/logging/.gitkeep
+!eval/results/logging/README.md
 
 # Test coverage
 htmlcov/
@@ -59,4 +63,5 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
+_guidance/*
 /notebooks/
