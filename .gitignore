@@ -59,4 +59,4 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-
+/notebooks/
