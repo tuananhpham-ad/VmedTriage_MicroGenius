@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { accountMenu, bindAccountMenu } from "./account.js";
+import { accountMenu, bindAccountMenu } from "./account.js?v=settings-full-20260813";
 import { completedStatuses, pendingStatuses, state } from "../state.js";
 import { escapeHtml, formatDate, logo, priorityClass, priorityLabels, shortCaseId, showToast, statusClass, statusLabels, symptomGroupLabels, waitingLabel } from "../shared.js";
 

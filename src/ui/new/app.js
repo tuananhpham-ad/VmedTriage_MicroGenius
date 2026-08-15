@@ -1,8 +1,8 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
-import { renderAccess, renderAuth, renderPasswordReset, renderVerification } from "./features/auth.js";
-import { renderDisclaimer, renderPatientChat, renderPatientHome, startPatientCase } from "./features/patient.js";
-import { renderNurseCase, renderNurseQueue, stopQueuePolling } from "./features/nurse.js";
+import { renderAccess, renderAuth, renderPasswordReset, renderVerification } from "./features/auth.js?v=login-example-20260813";
+import { renderDisclaimer, renderPatientChat, renderPatientHome, startPatientCase } from "./features/patient.js?v=settings-full-20260813";
+import { renderNurseCase, renderNurseQueue, stopQueuePolling } from "./features/nurse.js?v=settings-full-20260813";
 
 const app = document.querySelector("#app");
 

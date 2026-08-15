@@ -46,6 +46,10 @@ class UserRecord(Base):
     workplace: Mapped[str | None] = mapped_column(String(160), nullable=True)
     department: Mapped[str | None] = mapped_column(String(160), nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    emergency_contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    emergency_contact_relationship: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    emergency_contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
