@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from src.config import get_settings
 from src.database import get_db_session
+
+# Module này chỉ import stdlib + pydantic ở top-level; mọi thứ cần torch nằm trong hàm của nó, nên
+# import ở đây không kéo requirements-graph.txt thành bắt buộc để app khởi động.
+from src.graph_triage import service as graph_triage_service
 from src.models.auth import (
     ChangePasswordRequest,
     EmailVerificationConfirmRequest,
@@ -201,8 +206,30 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+    await _attach_graph_decision(triage_case, previous)
     case_store.save(triage_case)
     return _patient_chat_response(triage_case)
+
+
+async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:
+    """Gắn ý kiến tham khảo thứ hai từ `src/graph_triage/` khi phiếu vừa chốt.
+
+    `to_triage_case` là hàm THUẦN, dựng lại `TriageCase` từ đầu mỗi lượt và không biết gì về trường
+    này - nên phải mang kết quả cũ sang bằng tay, nếu không nó biến mất ngay lượt chat kế tiếp.
+
+    Chạy đúng một lần cho mỗi case KHI THÀNH CÔNG: mỗi lượt chạy tốn một lời gọi DeepSeek cộng một
+    lời gọi LLM quyết định. Thất bại (`None`) thì lượt sau thử lại - lỗi mạng thoáng qua đáng được
+    thử lại, còn lỗi cố định (thiếu thư viện/artifact/API key) đã bị `service._get_agent` nhớ lại nên
+    không dựng model lần hai.
+    """
+    if previous is not None and previous.graph_decision is not None:
+        triage_case.graph_decision = previous.graph_decision
+        return
+    if not triage_case.summary_ready:
+        return
+    # `decide_for_case` không bao giờ raise (best-effort), nhưng nó đồng bộ và nặng - đẩy sang
+    # threadpool để không chặn event loop của các request khác.
+    triage_case.graph_decision = await run_in_threadpool(graph_triage_service.decide_for_case, triage_case)
 
 
 @router.get("/status")

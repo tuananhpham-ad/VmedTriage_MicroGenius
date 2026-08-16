@@ -37,5 +37,26 @@ ruff>=0.8.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 httpx>=0.28.0
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# Triage dataset catalogs (scripts/red_flag_catalog.py, evidence_catalog.yaml)
+pyyaml>=6.0
+
+# NOTE: scripts/translate_patient_doctor_train.py additionally needs torch +
+# transformers + sentencepiece. Those live in requirements-translate.txt and are
+# deliberately not installed here -- torch alone is ~2.5 GB and CI never runs
+# that script.
+
+# NOTE: src/graph_triage/ (agent quyet dinh chay tren model da train) needs torch +
+# transformers + scikit-learn + torch-geometric. Those live in requirements-graph.txt
+# and are deliberately not installed here for the same reason. The app boots without
+# them: src/graph_triage/service.py imports lazily and disables the feature instead.
 
 # anthropic
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+
+pyyaml>=6.0
