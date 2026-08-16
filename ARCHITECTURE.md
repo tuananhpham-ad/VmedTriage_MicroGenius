@@ -1,7 +1,6 @@
 # Kiến trúc hệ thống VMedTriage
 
-> Cập nhật: 2026-08-15. Tài liệu này mô tả **code đang có trong repo**, không phải thiết kế mong muốn.
-> Mọi khẳng định "ai gọi ai" đều grep được. Phần chưa implement được đánh dấu rõ `#TODO`.
+> Cập nhật: 2026-08-15.
 
 ## 1. Tổng quan
 
