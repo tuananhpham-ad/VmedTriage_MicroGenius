@@ -94,9 +94,6 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
 
-    # Vector Store
-    chroma_persist_dir: str = "./data/chroma"
-
     # Weaviate Cloud (optional best-effort case persistence; pipeline degrades gracefully if unset)
     weaviate_url: str = ""
     weaviate_api_key: str = ""

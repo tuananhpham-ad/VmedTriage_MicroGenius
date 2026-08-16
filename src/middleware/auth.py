@@ -21,24 +21,22 @@ PATIENT = frozenset({UserRole.PATIENT})
 NURSE = frozenset({UserRole.NURSE})
 AUTHENTICATED = frozenset({UserRole.PATIENT, UserRole.NURSE})
 
+# Chính sách khớp bằng `fullmatch`, nên MỖI đường dẫn phải có dòng riêng - `^/api/v1/chat/?$` KHÔNG
+# phủ `/api/v1/chat/stream`. Thiếu dòng cho đường dẫn mới nghĩa là nó rơi vào nhánh `policy is None`
+# và đi thẳng qua middleware KHÔNG cần token: không phải "mặc định từ chối" mà là "mặc định cho qua".
 ROUTE_POLICIES = (
     RoutePolicy("POST", re.compile(r"^/api/v1/chat/?$"), PATIENT),
+    RoutePolicy("POST", re.compile(r"^/api/v1/chat/stream/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
     RoutePolicy("PUT", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/auth/change-password/?$"), AUTHENTICATED),
     RoutePolicy("GET", re.compile(r"^/api/v1/tools/?$"), NURSE),
     RoutePolicy("POST", re.compile(r"^/api/v1/tools/[^/]+/call/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
-    RoutePolicy("POST", re.compile(r"^/api/v1/cases/?$"), PATIENT),
-    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/responses/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/patient/history/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
-    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/approve/?$"), NURSE),
-    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/override/?$"), NURSE),
-    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/escalate/?$"), NURSE),
-    RoutePolicy("GET", re.compile(r"^/api/v1/queue/?$"), NURSE),
 )
 
 

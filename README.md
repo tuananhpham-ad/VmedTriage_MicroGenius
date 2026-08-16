@@ -1,204 +1,118 @@
-# 🤖 AI20K Agent Template
+# VMedTriage
 
-Template chính thức cho học viên **VinUni AI20K Build Phase** — cung cấp sẵn cấu trúc dự án, code mẫu, và hướng dẫn kỹ thuật chi tiết để xây dựng AI Agent đạt điểm cao (35+/50).
+AI Agent hỗ trợ điều dưỡng phân loại mức độ ưu tiên ban đầu cho bệnh nhân tư vấn online: thu thập triệu chứng theo checklist chuẩn, phát hiện red-flag, và đề xuất mức ưu tiên (Cấp cứu / Khám sớm / Tự theo dõi) — **cần điều dưỡng xác nhận (HITL) trước khi gửi cho bệnh nhân**, trừ escalate red-flag tức thời.
 
-> 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+> Team MicroGenius 
+## Yêu cầu
 
-## 🎯 Template này dùng để làm gì?
+- Python 3.11+
+- (tuỳ chọn) PostgreSQL nếu không dùng SQLite dev; Weaviate Cloud nếu bật lưu trữ case vector
 
-Khi tham gia AI20K Build Phase, mỗi đội cần xây dựng một AI Agent hoàn chỉnh — từ kiến trúc, code, test, đến deploy. Thay vì bắt đầu từ con số không, template này cung cấp:
-
-- **Cấu trúc thư mục chuẩn** — đã được thiết kế theo best practices (separation of concerns)
-- **Code mẫu** cho các phần cốt lõi: LangGraph agent, FastAPI API, config, schemas
-- **Docker + CI/CD sẵn** — Dockerfile multi-stage, GitHub Actions workflow
-- **Hướng dẫn kỹ thuật 10 chương** — từ clone template đến nộp bài Demo Day
-- **Checklist 10 deliverables** — đảm bảo không bỏ sót yêu cầu BTC
-- **AI Usage Logging tự động** — Pre-configured hooks cho Claude Code, Cursor, Codex, Gemini CLI, Antigravity, và GitHub Copilot
-
-## ⚡ Quick Start
-
-### Bước 1: Fork hoặc Clone
+## Setup
 
 ```bash
-# Clone template
-git clone https://github.com/AI20K-Build-Cohort-2/starter-code-template.git team-YOUR_TEAM_NAME
-cd team-YOUR_TEAM_NAME
-
-# Xóa git history cũ và khởi tạo lại
-rm -rf .git
-git init
-git add .
-git commit -m "feat: khởi tạo dự án từ template"
-```
-
-### Bước 2: Setup môi trường
-
-```bash
-# Tạo virtual environment
+# Virtual environment
 python3.11 -m venv .venv
-source .venv/bin/activate # linux
-.\.venv\Scripts\Activate.ps1 # windows
+source .venv/bin/activate        # Linux/macOS
+# .\.venv\Scripts\Activate.ps1   # Windows
 
 # Cài dependencies
-pip install -e ".[dev]"
+pip install -r requirements.txt
+# Tuỳ chọn: bật src/graph_triage/ (second opinion, cần torch ~2.5GB)
+# pip install -r requirements-graph.txt
 
-# Cấu hình API keys
+# Cấu hình môi trường
 cp .env.example .env
-# Mở .env và thêm OPENAI_API_KEY của bạn
-# Đồng thời cập nhật AI_LOG_API_KEY bằng key riêng từ link mời của BTC
-# (giá trị trong .env.example chỉ là placeholder)
+# Điền các key bên dưới, KHÔNG commit .env
 ```
 
-### Bước 3: Cài AI Logging Hooks
+## Chạy server
 
 ```bash
-# Linux / macOS / Git Bash
-bash scripts/setup_hooks.sh
-
-# Windows PowerShell
-# powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
+make run
+# hoặc: uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Hooks tự động log mọi AI prompt khi dùng Claude Code, Cursor, Codex, Gemini CLI, Antigravity, hoặc GitHub Copilot. Không cần thao tác thủ công.
+- Swagger UI: http://localhost:8000/docs
+- Health check: http://localhost:8000/health
 
-### Bước 4: Chạy server
+## Test / lint
 
 ```bash
-# Chạy FastAPI backend
-uvicorn src.main:app --reload --port 8000
-
-# Mở Swagger UI
-# http://localhost:8000/docs
+make test        # pytest tests/ -v
+make coverage     # báo cáo coverage (ngưỡng tối thiểu 70%, xem pyproject.toml)
+make lint         # ruff check
+make format       # ruff format
+make eval         # python eval/scripts/run_eval.py
 ```
 
-Xem hướng dẫn đăng ký, đăng nhập, JWT và test hai role tại [docs/AUTH.md](docs/AUTH.md).
+## Biến môi trường chính
 
-### Bước 5: Đọc hướng dẫn
+`.env.example`; `src/config.py` là nguồn cho default values.
 
-📖 Mở **[Technical Guidebook](https://phoenix.note.transformerlabs.ai/technical-book)** và làm theo từng chương.
+| Biến | Mô tả | Bắt buộc |
+|---|---|:---:|
+| `DATABASE_URL` | Connection string (mặc định SQLite dev) | — |
+| `JWT_SECRET_KEY` | Secret ký JWT, ≥32 ký tự; production từ chối khởi động nếu để giá trị mặc định |  (prod) |
+| `NURSE_REGISTRATION_CODE` | Mã mời riêng để đăng ký tài khoản `nurse`; production từ chối khởi động nếu để trống | (prod) |
+| `LLM_PROVIDER` | `auto` \| `openai` \| `deepseek` \| `gemini` \| `anthropic` \| `openrouter` | — |
+| `LLM_PROVIDER_ORDER` | Thứ tự fallback khi `LLM_PROVIDER=auto` | — |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | API key cho provider tương ứng (chỉ cần key của provider đang dùng) | tuỳ provider |
+| `WEAVIATE_URL` / `WEAVIATE_API_KEY` | Lưu trữ case dạng vector (best-effort, pipeline vẫn chạy nếu để trống) | — |
+| `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` | Gửi email xác thực / reset mật khẩu; để trống `SMTP_HOST` khi dev sẽ ghi nội dung email ra log server | — |
+| `ENABLE_GRAPH_TRIAGE_AGENT` | Bật module `src/graph_triage/` (second opinion, không bao giờ ghi đè `TriageProposal.priority`) — mặc định `false` | — |
+| `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
 
-## 📁 Cấu trúc dự án
+## API & luồng chính
 
-```
-├── src/
-│   ├── agents/           # 🧠 LangGraph Agent
-│   │   ├── graph.py      #    State graph (nodes + edges)
-│   │   ├── state.py      #    State schema (TypedDict)
-│   │   ├── nodes/        #    Node functions
-│   │   └── tools/        #    Agent tools (@tool)
-│   ├── api/              # 🌐 FastAPI Backend
-│   │   └── routes.py     #    API endpoints
-│   ├── models/           # 📋 Pydantic schemas
-│   ├── services/         # 🔧 Business logic (LLM, etc.)
-│   ├── config.py         # ⚙️ Pydantic Settings
-│   └── main.py           # 🚀 App entry point
-├── tests/                # 🧪 pytest suite
-│   ├── test_agents/      #    Agent/graph tests
-│   └── test_api/         #    API endpoint tests
-├── scripts/              # 🔌 AI Logging Hooks
-│   ├── log_hook.py       #    Auto-log cho Claude/Cursor/Codex/Gemini/Copilot
-│   ├── log_antigravity.py#    Antigravity IDE prompt scanner
-│   ├── log_manual.py     #    Manual log cho ChatGPT / web tools
-│   ├── submit_log.py     #    Submit logs on git push
-│   └── setup_hooks.sh    #    One-time hook installer
-├── .claude/ .codex/ .cursor/ .gemini/  # Per-tool hook configs
-├── .agents/              # Antigravity rules + workflows
-├── .ai-log/              # 📊 AI usage logs (auto-generated)
-├── docs/
-│   ├── guide/            # 📖 Technical Guidebook (10 chapters)
-│   └── architecture_diagram.md
-├── eval/                 # 📊 Evaluation results
-├── presentation/         # 🎤 Demo Day slides
-├── .github/workflows/    # ⚡ CI/CD (GitHub Actions)
-├── .github/hooks/        # 🪝 Copilot hook config
-├── Dockerfile            # 🐳 Multi-stage build
-├── docker-compose.yml    # 🐙 Full stack orchestration
-└── README_boilerplate.md # 📝 README template cho đội của bạn
-```
+Luồng production thật là `/api/v1/chat` (xem `src/api/routes.py` + `src/services/symptom_protocol/`). Chi tiết:
 
-## 📚 Technical Guidebook — 10 Chương
+- **Auth & phân quyền:** [docs/AUTH.md](docs/AUTH.md) — flow đăng ký/đăng nhập 2 role (`patient`/`nurse`), curl mẫu cho PowerShell/bash.
+- **API reference đầy đủ:** [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md), [docs/openapi.yaml](docs/openapi.yaml).
+- **Kiến trúc:** [ARCHITECTURE.md](ARCHITECTURE.md), [docs/architecture_diagram.md](docs/architecture_diagram.md).
 
-| Chương | Nội dung | Thời gian |
-|---------|----------|-----------|
-| 1 | Lời mở đầu — Mục tiêu, cách sử dụng | 15 phút |
-| 2 | Khởi tạo dự án — Clone, setup, git workflow | 4 giờ |
-| 3 | Thiết kế kiến trúc — 3-tier, diagrams, ADR | 6 giờ |
-| 4 | **LangGraph Agent** — State, nodes, edges, tools, RAG | 8 giờ |
-| 5 | FastAPI — Routes, validation, error handling, streaming | 6 giờ |
-| 6 | Giao diện — Next.js + Streamlit quickstart | 6 giờ |
-| 7 | DevOps — Docker, CI/CD, deploy, logging | 6 giờ |
-| 8 | Kiểm thử — Unit test, integration test, RAGAS | 4 giờ |
-| 9 | Demo Day — 10 deliverables, checklist, tips | 2 giờ |
-| 10 | Tài nguyên — Khóa học, docs, BMAD method | tham khảo |
+### Sample query — chat triage
 
-📖 **Đọc online:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-
-## 📋 10 Deliverables cho Demo Day
-
-| # | Deliverable | File vị trí | Template có sẵn |
-|---|-------------|-------------|:---:|
-| 1 | Source Code | `src/` | ✅ |
-| 2 | README.md | `README_boilerplate.md` → copy thành `README.md` | ✅ |
-| 3 | Architecture Diagram | `docs/architecture_diagram.md` | ✅ |
-| 4 | AI Logs | LangSmith (3 env vars) + Auto AI Usage Logging | ✅ |
-| 5 | Live URL | Deploy lên Render/Vercel | ⚡ CI/CD sẵn |
-| 6 | Video Demo | `presentation/` | 📝 |
-| 7 | Pitch Deck | `presentation/` | 📝 |
-| 8 | Development Journal | `JOURNAL.md` | ✅ |
-| 9 | Worklog | `WORKLOG.md` | ✅ |
-| 10 | Evaluation Evidence | `eval/` | 📝 |
-
-## 🛠 Tech Stack
-
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| AI Agent | LangGraph + LangChain | Latest |
-| Backend | FastAPI + Uvicorn | 0.100+ |
-| LLM | OpenAI GPT-4o-mini | API |
-| Frontend | Next.js / Streamlit | 14+ / 1.30+ |
-| Database | SQLite (dev) / PostgreSQL (prod) | — |
-| DevOps | Docker + GitHub Actions | — |
-| Testing | pytest + pytest-asyncio | 8+ |
-
-## 📊 AI Usage Logging
-
-Template đã tích hợp sẵn auto-logging hooks cho 6 AI tools:
-
-| Tool | Cơ chế | Config |
-|------|--------|--------|
-| Claude Code | `.claude/settings.json` hooks | Tự động |
-| Cursor | `.cursor/hooks.json` | Tự động |
-| OpenAI Codex CLI | `.codex/hooks.json` | Tự động |
-| Gemini CLI | `.gemini/settings.json` | Tự động |
-| GitHub Copilot | `.github/hooks/hooks.json` | Tự động |
-| Antigravity IDE | Pre-push scan transcript | Tự động trên `git push` |
-
-Tất cả prompts và tool calls được log vào `.ai-log/session.jsonl` và tự động submit lên grading server mỗi khi `git push`.
-
-**ChatGPT / web tools khác** — log thủ công:
 ```bash
-bash scripts/_pyrun.sh scripts/log_manual.py --tool chatgpt --prompt "What you asked"
+# 1. Đăng ký + đăng nhập bệnh nhân (xem docs/AUTH.md để có bản đầy đủ + role nurse)
+curl -X POST http://localhost:8000/api/v1/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"patient@example.com","password":"StrongPass123!","full_name":"Demo Patient","role":"patient"}'
+
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"patient@example.com","password":"StrongPass123!"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# 2. Gửi tin nhắn triệu chứng tự do (không cần ghim protocol trước)
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Tôi bị đau ngực và khó thở khi leo cầu thang"}'
+
+# 3. (role nurse) Xem hàng đợi và duyệt ca
+curl http://localhost:8000/api/v1/nurse/queue -H "Authorization: Bearer $NURSE_TOKEN"
+curl -X POST http://localhost:8000/api/v1/cases/{case_id}/review \
+  -H "Authorization: Bearer $NURSE_TOKEN" -H "Content-Type: application/json" \
+  -d '{"decision":"approve"}'
 ```
 
-> ⚠️ Chạy `bash scripts/setup_hooks.sh` một lần sau khi clone để cài pre-push hook.
+## Cấu trúc dự án
 
-## 📖 Đọc Technical Guidebook
-
-**Online (khuyến nghị):** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-
-Đăng nhập bằng GitHub (cùng account đã được BTC mời vào org `AI20K-Build-Cohort-2`)
-→ chọn tab **Technical Book** ở sidebar trái → đọc 10 chương + topic sections,
-có table of contents bên phải, hỗ trợ light/dark/cyberpunk theme.
-
-**Offline:** mọi chương đều ở thư mục `docs/guide/` trong template này — mở bằng
-bất kỳ markdown viewer/editor nào (VS Code, Obsidian, GitHub UI, …).
-
-## 🔗 Liên kết
-
-- 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-- 🏫 **AI20K Program:** VinUni AI20K Build Phase
-- 👨‍🏫 **Mentor:** Đặng Hải Lộc
-
-## 📄 License
-
-MIT — Sử dụng tự do cho mục đích giáo dục.
+```
+src/
+├── api/               # FastAPI routes (chat, cases, auth, nurse queue, MCP tools)
+├── config.py           # Pydantic Settings + hằng số protocol/red-flag
+├── middleware/          # Role-based auth middleware
+├── models/              # Pydantic schemas
+├── services/
+│   ├── symptom_protocol/  # Agent hội thoại chính (luồng /chat)
+│   ├── engines/           # ProtocolTriageEngine, RedFlagSafetyLayer, semantic_mapper
+│   ├── sessions/           # session store, HITL review, case bridge
+│   ├── stores/             # case_store
+│   └── infra/              # mailer, v.v.
+├── graph_triage/        # Module "second opinion" tuỳ chọn (mặc định tắt, xem CLAUDE.md #6)
+└── main.py               # App entry point
+tests/                   # pytest suite
+eval/                    # Evaluation scripts + evidence
+docs/                    # PRD, ADR, API docs, planning, guideline lâm sàng
+```
