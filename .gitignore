@@ -34,6 +34,9 @@ data/*
 *.db
 *.sqlite3
 
+# Model artifacts (src/graph_triage/) — riêng thư mục PhoBERT đã hơn 500 MB
+runs/
+
 # Logs
 logs/
 *.log
@@ -65,3 +68,4 @@ out/
 
 _guidance/*
 /notebooks/
+/runs/

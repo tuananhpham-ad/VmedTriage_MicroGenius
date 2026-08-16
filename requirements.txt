@@ -49,6 +49,11 @@ pyyaml>=6.0
 # deliberately not installed here -- torch alone is ~2.5 GB and CI never runs
 # that script.
 
+# NOTE: src/graph_triage/ (agent quyet dinh chay tren model da train) needs torch +
+# transformers + scikit-learn + torch-geometric. Those live in requirements-graph.txt
+# and are deliberately not installed here for the same reason. The app boots without
+# them: src/graph_triage/service.py imports lazily and disables the feature instead.
+
 # anthropic
 requests>=2.31
 beautifulsoup4>=4.12
