@@ -58,7 +58,7 @@ pip install -r requirements.txt
 Chạy FastAPI server:
 
 ```powershell
-python -m uvicorn src.main:app --host 127.0.0.1 --port 8001
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 ```
 
 Hoặc dùng Makefile nếu môi trường có `make`:
@@ -76,42 +76,47 @@ Health:      http://localhost:8000/health
 API status:  http://localhost:8000/api/v1/status
 ```
 
+`/` là **một SPA duy nhất** (`src/ui/new/`) — router phía client tự chuyển màn hình, không có trang
+`.html` riêng cho từng demo.
+
 Demo flow đề xuất:
 
-1. Mở `http://localhost:8000/`.
-2. Nhập triệu chứng mẫu:
+1. Mở `http://localhost:8000/` và đăng nhập (tài khoản mẫu ở mục 3b-bis).
+2. Xác nhận màn hình disclaimer để bắt đầu phiên mới.
+3. Nhập triệu chứng mẫu:
 
 ```text
 Tôi đau ngực từ sáng, đi vài bước là hụt hơi.
 ```
 
-3. Xem panel bệnh nhân, case details và nurse review.
-4. Ở nurse review, thử các hành động `Approve`, `Escalate`, hoặc `Ask more`.
+4. Agent hỏi lại theo cụm câu hỏi của protocol tương ứng; trả lời vài lượt cho tới khi hiện phiếu
+   tóm tắt, hoặc gõ một câu có dấu hiệu nguy hiểm để thấy cảnh báo cấp cứu hiện **ngay lập tức**.
+5. Đăng xuất, đăng nhập bằng tài khoản điều dưỡng để xem hàng đợi và mở một ca.
+6. Ở màn hình duyệt ca, thử `Approve`, `Escalate`, `Ask more` hoặc `Reject`.
 
 ## 3b. Demo hỏi đáp thu thập triệu chứng (Intake)
 
 Đây là demo tách riêng cho phần **hỏi-đáp + checklist + phiếu tóm tắt + xác nhận của người bệnh**.
 Phần duyệt của điều dưỡng và phần graph/GNN KHÔNG nằm trong demo này.
 
-Sau khi server chạy (mục 3), mở:
+> ⚠️ **Không còn trang `/intake.html`.** Frontend đã chuyển sang SPA một trang (`src/ui/new/`), nên demo
+> này giờ **chỉ truy cập được qua API** (các endpoint bên dưới), không có giao diện riêng. Router
+> `/api/v1/intake/*` vẫn hoạt động đầy đủ và không yêu cầu auth.
 
-```text
-http://localhost:8000/intake.html
-```
+Luồng demo (gọi bằng API):
 
-Luồng demo:
-
-1. Agent chào và hỏi thông tin ban đầu.
-2. Bạn trả lời tự nhiên, ví dụ:
+1. `POST /api/v1/intake/sessions` — agent trả về câu hỏi mở đầu.
+2. `POST /api/v1/intake/sessions/{id}/messages` với câu trả lời tự nhiên, ví dụ:
 
 ```text
 Bố tôi tên Trần Văn Hùng, 68 tuổi, sáng nay đột nhiên bị méo miệng và nói ngọng
 ```
 
-3. Panel bên phải hiển thị % checklist đã thu thập và trường nào còn thiếu.
+3. Response chứa `progress` (% checklist đã thu thập, trường còn thiếu) và `next_question`.
 4. Agent tự sinh câu hỏi tiếp theo (bằng LLM) cho các trường còn trống.
-5. Khi đạt **>= 85% trường bắt buộc** (6/7), hệ thống hiện **phiếu tóm tắt** và hỏi bạn xác nhận.
-6. Bấm `✓ Đúng rồi` để chốt, hoặc `✎ Chưa đúng, cần sửa` rồi nhập nội dung đính chính.
+5. Khi đủ ngưỡng trường bắt buộc, `summary_ready=true` và `summary_rows` chứa phiếu tóm tắt.
+6. `POST /api/v1/intake/sessions/{id}/confirm` với `{"is_correct": true}` để chốt, hoặc
+   `{"is_correct": false, "correction": "..."}` để đính chính.
 
 Kiểm tra hệ thống đang chạy bằng LLM thật hay fallback:
 
@@ -195,7 +200,7 @@ auto | openai | deepseek | gemini | anthropic | openrouter
 Kiểm tra nhanh provider nào đang khả dụng:
 
 ```powershell
-python -c "from src.services import provider_router; print(provider_router.available_providers())"
+python -c "from src.services.infra import provider_router; print(provider_router.available_providers())"
 ```
 
 Kết quả kỳ vọng khi đã cấu hình đúng, ví dụ:
@@ -382,31 +387,35 @@ Quy tắc:
   giá mức độ khẩn cấp.
 - Session lưu in-memory, mất khi kết thúc process.
 
-## 3d. Trang hub, BYO API key và console trace
+## 3d. Giao diện, BYO API key và console trace
 
-### Trang hub tại `/`
+### `/` là một SPA duy nhất
 
-`http://localhost:8000/` giờ là **trang chọn demo**, không vào thẳng một demo như trước:
+`http://localhost:8000/` phục vụ SPA ở `src/ui/new/` (`index.html` + module ES). Router phía client
+(`app.js`) chuyển giữa 9 màn hình: `access`, `auth`, `verify`, `reset`, `patient-home`, `disclaimer`,
+`patient-chat`, `nurse-queue`, `nurse-case`.
 
-| Demo | Link | Loại |
+> ⚠️ Các trang `/triage.html`, `/intake.html` và **trang hub chọn demo** trong bản trước **đã bị gỡ**.
+> Đừng dùng lại các đường dẫn đó.
+
+| Phần | Cách truy cập | Loại |
 |---|---|---|
-| Triage pipeline | `/triage.html` | rule-based, có đăng nhập |
-| Hỏi-đáp thu thập triệu chứng | `/intake.html` | dùng LLM, nhập API key riêng |
-| Checklist theo bệnh (Disease X) | *(CLI)* | `python -m scripts.run_disease_qa --demo` |
-
-Mỗi card có badge ghi rõ **dùng LLM** hay **rule-based**, tránh nhầm demo nào đang gọi model.
+| Hội thoại triệu chứng + duyệt HITL | SPA tại `/` (có đăng nhập) | agent LLM + rule engine |
+| Hỏi-đáp thu thập triệu chứng | API `/api/v1/intake/*` (mục 3b) | dùng LLM |
+| Phát hiện triệu chứng sốt | API `/api/v1/fever/*` | dùng LLM |
+| Checklist theo bệnh (Disease X) | CLI `python -m scripts.run_disease_qa --demo` | dùng LLM |
 
 ### Người test dùng API key của chính họ
 
-Trang `/intake.html` có panel **Cấu hình LLM** ở đầu:
+Không còn panel cấu hình LLM trên giao diện. BYO key giờ truyền qua **body của request tạo phiên**
+(`/api/v1/intake/sessions` hoặc `/api/v1/fever/sessions`):
 
-1. Chọn **Nhà cung cấp** → ô **Model** gợi ý sẵn các model của provider đó (vẫn gõ tay tên khác được).
-2. Dán **API key** (ô dạng password, có nút hiện/ẩn).
-3. Bấm **Kiểm tra kết nối** để gọi thử một request rất ngắn — báo OK hoặc lỗi cụ thể.
-4. Bấm **Áp dụng & bắt đầu phiên mới** để chạy demo bằng key đó.
+```json
+{ "provider": "deepseek", "api_key": "sk-...", "model": "deepseek-chat" }
+```
 
-Badge trạng thái cho biết đang chạy bằng *key của bạn*, *key của server*, hay *fallback deterministic*.
-Bỏ trống ô key thì dùng key server đã cấu hình trong `.env`.
+Bỏ trống hoặc không gửi body thì dùng key server đã cấu hình trong `.env`. Response trả `llm_source`
+(`user` / `server`), `llm_provider` và `llm_key_masked` để biết phiên đang chạy bằng key nào.
 
 **Cách key được bảo vệ:**
 
@@ -414,9 +423,10 @@ Bỏ trống ô key thì dùng key server đã cấu hình trong `.env`.
 - API response chỉ trả bản đã che (`sk-••••1f13`), không bao giờ trả key nguyên văn.
 - `LLMCredential.__repr__` tự che key, chặn lọt ra khi log/debug vô ý.
 - Lỗi từ SDK không đưa nguyên văn ra ngoài (thông báo lỗi có thể chứa lại key).
-- Trình duyệt lưu ở `sessionStorage` (mất khi đóng tab), **không** `localStorage`.
 - Mỗi phiên có credential dùng agent riêng, **không cache dùng chung** — nếu cache theo bệnh thì
   phiên của người này sẽ dùng nhầm key của người khác.
+- Khi có credential, `provider_router` dùng **đúng provider đó và không fallback**, đồng thời **không
+  ghi key vào `os.environ`** — tránh request song song đọc nhầm key của nhau.
 
 Endpoint liên quan:
 
@@ -485,12 +495,18 @@ Kiểm tra status:
 Invoke-RestMethod http://localhost:8000/api/v1/status
 ```
 
-Gửi một tin nhắn triage:
+Gửi một tin nhắn triage. ⚠️ `/api/v1/chat` **yêu cầu Bearer token với role `patient`** — gọi trần sẽ
+trả `401 Thiếu Bearer token`. Lấy token bằng `/api/v1/login` trước (tài khoản mẫu ở mục 3b-bis):
 
 ```powershell
+$token = (Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/v1/login `
+  -ContentType "application/json" `
+  -Body '{"email":"user0","password":"user0"}').access_token
+
 Invoke-RestMethod `
   -Method Post `
   -Uri http://localhost:8000/api/v1/chat `
+  -Headers @{ Authorization = "Bearer $token" } `
   -ContentType "application/json" `
   -Body '{"message":"Tôi đau ngực từ sáng, đi vài bước là hụt hơi."}'
 ```
@@ -498,23 +514,33 @@ Invoke-RestMethod `
 Trên Linux/macOS:
 
 ```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user0","password":"user0"}' | jq -r .access_token)
+
 curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"message":"Tôi đau ngực từ sáng, đi vài bước là hụt hơi."}'
 ```
 
-Các endpoint chính:
+Các endpoint chính (cột role theo `ROUTE_POLICIES` trong `src/middleware/auth.py`; `—` = không cần token):
 
 ```text
-GET  /health
-GET  /api/v1/status
-POST /api/v1/chat
-GET  /api/v1/nurse/queue
-GET  /api/v1/cases/{case_id}
-POST /api/v1/cases/{case_id}/review
-GET  /api/v1/tools
-POST /api/v1/tools/{tool_name}/call
+GET  /health                              —
+GET  /api/v1/status                       —
+POST /api/v1/login                        —
+POST /api/v1/chat                         patient      luồng agent chính
+GET  /api/v1/patient/history              patient
+GET  /api/v1/cases/{case_id}              patient|nurse
+GET  /api/v1/nurse/queue                  nurse
+POST /api/v1/cases/{case_id}/review       nurse
+GET  /api/v1/tools                        nurse
+POST /api/v1/tools/{tool_name}/call       nurse
 ```
+
+Danh sách endpoint đầy đủ (41 endpoint, kèm luồng nào dùng): xem `ARCHITECTURE.md` mục 4.1, hoặc mở
+`http://localhost:8000/docs`.
 
 ## 5. Chạy bằng Docker
 
@@ -686,7 +712,7 @@ http://localhost:8001/
 Đảm bảo đang chạy lệnh từ root repository:
 
 ```text
-D:\Folder F\phamtuananh@23020010\UET.iSEML\2026.VinAI.Project\P-141
+D:\Folder F\phamtuananh@23020010\UET.iSEML\2026.MAS.MedicineTriage\P-141
 ```
 
 Sau đó chạy lại:

@@ -35,26 +35,36 @@ Base path của toàn bộ API nghiệp vụ: **`/api/v1`** (trừ `GET /health`
 | #4 | Disclaimer, Banner khẩn cấp & Màn hình kết quả sau duyệt | [4.2](#42-feature-1--bệnh-nhân-khai-triệu-chứng-case-chính) (`/disclaimer`, `/cases/{id}/result`) — banner (W-04) là hiển thị FE dựa trên field `red_flag` có sẵn trong response, không có endpoint riêng |
 | #5 | Phiếu tóm tắt triệu chứng (structured summary) | Không có endpoint riêng — nhúng trong response của 4.2, xem ghi chú ngay dưới bảng 4.2 |
 
+> **Đổi luồng chính (2026-08-16).** Bản trước của doc này ghi `POST /cases` là luồng chính và
+> `POST /chat` là "legacy". Thực tế ngược lại: `/chat` là endpoint duy nhất frontend gọi và là endpoint
+> duy nhất chạy agent triệu chứng (`src/services/symptom_protocol/`). `POST /cases` +
+> `POST /cases/{case_id}/responses` chạy pipeline rule-based cũ, không có caller nào — đã **xoá** cùng
+> `src/api/routers/cases.py`, `src/services/sessions/case_flow.py` và router demo `/api/v1/intake/*`.
+> Nhóm endpoint HITL (`GET /cases/{id}`, `/queue`, `/approve`, `/override`, `/escalate`, `/reject`,
+> `/ask_more`, `/cases/{id}/result`, `/disclaimer`) **không đổi**.
+
 ## 2. API flow
 
 ```mermaid
 sequenceDiagram
     participant P as Patient (User)
     participant B as Backend (FastAPI)
-    participant AI as AI Agent (LangGraph pipeline)
+    participant AI as Symptom agent (src/services/symptom_protocol)
     participant N as Nurse
     participant R as Result
 
-    P->>B: POST /api/v1/cases (tin nhắn triệu chứng)
-    B->>AI: chạy pipeline (mapping, checklist, red-flag, triage proposal)
-    AI-->>B: structured_data, red_flags, priority đề xuất
-    B-->>P: next_message (hỏi tiếp) hoặc summary_ready=true
+    P->>B: POST /api/v1/chat (tin nhắn triệu chứng, case_id=null cho ca mới)
+    B->>AI: mở phiên ở LƯỢT MỞ (chưa ghim protocol), trích xuất lời kể tự do
+    AI-->>B: chọn protocol (fever/general), answers, red_flags, priority đề xuất
+    B-->>P: response + case_id (= session_id của phiên agent)
 
-    loop Hỏi-đáp tới khi đủ thông tin
-        P->>B: POST /api/v1/cases/{id}/responses
-        B->>AI: tiếp tục pipeline
-        AI-->>B: cập nhật structured_data / summary
+    loop Hỏi-đáp theo cụm/stage tới khi đủ căn cứ
+        P->>B: POST /api/v1/chat (kèm case_id đã có)
+        B->>AI: chạy tiếp stage machine + rule engine
+        AI-->>B: cập nhật answers / summary_ready
     end
+
+    P->>B: POST /api/v1/fever/sessions/{case_id}/confirm (xác nhận phiếu tóm tắt)
 
     B->>N: case xuất hiện trong GET /api/v1/queue (chờ duyệt)
     N->>B: POST /approve | /override | /escalate | /reject | /ask_more
@@ -91,30 +101,55 @@ Route được bảo vệ yêu cầu header `Authorization: Bearer <token>` (JWT
 | POST | `/api/v1/auth/password-reset/confirm` | Xác nhận reset mật khẩu | public | `token, new_password` | `MessageResponse` | 400 token sai/hết hạn |
 | POST | `/api/v1/auth/change-password` | Đổi mật khẩu | authenticated | `current_password, new_password` | `MessageResponse` | 401 tài khoản không hoạt động, 400 sai mật khẩu hiện tại |
 | GET | `/api/v1/me` | Thông tin user hiện tại | authenticated | — | `UserResponse` | 401 |
+| PUT | `/api/v1/me` | Cập nhật hồ sơ user hiện tại | authenticated | `UpdateProfileRequest` | `UserResponse` | 401 |
 
 ### 4.2 Feature 1 — Bệnh nhân khai triệu chứng (case chính)
 
 | Method | Endpoint | Purpose | Auth | Request | Response | Error codes |
 |---|---|---|---|---|---|---|
-| POST | `/api/v1/cases` | Tạo case mới từ tin nhắn đầu tiên | patient | `message` | `CaseInteractionResponse` (201) | 400 tin nhắn rỗng |
-| POST | `/api/v1/cases/{case_id}/responses` | Gửi tin nhắn tiếp theo trong case | patient | `message` | `CaseInteractionResponse` | 400 rỗng, 404 không tìm thấy case, 403 không phải chủ case |
-| GET | `/api/v1/cases/{case_id}` | Xem chi tiết case | authenticated | — | `TriageCase` | 404 |
+| POST | `/api/v1/chat` | **Luồng chính.** Bệnh nhân nhắn tự do; agent triệu chứng hỏi tiếp theo cụm/stage. Bỏ trống `case_id` để mở ca mới, truyền lại `case_id` để nhắn tiếp trong cùng ca | patient | `message, case_id?` | `ChatResponse{case_id, response, status, requires_human_approval}` | 400 tin nhắn rỗng, 403 không phải chủ case, 404 phiên không tồn tại |
+| POST | `/api/v1/fever/sessions/{session_id}/confirm` | Bệnh nhân xác nhận phiếu tóm tắt Đúng/Chưa đúng trước khi bàn giao điều dưỡng — truyền thẳng `case_id` nhận từ `/chat` vào `{session_id}` | public | `is_correct` | `FeverSessionResponse` | 404, 400 |
+| GET | `/api/v1/patient/history` | Danh sách ca của chính bệnh nhân (đã redact tới khi duyệt) | patient | — | `list[TriageCase]` | 401 |
+| GET | `/api/v1/cases/{case_id}` | Xem chi tiết case | authenticated | — | `TriageCase` | 404, 403 không sở hữu case (patient) |
 | GET | `/api/v1/cases/{case_id}/result` | Bệnh nhân xem kết quả (chỉ sau khi duyệt) | patient (ownership check) | — | `CaseResultResponse` | 404, 403 không sở hữu case |
 | GET | `/api/v1/disclaimer` | Nội dung disclaimer tĩnh | public | — | `DisclaimerResponse` | — |
 
-> **Đặc tả #5 (Phiếu tóm tắt):** không có endpoint riêng. Response của `POST /cases`, `POST /cases/{case_id}/responses` và `GET /cases/{case_id}` đều chứa `summary_ready` (bool), và khi đã sẵn sàng thì kèm `summary` (`HandoffSummary`) + `summary_fields` (mảng `{label, value, is_missing}` — field không map được đánh dấu `is_missing=true` thay vì để trống, đúng yêu cầu đặc tả). `GET /cases/{case_id}/result` cũng trả lại `summary`/`summary_fields` này cho bệnh nhân sau khi đã duyệt.
+> **`case_id` = `session_id`.** Một ca ứng với đúng một phiên agent, nên `case_id` trả về từ `/chat`
+> dùng thẳng được cho `/fever/sessions/{id}/confirm`, `GET /cases/{id}` và hàng đợi điều dưỡng — xem
+> `src/services/sessions/symptom_session.py` (một store dùng chung cho mọi symptom_group).
+
+> **Redact theo trạng thái:** `/chat` chỉ trả nội dung cho bệnh nhân khi case đang `COLLECTING_INFORMATION`
+> (câu hỏi tiếp theo) hoặc `ESCALATED` (cảnh báo cấp cứu — ngoại lệ HITL có chủ đích). Mọi trạng thái
+> khác trả câu chờ duyệt cố định. `GET /cases/{id}` với role patient cũng ẩn `red_flags`/`triage_proposal`/
+> `queue_item` cho tới khi điều dưỡng chốt.
+
+> **Đặc tả #5 (Phiếu tóm tắt):** không có endpoint riêng. `GET /cases/{case_id}` chứa `summary_ready`
+> (bool), và khi đã sẵn sàng thì kèm `summary` (`HandoffSummary`) + `summary_fields` (mảng
+> `{label, value, is_missing}` — field không map được đánh dấu `is_missing=true` thay vì để trống, đúng
+> yêu cầu đặc tả). `GET /cases/{case_id}/result` cũng trả lại `summary`/`summary_fields` này cho bệnh
+> nhân sau khi đã duyệt.
 
 ### 4.3 Feature 2 — Hàng đợi & duyệt ca (HITL, nurse)
 
 | Method | Endpoint | Purpose | Auth | Request | Response | Error codes |
 |---|---|---|---|---|---|---|
-| GET | `/api/v1/queue` (alias `/api/v1/nurse/queue`) | Danh sách case chờ duyệt, sắp theo priority | nurse | — | `list[QueueItemView]` | — |
+| GET | `/api/v1/queue` | Danh sách case chờ duyệt, sắp theo priority | nurse | — | `list[QueueItemView]` | — |
+| GET | `/api/v1/nurse/queue` | Danh sách case cho dashboard điều dưỡng — **đường frontend đang dùng** | nurse | — | `list[TriageCase]` | — |
 | POST | `/api/v1/cases/{case_id}/approve` | Giữ nguyên đề xuất AI | nurse | — | `ApprovalActionResponse` | 404 |
 | POST | `/api/v1/cases/{case_id}/override` | Đổi mức ưu tiên khác AI | nurse | `new_priority` | `ApprovalActionResponse` | 404, 400 priority không hợp lệ |
 | POST | `/api/v1/cases/{case_id}/escalate` | Ép mức Cấp cứu | nurse | — | `ApprovalActionResponse` | 404 |
 | POST | `/api/v1/cases/{case_id}/reject` | Từ chối xử lý case | nurse | `reason_code, note?` | `AuditActionResponse` | 404, 400 |
 | POST | `/api/v1/cases/{case_id}/ask_more` | Yêu cầu bệnh nhân bổ sung thông tin | nurse | `question` | `AuditActionResponse` | 404, 400 |
-| POST | `/api/v1/cases/{case_id}/review` *(legacy)* | Duyệt case (đường cũ) | nurse | `NurseReviewRequest` | `NurseReviewResponse` | 400 |
+| POST | `/api/v1/cases/{case_id}/review` | Duyệt case — **đường frontend đang dùng**, gộp approve/edit/reject/escalate/ask_more vào một body | nurse | `NurseReviewRequest` | `NurseReviewResponse` | 400 |
+
+> **Hai đường duyệt song song.** `/review` (trong `src/api/routes.py`) là đường màn hình điều dưỡng
+> đang gọi; 5 endpoint hành động rời ở trên (`/approve`, `/override`, `/escalate`, `/reject`,
+> `/ask_more`, trong `src/api/routers/queue.py`) đúng đặc tả Feature #2 nhưng chưa có caller nào.
+>
+> `GET /queue` và `GET /nurse/queue` **không phải alias của nhau** — hai handler khác nhau, trả hai
+> kiểu khác nhau (`QueueItemView` có thứ tự ưu tiên của hàng đợi; `TriageCase` là bản ghi ca đầy đủ).
+> Frontend gọi `/nurse/queue`. Cả hai nhóm được giữ lại có chủ ý — cần chốt với PM chọn một trước khi
+> bỏ nhóm còn lại, và đây là cặp trùng lặp cuối cùng còn lại sau đợt dọn 2026-08-16.
 
 ### 4.4 Tools & tiện ích nội bộ (nurse)
 
@@ -123,30 +158,42 @@ Route được bảo vệ yêu cầu header `Authorization: Bearer <token>` (JWT
 | GET | `/api/v1/tools` | Danh sách MCP tool đã cấu hình | nurse | — | `list[MCPToolDescriptor]` | — |
 | POST | `/api/v1/tools/{tool_name}/call` | Gọi MCP tool | nurse | `arguments` | `MCPToolCallResult` | 503 tool chưa cấu hình, 404 tool chưa đăng ký |
 
-### 4.5 Legacy / trạng thái hệ thống
+### 4.5 Trạng thái hệ thống
 
 | Method | Endpoint | Purpose | Auth | Request | Response | Error codes |
 |---|---|---|---|---|---|---|
-| POST | `/api/v1/chat` *(legacy, thay bằng `/cases`)* | Chat 1 lượt chạy full pipeline | patient | `message, case_id?` | `ChatResponse` (kèm `pipeline_trace`) | 500 |
 | GET | `/api/v1/status` | Trạng thái agent | public | — | `{status, agent}` | — |
 | GET | `/health` | Health check (root, ngoài `/api/v1`) | public | — | `{status, env}` | — |
 
-### 4.6 Demo — Intake hỏi-đáp (không auth, chỉ dùng để test/demo)
+> **Đã gỡ (2026-08-16):** `POST /api/v1/cases`, `POST /api/v1/cases/{case_id}/responses` và toàn bộ
+> router demo `/api/v1/intake/*`. Không có caller nào (frontend lẫn test) và chúng chạy pipeline
+> rule-based cũ / luồng demo song song với agent thật. Thay thế: `POST /api/v1/chat` ở [4.2](#42-feature-1--bệnh-nhân-khai-triệu-chứng-case-chính).
 
-> Router này **không** có auth và **không** đẩy case sang điều dưỡng — dùng để demo nhanh việc hỏi-đáp thu thập triệu chứng, không phải luồng nghiệp vụ chính (xem 4.2/4.3).
+### 4.6 Demo — Fever intake (phát hiện triệu chứng sốt, không auth, chỉ dùng để test/demo)
+
+> Router riêng cho luồng phát hiện triệu chứng SỐT theo `_guidance/fever-detect-agent-task.md` — hội
+> thoại thích ứng theo `docs/medical_knowledge/fever-conversation-specification.md` (Stage 0→5),
+> `triage_level`/`reason_codes`/`triggered_rules` do rule engine (`fever_red_flag_engine.py`) quyết
+> định, không phải LLM. Lối vào chuyên biệt: `POST /fever/sessions` ghim sẵn protocol sốt, khác ô chat
+> tự do ở 4.2 (mở phiên ở lượt mở rồi mới chọn protocol).
+>
+> **Lưu ý:** `POST /fever/sessions/{session_id}/confirm` **không** phải endpoint demo — frontend gọi nó
+> cho MỌI ca mở từ `/chat` (xem 4.2), dùng được vì `fever_session` và `/chat` chia sẻ cùng một session
+> store. 3 endpoint còn lại của router này hiện chỉ dùng để test/demo, không có caller frontend.
 
 | Method | Endpoint | Purpose | Response | Error codes |
 |---|---|---|---|---|
-| GET | `/api/v1/intake/health` | LLM thật hay fallback | `{llm_available, active_provider, ...}` | — |
-| GET | `/api/v1/intake/providers` | Danh sách LLM provider hỗ trợ | `{providers, server_default_provider}` | — |
-| POST | `/api/v1/intake/providers/test` | Test API key của người dùng | `{ok, provider, model, sample}` | 400 thiếu provider/key |
-| POST | `/api/v1/intake/sessions` | Bắt đầu phiên hỏi-đáp demo | `IntakeSessionResponse` (201) | — |
-| GET | `/api/v1/intake/sessions/{session_id}` | Xem trạng thái phiên | `IntakeSessionResponse` | 404 |
-| POST | `/api/v1/intake/sessions/{session_id}/messages` | Gửi câu trả lời | `IntakeSessionResponse` | 404, 400 rỗng |
-| POST | `/api/v1/intake/sessions/{session_id}/confirm` | Xác nhận phiếu tóm tắt | `IntakeSessionResponse` | 404, 400 |
+| POST | `/api/v1/fever/sessions` | Bắt đầu phiên phát hiện triệu chứng sốt (câu hỏi mở đầu Q0-01) | `FeverSessionResponse` (201) | — |
+| GET | `/api/v1/fever/sessions/{session_id}` | Xem trạng thái phiên | `FeverSessionResponse` | 404 |
+| POST | `/api/v1/fever/sessions/{session_id}/messages` | Gửi câu trả lời; agent trích xuất + hỏi tiếp hoặc dừng (chốt đỏ/đủ căn cứ/hết ngân sách) | `FeverSessionResponse` | 404, 400 rỗng |
+| POST | `/api/v1/fever/sessions/{session_id}/confirm` | Xác nhận phiếu tóm tắt cuối phiên | `FeverSessionResponse` | 404, 400 |
+
+`FeverSessionResponse` gồm: `session_id, state (collecting/awaiting_confirmation/confirmed/emergency),
+stage, next_question, turn_count, answers, conversation, triage_level, reason_codes, triggered_rules,
+stop_reason (RED_FLAG/SUFFICIENT_EVIDENCE/BUDGET_EXHAUSTED), llm_used`.
 
 ## 5. Ghi chú cho PM khi review
 
 - **Nguồn sự thật** cho request/response schema đầy đủ (field types, validation, examples) là Swagger UI/`docs/openapi.yaml` — bảng trên chỉ tóm tắt phạm vi & mục đích để review nhanh.
-- Luồng nghiệp vụ chính là **4.2 + 4.3** (`POST /cases` → hội thoại → `GET /queue` → nurse duyệt → `GET /cases/{id}/result`). Mục 4.5 (`/chat`) là đường cũ giữ lại tương thích ngược, mục 4.6 (`/intake/*`) là route demo không dùng auth — không tính vào phạm vi bảo mật/nghiệp vụ chính thức.
+- Luồng nghiệp vụ chính là **4.2 + 4.3** (`POST /chat` → hội thoại → xác nhận phiếu tóm tắt → `GET /queue` → nurse duyệt → `GET /cases/{id}/result`). Mục 4.6 (`/fever/*`) là route demo không dùng auth, trừ endpoint `/confirm` mà frontend đang dùng thật — không tính phần demo vào phạm vi bảo mật/nghiệp vụ chính thức.
 - Toàn bộ kết quả triage cho bệnh nhân đều bị chặn (`is_approved=false`, không lộ nội dung xử trí) cho tới khi điều dưỡng duyệt — đây là ràng buộc HITL bắt buộc, không phải thiếu sót.

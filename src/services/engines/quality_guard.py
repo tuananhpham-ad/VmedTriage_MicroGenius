@@ -5,9 +5,15 @@ import re
 from src.models.schemas import ActorRole, ConversationQualityFlag, TriageCase
 
 # Heuristic rule-based, KHÔNG phải LLM: mục tiêu là rẻ, nhanh, chạy mỗi turn mà không cần gọi model.
-# Đây chỉ là GỢI Ý, không có quyền chặn tuyệt đối - xem ghi chú an toàn trong TriagePipeline/case_approval.
+# Đây chỉ là GỢI Ý, không có quyền chặn tuyệt đối - xem ghi chú an toàn trong case_approval.
+#
+# CHƯA ĐƯỢC NỐI LẠI (2026-08-16): nơi DUY NHẤT từng gọi `assess()` là `case_flow.py`, đã bị xoá cùng
+# `POST /cases`. Luồng hiện tại (`POST /chat` -> `symptom_case_bridge`) không gắn `quality_flag`, nên
+# mọi case đều giữ giá trị mặc định và nhánh suppress trong `case_approval.list_queue()` không bao giờ
+# chạy. Giữ file lại vì đây là tính năng bị mồ côi, không phải code chết: muốn bật lại thì gọi
+# `quality_guard.assess()` trong `symptom_case_bridge.to_triage_case()`.
 MIN_MESSAGE_LENGTH = 3
-MAX_ASK_ROUNDS_BEFORE_LOW_QUALITY = 4  # ~2x ALLOWED_ASKS trong case_flow.py, đủ dư địa cho hội thoại thật
+MAX_ASK_ROUNDS_BEFORE_LOW_QUALITY = 4  # đủ dư địa cho một hội thoại thật (~2x số lượt hỏi lại cho mỗi field)
 _WORD_CHAR_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 
 

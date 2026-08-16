@@ -30,7 +30,24 @@ export class ApiError extends Error {
 
 export function readError(payload) {
   if (!payload) return "";
-  if (typeof payload.detail === "string") return payload.detail;
-  if (Array.isArray(payload.detail)) return payload.detail.map((item) => item.msg).filter(Boolean).join(" ");
-  return payload.message || "";
+  if (typeof payload.detail === "string") return friendlyMessage(payload.detail);
+  if (Array.isArray(payload.detail)) {
+    const messages = [...new Set(payload.detail.map((item) => friendlyMessage(item.msg, item.loc)).filter(Boolean))];
+    return messages.length > 1 ? "Vui lòng kiểm tra và điền đầy đủ các thông tin bắt buộc." : (messages[0] || "");
+  }
+  return friendlyMessage(payload.message || "");
+}
+
+function friendlyMessage(message, location = []) {
+  const clean = String(message).replace(/^value error,\s*/i, "");
+  if (/^string should have at least 1 character$/i.test(clean)) return "Vui lòng điền đầy đủ thông tin bắt buộc.";
+  if (/^value is not a valid email address/i.test(clean)) return "Vui lòng nhập địa chỉ email hợp lệ.";
+  const minimumLength = clean.match(/^string should have at least (\d+) characters?$/i);
+  if (minimumLength) {
+    const field = Array.isArray(location) ? location.at(-1) : "";
+    const labels = { full_name: "Họ và tên", phone_number: "Số điện thoại", password: "Mật khẩu", confirm_password: "Xác nhận mật khẩu" };
+    const label = labels[field] || "Thông tin này";
+    return `${label} cần có ít nhất ${minimumLength[1]} ký tự.`;
+  }
+  return clean;
 }

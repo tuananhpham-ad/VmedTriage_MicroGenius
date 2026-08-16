@@ -21,3 +21,10 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 """Log phiên hỏi-đáp. Đã nằm trong .gitignore vì chứa nguyên văn hội thoại (PHI)."""
 
 DATA_DIR = PROJECT_ROOT / "data"
+
+RUNS_DIR = PROJECT_ROOT / "runs"
+"""Artifact model đã train (`logreg_full/`, `bert_full/`, `fusion_full/`). Trong .gitignore vì một
+thư mục PhoBERT đã hơn 500 MB."""
+
+GRAPH_CACHE_DIR = DATA_DIR / "graphs"
+"""Patient Graph JSONL do `src/graph_triage/extract_graphs.py` sinh ra."""

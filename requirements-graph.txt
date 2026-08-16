@@ -1,0 +1,22 @@
+# Dependencies cho agent quyết định trong src/graph_triage/ (LogReg + PhoBERT + HGT fusion).
+#
+# KHÔNG gộp vào requirements.txt: riêng torch đã ~2.5 GB, và CI không chạy phần này. App vẫn khởi
+# động bình thường khi chưa cài file này - src/graph_triage/service.py import lazy và tự tắt tính
+# năng khi thiếu (xem ràng buộc 1 trong docstring của nó).
+#
+# Cài:  pip install -r requirements-graph.txt
+#
+# Wheel PyTorch có CUDA cho Windows/Linux. Wheel mặc định trên PyPI là bản CPU-only.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.10.0
+
+numpy>=1.26,<3
+pandas>=2.2,<3
+scikit-learn>=1.5,<2
+joblib>=1.4,<2
+transformers>=4.45,<5
+safetensors>=0.4,<1
+openai>=1.0,<3
+
+# torch-geometric chỉ cần cho HGT/fusion (Phần B). LogReg + PhoBERT chạy không cần nó.
+torch-geometric>=2.7,<3

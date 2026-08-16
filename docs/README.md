@@ -10,7 +10,7 @@ Thu muc nay chua tai lieu san pham, kien truc, checklist, wireframe va guidebook
 | `prd.md` | Product Requirements Document: yeu cau san pham va pham vi. |
 | `architecture_diagram.md` | So do kien truc bang Mermaid. |
 | `db_schema_erd.md` | Mo ta schema/ERD du lieu. |
-| `checklists/` | Checklist deliverable hoac review theo task. |
+| `medical_knowledge/` | Cac tai lieu lien quan den model knowledge. |
 | `planning/` | Tai lieu planning, hien co file Excel feature specification. |
 | `wireframe/` | Wireframe HTML cho VMedTriage. |
 | `guide/` | Technical guidebook tu template AI20K. |

@@ -54,6 +54,31 @@ async def test_register_requires_email_verification_before_login(client, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_login_accepts_phone_number(client, monkeypatch):
+    delivered_codes: list[str] = []
+    monkeypatch.setattr(
+        account_mailer,
+        "send_email_verification_code",
+        lambda *, recipient, code: delivered_codes.append(code),
+    )
+    payload = registration_payload(email="phone.login@example.com", username="phone.login")
+    payload["phone_number"] = "0901234578"
+    assert (await client.post("/api/v1/register", json=payload)).status_code == 201
+    assert delivered_codes
+    assert (
+        await client.post(
+            "/api/v1/auth/email-verification/confirm",
+            json={"email": payload["email"], "code": delivered_codes[0]},
+        )
+    ).status_code == 200
+    login_response = await client.post(
+        "/api/v1/login", json={"email": payload["phone_number"], "password": payload["password"]}
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["user"]["phone_number"] == payload["phone_number"]
+
+
+@pytest.mark.asyncio
 async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch):
     monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: None)
     response = await client.post(
@@ -70,6 +95,28 @@ async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch
     )
     assert response.status_code == 201, response.text
     assert response.json()["username"] == "short.form"
+
+
+@pytest.mark.asyncio
+async def test_profile_updates_extended_optional_information(client, patient_headers):
+    response = await client.put(
+        "/api/v1/me",
+        headers=patient_headers,
+        json={
+            "full_name": "Patient Updated",
+            "phone_number": "0901234567",
+            "date_of_birth": "1990-01-01",
+            "gender": "female",
+            "address": "Cầu Giấy, Hà Nội",
+            "emergency_contact_name": "Người thân",
+            "emergency_contact_relationship": "Mẹ",
+            "emergency_contact_phone": "0901234599",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["address"] == "Cầu Giấy, Hà Nội"
+    assert body["emergency_contact_phone"] == "0901234599"
 
 
 @pytest.mark.asyncio

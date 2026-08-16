@@ -184,6 +184,15 @@ class TriageCase(BaseModel):
     )
     summary_ready: bool = False
     summary_fields: list[SummaryField] = Field(default_factory=list)
+    graph_decision: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Kết luận cuối của agent quyết định trong src/graph_triage/ (LogReg + PhoBERT + evidence "
+            "graph -> LLM). Ý kiến tham khảo THỨ HAI cho điều dưỡng. TUYỆT ĐỐI không được gán vào "
+            "TriageProposal.priority hay RedFlagFinding - ProtocolTriageEngine/RedFlagSafetyLayer "
+            "vẫn là nguồn quyết định mức ưu tiên duy nhất."
+        ),
+    )
     quality_flag: ConversationQualityFlag = Field(
         default=ConversationQualityFlag.NORMAL,
         description="Gán bởi quality_guard mỗi turn; low_quality chỉ dùng để suppress hàng đợi khi KHÔNG có red-flag.",

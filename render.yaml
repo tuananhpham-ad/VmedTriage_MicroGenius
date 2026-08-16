@@ -15,13 +15,15 @@ services:
       - key: LLM_PROVIDER
         value: auto
       - key: LLM_PROVIDER_ORDER
-        value: deepseek,gemini
+        value: openrouter,deepseek,gemini,openai,anthropic
+      - key: OPENROUTER_MODEL_NAME
+        value: openai/gpt-4o-mini
       - key: OPENAI_MODEL_NAME
         value: gpt-4o-mini
       - key: DEEPSEEK_MODEL_NAME
         value: deepseek-chat
       - key: GEMINI_MODEL_NAME
-        value: gemini-3.5-flash-lite
+        value: gemini-3.1-flash-lite
       - key: SUPPORTED_MODEL_NAME
         value: Qwen/Qwen3-8B
       - key: LLM_TEMPERATURE

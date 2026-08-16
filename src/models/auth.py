@@ -86,14 +86,14 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Đăng nhập bằng email HOẶC tên đăng nhập.
+    """Đăng nhập bằng email, số điện thoại HOẶC tên đăng nhập.
 
     Giữ tên trường là `email` để không phá client hiện có, nhưng kiểu là `str` chứ không phải
     `EmailStr` - nếu ép EmailStr thì gõ tên đăng nhập sẽ bị chặn ngay ở tầng validate (422) và
     không bao giờ tới được bước tra cứu.
     """
 
-    email: str = Field(min_length=1, max_length=320, description="Email hoặc tên đăng nhập")
+    email: str = Field(min_length=1, max_length=320, description="Email, số điện thoại hoặc tên đăng nhập")
     password: str = Field(min_length=1, max_length=128)
 
 
@@ -154,11 +154,20 @@ class UpdateProfileRequest(BaseModel):
     phone_number: str = Field(min_length=9, max_length=32)
     date_of_birth: date
     gender: Gender
+    address: str | None = Field(default=None, max_length=240)
+    emergency_contact_name: str | None = Field(default=None, max_length=120)
+    emergency_contact_relationship: str | None = Field(default=None, max_length=80)
+    emergency_contact_phone: str | None = Field(default=None, max_length=32)
 
     @field_validator("phone_number")
     @classmethod
     def validate_phone_number(cls, value: str) -> str:
         return RegisterRequest.validate_phone_number(value)
+
+    @field_validator("emergency_contact_phone")
+    @classmethod
+    def validate_emergency_contact_phone(cls, value: str | None) -> str | None:
+        return RegisterRequest.validate_phone_number(value) if value else None
 
 
 class UserResponse(BaseModel):
@@ -171,6 +180,10 @@ class UserResponse(BaseModel):
     phone_number: str
     date_of_birth: date
     gender: Gender
+    address: str | None
+    emergency_contact_name: str | None
+    emergency_contact_relationship: str | None
+    emergency_contact_phone: str | None
     role: UserRole
     email_verified: bool
     is_active: bool
