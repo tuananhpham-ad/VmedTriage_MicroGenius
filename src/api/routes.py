@@ -174,7 +174,8 @@ def update_current_user(
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     """Nhận tin nhắn tự do của bệnh nhân và chạy AGENT triệu chứng (`symptom_protocol/`).
 
-    Trước đây endpoint này chạy pipeline rule-based `src/agents/graph.py`. Đã chuyển sang agent vì
+    Trước đây endpoint này chạy pipeline rule-based `src/agents/graph.py` (đã xoá 2026-08-16 cùng
+    `POST /cases`, xem `docs/API_DOCUMENTATION.md` §4.5). Đã chuyển sang agent vì
     agent hỏi theo cụm/stage đúng tài liệu CS, chốt đỏ ngay khi phát hiện red flag, và mọi kết luận
     vẫn do rule engine THUẦN quyết định (LLM chỉ trích xuất field, không xếp mức khẩn cấp).
 

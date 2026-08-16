@@ -6,34 +6,9 @@ from pydantic import BaseModel, Field
 
 from src.models.schemas import HandoffSummary, SummaryField, TriagePriority
 
-
-class PatientMessageRequest(BaseModel):
-    """Body dùng chung cho POST /cases và POST /cases/{id}/responses.
-
-    Cố ý KHÔNG dùng min_length/field_validator để chặn chuỗi rỗng ở tầng Pydantic: theo đặc tả,
-    input rỗng/không hợp lệ phải trả 400 kèm message rõ ràng (không phải 422 mặc định của FastAPI),
-    nên việc kiểm tra "rỗng/whitespace-only" được thực hiện tường minh trong src/services/case_flow.py.
-    """
-
-    message: str = Field(default="", max_length=5000, description="Tin nhắn tự do của bệnh nhân")
-
-
-class CaseInteractionResponse(BaseModel):
-    """Response chung cho Feature #1 (POST /cases, POST /cases/{id}/responses)."""
-
-    case_id: str
-    next_message: str | None = Field(default=None, description="Câu hỏi tiếp theo, null nếu đã đủ thông tin")
-    detected_symptom_group: str
-    summary_ready: bool
-    red_flag: bool
-    red_flag_reason: str | None = None
-    priority: TriagePriority | None = None
-    priority_label_vi: str | None = None
-    detect_source: str
-    grounding_source: str
-    status: str
-    summary: HandoffSummary | None = None
-    summary_fields: list[SummaryField] = Field(default_factory=list)
+# `PatientMessageRequest`/`CaseInteractionResponse` đã bị gỡ ngày 2026-08-16 cùng với
+# `src/api/routers/cases.py`. Body/response của luồng bệnh nhân khai triệu chứng nay là
+# `ChatRequest`/`ChatResponse` trong `src/models/schemas.py` (endpoint POST /chat).
 
 
 class QueueItemView(BaseModel):

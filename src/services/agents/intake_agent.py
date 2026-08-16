@@ -338,7 +338,7 @@ intake_agent = IntakeAgent()
 
 @dataclass(slots=True)
 class TurnResult:
-    """Kết quả một lượt hỏi-đáp, dùng bởi intake_session."""
+    """Kết quả một lượt hỏi-đáp."""
 
     extracted: dict[str, str] = field(default_factory=dict)
     red_flags: list[RedFlagHit] = field(default_factory=list)

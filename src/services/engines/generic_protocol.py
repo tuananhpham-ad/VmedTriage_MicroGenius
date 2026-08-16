@@ -26,6 +26,7 @@ from src.services.checklists.generic_checklist import (
     STAGE_ORDER,
 )
 from src.services.symptom_protocol.common_safety import rules as common_rules
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months, array_has_any, is_true
 from src.services.symptom_protocol.models import QuestionCluster, RuleMatch
@@ -33,7 +34,9 @@ from src.services.symptom_protocol.protocol import SymptomProtocol
 
 PROTOCOL_NAME = "general"
 
-BUDGET_FLOOR_STAGE = "4"
+# Ngân sách bắt đầu có hiệu lực từ stage áp chót. Trước đây là "4" - cũng là stage CUỐI, nên ngân
+# sách không bao giờ cắt được gì trước khi đã đi hết bộ câu hỏi. Cùng lỗi và cùng cách sửa như fever.
+BUDGET_FLOOR_STAGE = "3"
 
 # Ngân sách tính theo CỤM. Hẹp hơn fever vì protocol này không đào sâu nguyên nhân - nó chỉ quét đỏ
 # rồi bàn giao, hỏi dài thêm không đổi được kết luận (vốn luôn là EARLY_VISIT).
@@ -52,6 +55,11 @@ SAFETY_SIGNAL_FIELDS: tuple[str, ...] = common_rules.EMERGENCY_TRI_STATE_FIELDS 
     "chief_complaint",
     "complaint_site",
     "complaint_onset_at",
+    # Bối cảnh nguy cơ nằm ở Stage 4 nhưng là thứ người bệnh hay tự khai ngay tin nhắn đầu - cùng lý
+    # do như `fever_protocol._EARLY_VOLUNTEERED_FIELDS`.
+    "is_pregnant",
+    "chronic_conditions",
+    "immunocompromised",
 )
 
 
@@ -151,6 +159,16 @@ RULE_CATALOG: tuple = (
     common_rules.r_g_01,
 )
 
+# Cùng bộ cụm quét đỏ/quét khám sớm với fever, chỉ khác tên stage (xem `common_safety/clusters.py`) -
+# nên dùng lại đúng bộ nhóm sàng lọc đó. Trước đây generic KHÔNG khai nhóm nào, nghĩa là mọi than
+# phiền ngoài sốt phải trả lời tuần tự từng cụm quét đỏ một, đúng thứ mà `screening.py` sinh ra để
+# tránh - và generic lại là protocol phục vụ 6/7 nhóm triệu chứng.
+SCREENING_GROUPS: tuple = (
+    common_screening.emergency_scan_groups(GATE_STAGES[0])
+    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    + common_screening.risk_context_groups("4")
+)
+
 FIELD_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "is_pregnant": ("gestational_weeks", "obstetric_red_flags"),
     "immunocompromised": ("immunocompromise_cause", "known_neutropenia"),
@@ -178,6 +196,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     emergency_message=EMERGENCY_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS,
+    screening_groups=SCREENING_GROUPS,
     field_dependencies=FIELD_DEPENDENCIES,
     derive_fields=derive_duration,
     reason_code_labels=REASON_CODE_LABELS,

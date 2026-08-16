@@ -19,7 +19,7 @@ from src import paths
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.engines.generic_protocol import GENERIC_PROTOCOL
 from src.services.infra import provider_router
-from src.services.symptom_protocol import registry, rule_engine, stage_machine
+from src.services.symptom_protocol import batching, registry, rule_engine, stage_machine
 from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase, SessionState
 
 
@@ -227,7 +227,15 @@ def test_session_switches_from_fever_to_generic_when_the_claim_is_retracted(monk
 
     assert session.protocol_name == GENERIC_PROTOCOL.name
     assert session.current_cluster is not None
-    assert session.current_cluster.id in {c.id for c in GENERIC_PROTOCOL.clusters}
+    # Cụm kế tiếp phải THUỘC generic - đây là điều test canh: không được sót lại cụm của fever. Cụm
+    # có thể là một GÓI (`batching`) gồm 2-3 cụm generic, nên kiểm theo cụm thành phần.
+    generic_ids = {cluster.id for cluster in GENERIC_PROTOCOL.clusters}
+    asked_ids = (
+        set(batching._components_of(session.current_cluster.id))
+        if batching.is_batch(session.current_cluster)
+        else {session.current_cluster.id}
+    )
+    assert asked_ids and asked_ids <= generic_ids
     assert session.last_question  # vẫn phải có câu hỏi, không được trả tin nhắn rỗng
     # Phần đặc điểm sốt đã bị xoá khỏi hồ sơ (`retraction.apply_retraction`), không còn gửi cho
     # điều dưỡng như một sự thật.

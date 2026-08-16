@@ -1,6 +1,6 @@
 """In trace từng bước hỏi-đáp ra terminal cho dễ quan sát khi chạy server.
 
-Khác `session_log.py` (ghi JSON xuống `logs/` để tra cứu sau), module này chỉ phục vụ QUAN SÁT
+Khác `fever_stage_log.py` (ghi JSONL xuống `logs/` để tra cứu sau), module này chỉ phục vụ QUAN SÁT
 TRỰC TIẾP lúc dev: mỗi lượt một dòng, có màu, căn lề, đọc được ngay trong cửa sổ uvicorn.
 
 Bật/tắt bằng `CONSOLE_TRACE` trong `.env`:

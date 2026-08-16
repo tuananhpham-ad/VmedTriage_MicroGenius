@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from src.config import OPENROUTER_FREE_MODELS, get_settings
@@ -414,6 +414,132 @@ def complete(
     raise NoProviderConfiguredError("Mọi provider đều lỗi -> " + " | ".join(errors))
 
 
+def complete_stream(
+    messages: Sequence[dict[str, str]],
+    *,
+    temperature: float | None = None,
+    max_attempts: int = 3,
+    credential: LLMCredential | None = None,
+) -> Iterator[str]:
+    """Như `complete()` nhưng trả text theo từng mẩu. Dùng cho văn bản HIỂN THỊ cho người bệnh.
+
+    Chữ ký của `complete()` được giữ NGUYÊN VẸN chứ không thêm cờ `stream=`: hàng chục test đang
+    monkeypatch nó theo đúng chữ ký hiện tại, và quan trọng hơn - hai hàm trả hai kiểu khác nhau
+    (một cục vs iterator), gộp vào một chữ ký chỉ để tiết kiệm một tên hàm là mời gọi lỗi kiểu.
+
+    Fallback co lại có chủ ý: chỉ được đổi provider/model khi CHƯA phát ra mẩu nào. Đã trả cho người
+    bệnh nửa câu rồi thì lỗi là lỗi cuối - viết tiếp bằng model khác sẽ ra một câu ghép từ hai giọng
+    khác nhau, tệ hơn hẳn một thông báo lỗi trung thực.
+
+    Provider chưa hỗ trợ streaming (gemini/anthropic) không phải nhánh lỗi: rơi về `complete()` rồi
+    phát trọn văn bản trong đúng một mẩu, nên phía gọi không cần biết provider nào đang chạy.
+    """
+    settings = get_settings()
+    resolved_temperature = settings.llm_temperature if temperature is None else temperature
+    budget = _AttemptBudget.from_settings(settings)
+
+    if credential is not None:
+        yield from _stream_one(
+            make_provider_for_credential(credential), list(messages), credential.model,
+            temperature=resolved_temperature, provider_name=credential.provider,
+        )
+        return
+
+    specs = [
+        spec
+        for spec in _ordered_specs(settings.llm_provider, settings.llm_provider_order)
+        if has_usable_key(getattr(settings, spec.api_key_attr, ""))
+    ]
+    if not specs:
+        raise NoProviderConfiguredError(
+            "Chưa cấu hình API key cho provider nào. Đặt một trong: "
+            + ", ".join(spec.env_var for spec in PROVIDER_SPECS)
+        )
+
+    errors: list[str] = []
+    for spec in specs[:max_attempts]:
+        for model in _candidate_models(spec):
+            if budget.exhausted_reason():
+                break
+            budget.consume()
+            try:
+                yield from _stream_one(
+                    _build_provider(spec, model), list(messages), model,
+                    temperature=resolved_temperature, provider_name=spec.name,
+                )
+                return
+            except _StreamAlreadyStartedError:
+                raise
+            except Exception as exc:
+                described = describe_provider_error(spec.name, exc, model=model)
+                errors.append(described)
+                logger.warning("provider.stream_failed %s", described)
+                if _status_code_of(exc) in _KEY_LEVEL_STATUSES:
+                    break
+
+    raise NoProviderConfiguredError("Không stream được từ provider nào -> " + " | ".join(errors))
+
+
+class _StreamAlreadyStartedError(RuntimeError):
+    """Lỗi xảy ra SAU khi đã phát mẩu đầu tiên - không được thử provider khác nữa."""
+
+
+def make_provider_for_credential(credential: LLMCredential):
+    """Adapter dùng key người dùng. Tách ra để cả `complete_stream` lẫn `_complete_with_credential`
+    dựng adapter theo đúng MỘT cách - lệch nhau nghĩa là hai đường đi tới hai base URL khác nhau."""
+    from src.providers import make_provider
+
+    settings = get_settings()
+    return make_provider(
+        credential.provider,
+        api_key=credential.api_key.strip(),
+        base_url=settings.openrouter_base_url if credential.provider == "openrouter" else None,
+        default_model=credential.model,
+    )
+
+
+def _stream_one(
+    provider,
+    messages: list[dict[str, str]],
+    model: str | None,
+    *,
+    temperature: float,
+    provider_name: str,
+) -> Iterator[str]:
+    label = model or "(mặc định của adapter)"
+    started = time.monotonic()
+    stream = getattr(provider, "complete_stream", None)
+    emitted = False
+    try:
+        if stream is None:
+            # Không hỗ trợ streaming -> vẫn giữ đúng hợp đồng iterator, chỉ là đúng một mẩu.
+            response = provider.complete(messages, model=model, temperature=temperature)
+            text = (response.text or "").strip()
+            if not text:
+                raise RuntimeError("trả về nội dung rỗng")
+            emitted = True
+            yield text
+        else:
+            for piece in stream(messages, model=model, temperature=temperature):
+                if piece:
+                    emitted = True
+                    yield piece
+            if not emitted:
+                raise RuntimeError("trả về nội dung rỗng")
+    except Exception as exc:
+        if emitted:
+            logger.warning("provider.stream_broke_midway provider=%s model=%s", provider_name, label)
+            raise _StreamAlreadyStartedError(str(exc)) from exc
+        raise
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "provider.selected provider=%s model=%s latency_ms=%d mode=stream",
+        provider_name, label, latency_ms,
+    )
+    console_log.llm_attempt(provider=provider_name, model=label, ok=True, latency_ms=latency_ms)
+
+
 def _complete_with_credential(
     credential: LLMCredential,
     messages: Sequence[dict[str, str]],
@@ -434,8 +560,6 @@ def _complete_with_credential(
     if not has_usable_key(credential.api_key):
         raise NoProviderConfiguredError("API key trống hoặc là giá trị mẫu.")
 
-    from src.providers import make_provider
-
     if credential.model:
         candidates: list[str | None] = [credential.model]
     elif credential.provider == "openrouter":
@@ -452,11 +576,8 @@ def _complete_with_credential(
 
         budget.consume()
         label = model or "(mặc định)"
-        provider = make_provider(
-            credential.provider,
-            api_key=credential.api_key.strip(),
-            base_url=get_settings().openrouter_base_url if credential.provider == "openrouter" else None,
-            default_model=model,
+        provider = make_provider_for_credential(
+            LLMCredential(provider=credential.provider, api_key=credential.api_key, model=model)
         )
         started = time.monotonic()
         try:

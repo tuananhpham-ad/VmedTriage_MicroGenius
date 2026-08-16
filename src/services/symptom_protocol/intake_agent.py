@@ -24,7 +24,7 @@ from src.services.agents.intake_agent import _parse_json_object
 from src.services.engines.semantic_mapper import _contains_any
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
-from src.services.symptom_protocol import retraction, rule_engine, screening, stage_machine
+from src.services.symptom_protocol import batching, retraction, rule_engine, screening, stage_machine
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
@@ -728,7 +728,7 @@ class TurnResult:
 
 _QUESTION_ONLY_SYSTEM = """Bạn là điều dưỡng đang hỏi triệu chứng qua tin nhắn cho người bệnh/người nhà.
 
-Hãy diễn đạt lại Ý CẦN HỎI dưới đây thành MỘT câu hỏi tiếng Việt tự nhiên, ấm áp, ngắn gọn (tối đa 2 ý):
+Hãy diễn đạt lại {scope_intro} dưới đây thành MỘT tin nhắn tiếng Việt tự nhiên, ấm áp, ngắn gọn:
 "{script_hint}"{focus}
 
 ĐÃ BIẾT VỀ NGƯỜI BỆNH (TUYỆT ĐỐI không hỏi lại những điều này):
@@ -739,9 +739,21 @@ Vài lượt hội thoại gần đây nhất (để tránh lặp lại nguyên 
 
 QUY TẮC BẮT BUỘC:
 - TUYỆT ĐỐI KHÔNG chẩn đoán bệnh, KHÔNG nêu tên bệnh, KHÔNG nhận định mức độ nguy hiểm.
-- KHÔNG hỏi thêm ý nào ngoài Ý CẦN HỎI ở trên.
+- {scope_rule}
 - {instruction}
 - Chỉ trả về đúng câu hỏi, không thêm lời dẫn hay giải thích."""
+
+# Hai biến thể của cùng một prompt. Lượt gộp phải nói RÕ số ý: bỏ dòng này thì model quen tay rút về
+# một câu hỏi duy nhất, các ý còn lại không bao giờ được hỏi mà cụm tương ứng vẫn bị đánh dấu đã hỏi.
+_SINGLE_SCOPE = ("Ý CẦN HỎI", "KHÔNG hỏi thêm ý nào ngoài Ý CẦN HỎI ở trên (tối đa 2 ý).")
+
+
+def _batch_scope(parts: int) -> tuple[str, str]:
+    return (
+        f"{parts} Ý CẦN HỎI",
+        f"Hỏi ĐỦ cả {parts} ý trên trong CÙNG một tin nhắn và KHÔNG thêm ý nào khác. Viết thành câu "
+        "liền mạch tự nhiên như điều dưỡng hỏi chuyện, đừng chép lại danh sách đánh số.",
+    )
 
 
 def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
@@ -788,6 +800,7 @@ def _generate_question(
     missing_keys: tuple[str, ...] = (),
     acknowledgement: str = "",
     rephrase: bool = False,
+    parts: int = 1,
     conversation: list[dict[str, str]] | None = None,
     credential: provider_router.LLMCredential | None,
 ) -> tuple[str, bool]:
@@ -812,7 +825,10 @@ def _generate_question(
         else "Diễn đạt KHÁC đi so với các câu hỏi trước đó của trợ lý (đổi từ ngữ/cấu trúc câu)."
     )
 
+    scope_intro, scope_rule = _batch_scope(parts) if parts > 1 else _SINGLE_SCOPE
     system_prompt = _QUESTION_ONLY_SYSTEM.format(
+        scope_intro=scope_intro,
+        scope_rule=scope_rule,
         script_hint=cluster.script_hint,
         focus=focus,
         known_facts=_known_facts(protocol, answers),
@@ -822,11 +838,23 @@ def _generate_question(
         instruction=instruction,
         history=_format_history(conversation or []),
     )
+    messages = [{"role": "user", "content": system_prompt}]
     try:
-        result = provider_router.complete(
-            [{"role": "user", "content": system_prompt}], temperature=_QUESTION_TEMPERATURE, credential=credential,
-        )
-        question = result.text.strip().strip('"')
+        if on_token is None:
+            result = provider_router.complete(
+                messages, temperature=_QUESTION_TEMPERATURE, credential=credential,
+            )
+            question = result.text.strip().strip('"')
+        else:
+            # Chỉ bước NÀY được stream, và chỉ vì nó là văn bản người bệnh đọc. Lượt trích xuất trả
+            # JSON - JSON dở dang thì không parse được nên streaming ở đó không giúp gì.
+            pieces: list[str] = []
+            for piece in provider_router.complete_stream(
+                messages, temperature=_QUESTION_TEMPERATURE, credential=credential,
+            ):
+                pieces.append(piece)
+                on_token(piece)
+            question = "".join(pieces).strip().strip('"')
         if question:
             return question, True
     except Exception as exc:
@@ -989,10 +1017,14 @@ def run_turn(
         and retry_count < MAX_RETRIES_PER_CLUSTER
         and _worth_retrying(active, cluster, merged)
     )
-    if probe:
-        # Lượt sàng lọc KHÔNG BAO GIỜ hỏi lại. Người bệnh vừa nghe một danh sách dài mà không trả lời
-        # được thì đọc lại đúng danh sách đó lần nữa chỉ làm họ bỏ cuộc. Đường lùi đúng là quay về hỏi
-        # từng cụm một theo script chuẩn - việc `advance` tự làm khi cụm sàng lọc được đánh dấu xong.
+    if probe or batching.is_batch(cluster):
+        # Lượt sàng lọc và lượt hỏi gộp KHÔNG BAO GIỜ hỏi lại nguyên gói. Người bệnh vừa nghe nhiều ý
+        # một lúc mà không trả lời được thì đọc lại đúng loạt ý đó lần nữa chỉ làm họ bỏ cuộc. Đường
+        # lùi đúng là quay về hỏi từng cụm một theo script chuẩn - `advance` tự làm điều đó khi cụm
+        # tổng hợp được đánh dấu xong, và `batching.already_batched` chặn việc gói lại y hệt.
+        #
+        # Đánh dấu "xong" ở đây chỉ áp cho MÃ GÓI (một mã tổng hợp, sống đúng một lượt). Cụm thật bên
+        # trong vẫn đóng/mở theo DỮ LIỆU như mọi cụm khác - không có sổ sách song song nào.
         cluster_resolved = True
         retry_this_cluster = False
 
@@ -1041,6 +1073,19 @@ def run_turn(
         if next_probe:
             following = screening.probe_cluster(active, step.stage, next_probe)
 
+    # Gộp 2-3 cụm thường vào một tin nhắn. Đứng SAU nhánh sàng lọc vì hai cơ chế loại trừ nhau:
+    # sàng lọc lo `gate_stages` (phủ định hàng loạt, văn bản tĩnh), gộp lo phần còn lại (hỏi thẳng,
+    # qua LLM). Không gộp khi đang hỏi lại một cụm - lúc đó việc cần làm là diễn đạt lại cho rõ, thêm
+    # ý mới chỉ làm người bệnh khó trả lời hơn.
+    batched: tuple[QuestionCluster, ...] = ()
+    if following is not None and not next_probe and not retry_this_cluster:
+        batched = batching.next_batch(
+            active, step.stage, merged, following,
+            asked_ids=frozenset() if protocol_switched else closed_now,
+        )
+        if batched:
+            following = batching.batch_cluster(step.stage, batched)
+
     if next_probe:
         # Câu sàng lọc là văn bản TĨNH, không qua LLM - xem `screening.probe_question`.
         question, question_llm_used = following.script_hint, False
@@ -1050,6 +1095,7 @@ def run_turn(
                 active, following, answers=merged,
                 missing_keys=_missing_in_cluster(active, following, merged),
                 rephrase=retry_this_cluster,
+                parts=len(batched) or 1,
                 conversation=conversation, credential=credential,
             )
             if following is not None
@@ -1167,14 +1213,21 @@ def run_open_turn(
     # hạ sốt"), lúc đó cụm kế tiếp đã nằm ở stage quét đỏ - lượt sàng lọc gộp phải áp dụng được ngay,
     # không đợi tới lượt sau.
     next_probe = screening.next_probe(protocol, step.stage, merged, following)
+    batched: tuple[QuestionCluster, ...] = ()
     if next_probe:
         following = screening.probe_cluster(protocol, step.stage, next_probe)
         question, question_llm_used = following.script_hint, False
     else:
+        # Lượt mở là chỗ gộp có giá trị nhất: người bệnh vừa kể tự do xong, hỏi dồn 2-3 ý nền (tuổi,
+        # giới, triệu chứng chính) nghe tự nhiên hơn hẳn so với hỏi nhỏ giọt từng câu.
+        batched = batching.next_batch(protocol, step.stage, merged, following)
+        if batched:
+            following = batching.batch_cluster(step.stage, batched)
         question, question_llm_used = (
             _generate_question(
                 protocol, following, answers=merged,
                 missing_keys=_missing_in_cluster(protocol, following, merged),
+                parts=len(batched) or 1,
                 conversation=conversation, credential=credential,
             )
             if following is not None
@@ -1195,19 +1248,32 @@ def run_open_turn(
     )
 
 
+SAFETY_LOOKAHEAD_CLUSTERS = 12
+"""Bao nhiêu cụm SẮP hỏi được đưa kèm vào schema trích xuất mỗi lượt.
+
+Trước đây là 5, và đó là nguồn của phàn nàn "có thông tin trong câu trả lời rồi mà vẫn hỏi lại":
+người bệnh kể vượt trước một chi tiết thuộc cụm nằm ngoài cửa sổ 5 cụm (vd kể luôn bối cảnh nguy cơ
+của Stage 4 ngay lượt mở) thì model KHÔNG có ô nào trong schema để ghi - chi tiết đó rơi mất, và khi
+hội thoại đi tới đúng cụm đó thì hỏi lại nguyên văn thứ họ vừa nói.
+
+12 phủ trọn hai stage của mọi protocol hiện có mà vẫn có trần. Nới rộng KHÔNG mở đường cho model bịa:
+field chưa được hỏi vẫn chịu `EvidencePolicy` khắt khe nhất (phải trích được nguyên văn câu của người
+bệnh mới được điền), nên cái giá duy nhất là prompt dài hơn."""
+
+
 def _safety_extra_keys(
     protocol: SymptomProtocol,
     stage: str,
     cluster: QuestionCluster,
     answers: dict[str, TriState],
     asked_ids: frozenset[str],
-    lookahead: int = 5,
+    lookahead: int = SAFETY_LOOKAHEAD_CLUSTERS,
 ) -> tuple[str, ...]:
     """Field được quét KÈM ngoài cụm đang hỏi.
 
     Gồm 3 nhóm: (a) `protocol.safety_signal_fields` - dấu hiệu đỏ, phải bắt được kể cả khi người dùng
-    kể tình cờ trước lúc tới gate stage; (b) field còn thiếu của vài cụm SẮP hỏi; (c) field nhân khẩu
-    còn thiếu.
+    kể tình cờ trước lúc tới gate stage; (b) field còn thiếu của các cụm SẮP hỏi (xem
+    `SAFETY_LOOKAHEAD_CLUSTERS`); (c) field hệ trọng được phép đính chính.
 
     Bản cũ quét toàn bộ field của stage hiện tại. Đổi sang nhóm (b)+(c) không phải để prompt ngắn hơn
     - stage 3A có 11 cụm nên số field không chắc giảm - mà để phủ ĐÚNG thứ người dùng hay nói vượt
@@ -1222,7 +1288,9 @@ def _safety_extra_keys(
             continue
         if protocol.skip_rule(candidate, answers):
             continue
-        if not any(not stage_machine.is_filled(answers.get(key)) for key in candidate.fields):
+        # `cluster_needs_answer` chứ không phải `is_filled` từng field: cụm chỉ còn field KHÔNG ÁP
+        # DỤNG (cha đã bị phủ định) thì đưa vào schema là mời model điền thứ vô nghĩa.
+        if not stage_machine.cluster_needs_answer(protocol, candidate, answers):
             continue
         keys.extend(candidate.fields)
         upcoming += 1
@@ -1243,8 +1311,8 @@ def _safety_extra_keys(
     for key in keys:
         if key in cluster.fields or key in seen or key not in protocol.fields_by_key:
             continue
-        if stage_machine.is_filled(answers.get(key)) and key not in retractable:
-            continue  # đã biết rồi thì không cần model trích lại
+        if key not in retractable and stage_machine.field_is_settled(protocol, key, answers):
+            continue  # đã biết rồi, hoặc không áp dụng vì field cha đã bị phủ định
         seen.add(key)
         ordered.append(key)
     return tuple(ordered)

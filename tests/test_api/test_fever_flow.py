@@ -62,7 +62,10 @@ class _ScriptedProvider:
         system = messages[0]["content"]
         field_keys = _FIELD_KEY_RE.findall(system)
 
-        if "Hãy diễn đạt lại Ý CẦN HỎI" in system:
+        # Nhận diện prompt "diễn đạt lại câu hỏi" bằng cụm BẤT BIẾN giữa hai biến thể: lượt hỏi lẻ
+        # ghi "Ý CẦN HỎI", lượt hỏi gộp ghi "3 Ý CẦN HỎI". Khớp nguyên câu như trước sẽ làm lượt gộp
+        # rơi nhầm sang nhánh trích xuất và trả về JSON làm câu hỏi cho người bệnh.
+        if "Ý CẦN HỎI" in system:
             text = "Dạ mình xin phép hỏi thêm ạ?"
         elif _SCREENING_MARKER in system:
             text = json.dumps(self._screening_response(system, messages[-1]["content"]))
@@ -221,11 +224,15 @@ def _turns_spent_in_stage(session_id: str, stage: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_benign_case_clears_the_emergency_scan_in_three_turns(client):
-    """Mục tiêu của Phase 1-4: Stage 3A từ 11 lượt xuống 3 (Q3-01 tri giác + Q3-03 co giật hỏi riêng
-    theo CS §3.3A, rồi MỘT câu sàng lọc gộp đóng 9 cụm còn lại)."""
+async def test_benign_case_clears_the_emergency_scan_in_four_turns(client):
+    """Stage 3A từ 11 lượt xuống 4: Q3-01 tri giác + Q3-03 co giật hỏi riêng theo CS §3.3A, rồi hai
+    câu sàng lọc gộp đóng 9 cụm còn lại.
+
+    Là 4 chứ không phải 3 vì `MAX_GROUPS_PER_PROBE` giới hạn mỗi câu đọc tối đa 3 nhóm, mà Stage 3A
+    có 5 nhóm. Đây là đánh đổi CÓ CHỦ Ý: một câu đọc liền 5 dòng dấu hiệu rồi nhận về "không có gì
+    cả" là đóng 5 nhóm bằng một câu trả lời người bệnh nhiều khả năng đã đọc lướt."""
     body = await _drive_conversation(client, "H1")
-    assert _turns_spent_in_stage(body["session_id"], "3A") <= 3
+    assert _turns_spent_in_stage(body["session_id"], "3A") <= 4
 
 
 @pytest.mark.asyncio
@@ -238,25 +245,31 @@ async def test_benign_case_clears_the_early_visit_scan_in_two_turns(client):
 
 @pytest.mark.asyncio
 async def test_screening_shortens_the_benign_case_without_changing_its_conclusion(client):
-    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 24 lượt là mức đo được sau khi
-    bật sàng lọc (trước đó ca này tốn 30 lượt) - nó ở đây để một thay đổi làm hội thoại dài trở lại
-    bị bắt ngay, chứ không phải để ghim một con số chính xác."""
+    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 20 lượt là mức đo được sau khi
+    thêm nhóm sàng lọc cho Stage 4 và mở lại luật dừng sớm (30 lượt trước khi có sàng lọc, 24 sau
+    vòng sàng lọc đầu tiên) - nó ở đây để một thay đổi làm hội thoại dài trở lại bị bắt ngay, chứ
+    không phải để ghim một con số chính xác."""
     body = await _drive_conversation(client, "H1")
     assert body["triage_level"] == "SELF_CARE"
-    assert body["_turns"] <= 24, body["_turns"]
+    assert body["_turns"] <= 20, body["_turns"]
     probes = [q for q in body["_questions"] if screening.PROBE_INTRO in q]
-    assert len(probes) == 2  # đúng một câu sàng lọc cho 3A và một cho 3B
+    # 2 vòng cho Stage 3A (5 nhóm, trần 3 nhóm/câu), 1 cho Stage 3B, 1 cho Stage 4.
+    assert len(probes) == 4
 
 
 @pytest.mark.asyncio
 async def test_screening_question_reads_out_every_signal_it_may_close(client):
     """Bất biến an toàn: một nhóm chỉ được đóng khi người bệnh ĐÃ nghe đọc danh sách dấu hiệu của nó.
-    Kiểm trên câu hỏi THẬT mà API trả về, không phải trên hàm ghép chuỗi."""
+    Kiểm trên câu hỏi THẬT mà API trả về, không phải trên hàm ghép chuỗi.
+
+    Gộp mọi câu sàng lọc của phiên lại rồi mới kiểm: từ khi có `MAX_GROUPS_PER_PROBE`, một stage có
+    thể trải trên nhiều vòng. Bất biến không đổi - mỗi dòng vẫn phải được đọc lên đúng một lần ở đâu
+    đó trước khi nhóm tương ứng được đóng - chỉ chỗ đọc là trải ra nhiều tin nhắn."""
     body = await _drive_conversation(client, "H1")
-    probe = next(q for q in body["_questions"] if screening.PROBE_INTRO in q)
+    probes = "\n".join(q for q in body["_questions"] if screening.PROBE_INTRO in q)
     stage_3a_groups = [g for g in FEVER_PROTOCOL.screening_groups if g.stage == "3A"]
     for group in stage_3a_groups:
-        assert group.probe_hint in probe, group.id
+        assert group.probe_hint in probes, group.id
 
 
 @pytest.mark.asyncio

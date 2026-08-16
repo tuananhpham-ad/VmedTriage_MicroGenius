@@ -23,7 +23,7 @@ mình KHÔNG bắt được ca đó vì nó chỉ so "dương -> âm", còn C2 l
 from __future__ import annotations
 
 from src.services.symptom_protocol.protocol import SymptomProtocol
-from src.services.symptom_protocol.stage_machine import is_filled
+from src.services.symptom_protocol.stage_machine import NEGATED_PARENT_VALUES, is_filled
 
 TriState = str
 
@@ -31,7 +31,11 @@ _RETRACTED = "unknown"
 
 # Giá trị được coi là "phủ định field cha". Cố ý HẸP: chỉ giá trị xác định, không có "unknown" -
 # người dùng im lặng không phải là rút lại lời khai (cùng nguyên tắc với `_merge_answers`).
-_NEGATIVE_VALUES: frozenset[str] = frozenset({"false", "none"})
+#
+# Định nghĩa nằm ở `stage_machine` chứ không phải ở đây vì nó có HAI chỗ dùng: module này (xoá field
+# con) và `stage_machine.field_not_applicable` (thôi hỏi field con). Hai bản sao lệch nhau nghĩa là
+# một field vừa bị xoá lại vừa bị hỏi lại - đúng vòng lặp mà cả hai cơ chế cùng muốn tránh.
+_NEGATIVE_VALUES = NEGATED_PARENT_VALUES
 
 
 def _clusters_containing(protocol: SymptomProtocol, keys: frozenset[str]) -> tuple[str, ...]:
