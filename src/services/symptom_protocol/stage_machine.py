@@ -23,11 +23,60 @@ def is_filled(value: object) -> bool:
     return value is not None and value != "unknown" and value != ""
 
 
-def cluster_needs_answer(cluster: QuestionCluster, answers: dict[str, object]) -> bool:
-    """Cụm còn field nào chưa có câu trả lời xác định không. Public vì `screening.py` phải dùng ĐÚNG
-    định nghĩa này để biết một nhóm cơ quan đã giải quyết xong chưa - hai định nghĩa lệch nhau sẽ làm
-    câu sàng lọc liệt kê nhóm mà `next_cluster` không còn định hỏi (hoặc ngược lại)."""
-    return any(not is_filled(answers.get(key)) for key in cluster.fields)
+# Giá trị coi là PHỦ ĐỊNH field cha. Hẹp có chủ đích: "unknown" KHÔNG phải phủ định - người bệnh im
+# lặng không có nghĩa là họ trả lời "không". `retraction.py` import lại đúng tập này để khái niệm
+# "phủ định field cha" chỉ có MỘT định nghĩa trong hệ thống.
+NEGATED_PARENT_VALUES: frozenset[str] = frozenset({"false", "none"})
+
+# Tier BẮT BUỘC phải có căn cứ trước khi được kết luận - xem `mandatory_fields_covered`.
+MANDATORY_TIERS: frozenset[str] = frozenset({"M0", "M1"})
+
+
+def field_not_applicable(protocol: SymptomProtocol, key: str, answers: dict[str, object]) -> bool:
+    """Field này có mất hết ý nghĩa vì field CHA của nó đã bị phủ định không.
+
+    `protocol.field_dependencies` từ trước tới nay chỉ được `retraction.py` đọc, và chỉ theo một
+    chiều: XOÁ field con khi người bệnh rút lại lời khai. Nhưng quan hệ đó còn một hệ quả thứ hai
+    chưa ai dùng - đã trả lời "không suy giảm miễn dịch" thì "nguyên nhân suy giảm miễn dịch là gì"
+    không phải câu hỏi CÒN THIẾU, nó là câu hỏi VÔ NGHĨA. Thiếu hàm này, `cluster_needs_answer` thấy
+    field con vẫn `unknown` nên hỏi lại đúng thứ người bệnh vừa loại trừ (Q4-03/Q4-05 của fever vẫn
+    bị hỏi sau khi câu sàng lọc rủi ro Q4-00 đã phủ định cả cụm)."""
+    for parent, dependents in protocol.field_dependencies.items():
+        if key in dependents and answers.get(parent) in NEGATED_PARENT_VALUES:
+            return True
+    return False
+
+
+def field_is_settled(protocol: SymptomProtocol, key: str, answers: dict[str, object]) -> bool:
+    """Field đã có căn cứ: hoặc điền thật, hoặc không áp dụng vì field cha đã bị phủ định."""
+    return is_filled(answers.get(key)) or field_not_applicable(protocol, key, answers)
+
+
+def cluster_needs_answer(
+    protocol: SymptomProtocol, cluster: QuestionCluster, answers: dict[str, object],
+) -> bool:
+    """Cụm còn field nào chưa có căn cứ không. Public vì `screening.py` phải dùng ĐÚNG định nghĩa này
+    để biết một nhóm cơ quan đã giải quyết xong chưa - hai định nghĩa lệch nhau sẽ làm câu sàng lọc
+    liệt kê nhóm mà `next_cluster` không còn định hỏi (hoặc ngược lại)."""
+    return any(not field_is_settled(protocol, key, answers) for key in cluster.fields)
+
+
+def mandatory_fields_covered(protocol: SymptomProtocol, answers: dict[str, object]) -> bool:
+    """Mọi field tier M0/M1 đã có căn cứ chưa - điều kiện AN TOÀN của việc dừng sớm.
+
+    `self_care_checklist_satisfied` một mình KHÔNG đủ để cho phép dừng: checklist của fever (KM §5.4)
+    chỉ đọc 8 field và không đụng tới bất kỳ field nào của Stage 4 (thai sản, suy giảm miễn dịch,
+    bệnh mạn tính). Dừng khi checklist xanh mà chưa quét Stage 4 sẽ gán "tự theo dõi" cho người đang
+    mang thai chỉ vì chưa bao giờ hỏi họ. CS Part 4.2 nói rõ thứ được phép rút gọn là phần tier O/H
+    của Stage 4/5, KHÔNG phải field M1 liên quan route.
+
+    Giá trị ÂM thu được từ câu sàng lọc gộp cũng tính là "đã có căn cứ" - đó chính là thứ làm việc
+    dừng sớm khả thi mà không phải hỏi tuần tự từng cụm một."""
+    return all(
+        field_is_settled(protocol, key, answers)
+        for key, spec in protocol.fields_by_key.items()
+        if spec.tier in MANDATORY_TIERS
+    )
 
 
 _cluster_needs_answer = cluster_needs_answer
@@ -68,7 +117,7 @@ def next_cluster(
             continue
         if _cluster_is_skipped(protocol, stage, cluster, answers):
             continue
-        if not _cluster_needs_answer(cluster, answers):
+        if not _cluster_needs_answer(protocol, cluster, answers):
             continue
         return cluster
     return None
@@ -133,6 +182,50 @@ def advance(
         current_stage = following
 
 
+def _gate_stages_cleared(protocol: SymptomProtocol, stage: str, answers: dict[str, object]) -> bool:
+    """Đã quét xong CẢ HAI gate stage chưa (3A emergency-scan + 3B early-visit-scan với fever).
+
+    Đây là ràng buộc lâm sàng CỨNG, không phải tối ưu: CS §3.3A gọi Stage 3A là "minimum scan" bắt
+    buộc cho MỌI route, không route nào được rút gọn. Mọi đường dừng sớm phải đi qua đây trước."""
+    last_gate = protocol.gate_stages[-1]
+    try:
+        gate_index = protocol.stage_order.index(last_gate)
+        stage_index = protocol.stage_order.index(stage)
+    except ValueError:
+        return False
+    if stage_index > gate_index:
+        return True
+    # Đang đứng ở đúng gate cuối: chỉ tính là xong khi không còn cụm nào của nó để hỏi.
+    return stage_index == gate_index and next_cluster(protocol, stage, answers) is None
+
+
+def _has_sufficient_evidence(
+    protocol: SymptomProtocol, stage: str, answers: dict[str, object],
+) -> bool:
+    """Đã đủ căn cứ kết luận, được phép dừng dù chưa đi hết bộ câu hỏi.
+
+    Trước đây điều kiện này chỉ được xét ở stage CUỐI CÙNG. Với fever, `stage_order[-1]` là "5" nên
+    engine buộc đi hết Stage 4 (10 cụm) + Stage 5 (8 cụm) dù checklist tự chăm sóc đã xanh từ sau
+    Stage 3B - đo được ~24 lượt cho một ca lành tính, trong khi CS §6.5 cấp ngân sách 12-16 cụm và CS
+    Part 4.2 nói thẳng: "Một khi checklist §5.4 đã toàn bộ xanh và không còn unknown ảnh hưởng rule ->
+    dừng ngay, không cố hỏi thêm cho 'chắc'".
+
+    Ba điều kiện, thiếu một là không được dừng:
+    1. đã quét xong cả hai gate stage (ràng buộc cứng của tài liệu);
+    2. mọi field M0/M1 đã có căn cứ - chặn việc kết luận "tự theo dõi" cho người mang thai/suy giảm
+       miễn dịch mà chưa bao giờ hỏi tới (xem `mandatory_fields_covered`);
+    3. checklist tự chăm sóc của protocol xanh.
+
+    Nhánh cũ ở stage cuối được GIỮ NGUYÊN bên dưới: nó là đường dừng cho ca đã đi hết bộ câu hỏi."""
+    if stage == protocol.stage_order[-1] and next_cluster(protocol, stage, answers) is None:
+        return protocol.self_care_checklist_satisfied(answers)
+    return (
+        _gate_stages_cleared(protocol, stage, answers)
+        and mandatory_fields_covered(protocol, answers)
+        and protocol.self_care_checklist_satisfied(answers)
+    )
+
+
 def should_stop(
     protocol: SymptomProtocol,
     stage: str,
@@ -153,11 +246,7 @@ def should_stop(
 
     resolved_route = route or protocol.determine_route(answers)
 
-    if (
-        stage == protocol.stage_order[-1]
-        and next_cluster(protocol, stage, answers) is None
-        and protocol.self_care_checklist_satisfied(answers)
-    ):
+    if _has_sufficient_evidence(protocol, stage, answers):
         return "SUFFICIENT_EVIDENCE"
 
     if protocol.stage_order.index(stage) < protocol.stage_order.index(protocol.budget_floor_stage):

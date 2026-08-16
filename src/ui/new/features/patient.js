@@ -55,7 +55,11 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
 export function renderPatientChat(root, { navigate, logout }) {
   const current = state.currentPatientCase;
   const messages = state.patientMessages.length ? state.patientMessages : initialMessages(current);
-  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
+  // `state.patientBusy` trước đây chỉ dùng để chặn double-submit bên trong `submitMessage`, không hề
+  // đi vào markup - nên ô nhập và nút Gửi vẫn bấm được trong lúc chờ, người dùng gõ tiếp mà không
+  // hiểu vì sao không có gì xảy ra. Đưa vào markup để trạng thái chờ có đúng MỘT nguồn sự thật.
+  const busyAttr = state.patientBusy ? " disabled" : "";
+  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"${busyAttr}></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit"${busyAttr}>${state.patientBusy ? "Đang gửi…" : "Gửi"}</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
   root.querySelector("[data-home]").addEventListener("click", () => navigate("patient-home"));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
   root.querySelectorAll("[data-symptom]").forEach((button) => button.addEventListener("click", () => { root.querySelector("#patient-message").value = button.dataset.symptom; root.querySelector("#patient-message").focus(); }));
@@ -63,7 +67,9 @@ export function renderPatientChat(root, { navigate, logout }) {
   root.querySelector("[data-check-result]")?.addEventListener("click", () => checkResult(root, { navigate, logout }));
   root.querySelectorAll("[data-confirm]").forEach((button) => button.addEventListener("click", () => confirmSummary(root, { navigate, logout }, button.dataset.confirm === "yes")));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
-  root.querySelector("#patient-message").focus();
+  // Không focus khi đang khoá: focus vào ô disabled là no-op ở mọi trình duyệt, nhưng gọi nó
+  // vẫn kéo màn hình về composer trên mobile giữa lúc người dùng đang đọc câu trả lời.
+  if (!state.patientBusy) root.querySelector("#patient-message").focus();
   scrollChat(root);
 }
 
@@ -72,7 +78,14 @@ function initialMessages(current) {
   return [{ role: "agent", text: "Xin chào, bạn hãy mô tả tự do triệu chứng bạn đang gặp phải." }];
 }
 
-function messageMarkup(message) { return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`; }
+function messageMarkup(message) {
+  // Bong bóng "đang xử lý" là thông báo trạng thái, không phải lời thoại: `role="status"` +
+  // `aria-live` để trình đọc màn hình đọc lên, còn ba chấm là trang trí nên `aria-hidden`.
+  if (message.role === "pending") {
+    return `<div class="chat-message is-pending" role="status" aria-live="polite"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(message.text)}</span></div>`;
+  }
+  return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`;
+}
 
 // Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`,
 // `intakeChecklistMarkup`) ngày 2026-08-14, đúng đích đến ghi trong ghi chú 2026-08-13. Nó phơi ra

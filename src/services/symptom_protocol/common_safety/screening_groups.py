@@ -78,6 +78,50 @@ def emergency_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
     )
 
 
+def risk_context_groups(stage: str) -> tuple[ScreeningGroup, ...]:
+    """Nhóm cho `clusters.risk_context_clusters(stage)` - quần thể nguy cơ (Stage 4 của fever).
+
+    Vì sao stage này CẦN nhóm dù đã có cụm gộp `Q4-00`: `Q4-00` chỉ là một cụm thường, nên câu "không
+    có gì cả" chỉ đóng đúng `Q4-00`. `Q4-03`/`Q4-05` vẫn bị hỏi tiếp vì các field CON của chúng
+    (`immunocompromise_cause`, `known_neutropenia`, `surgical_site_signs`) còn `unknown` - đo được là
+    nút thắt thật của ca lành tính (~7-8 lượt cho một stage mà mọi câu trả lời đều là "không").
+    `field_dependencies` vá được phần field con; nhóm sàng lọc ở đây vá phần còn lại và cho phép đóng
+    cả stage bằng MỘT câu.
+
+    `Q4-00` cố ý KHÔNG nằm trong nhóm nào: nó chính là câu hỏi gộp của stage này, đưa vào nhóm nghĩa
+    là câu sàng lọc đọc lại nguyên văn nội dung của chính nó. `Q4-06`/`Q4-07` (dịch tễ) và `Q4-08`
+    (điều kiện an toàn khi tự chăm sóc tại nhà) cũng đứng ngoài - chúng hỏi bối cảnh, không hỏi dấu
+    hiệu để phủ định, và `Q4-08` là tiền đề bắt buộc của checklist SELF_CARE nên phải hỏi thẳng.
+    """
+    return (
+        ScreeningGroup(
+            id="G4-OBST",
+            stage=stage,
+            cluster_ids=("Q4-01", "Q4-01b", "Q4-02"),
+            probe_hint=(
+                "Đang mang thai, hoặc 6 tuần gần đây có sinh nở/sảy thai/nạo hút thai"
+            ),
+        ),
+        ScreeningGroup(
+            id="G4-IMMUNO",
+            stage=stage,
+            cluster_ids=("Q4-03", "Q4-04"),
+            probe_hint=(
+                "Đang hóa trị, ghép tạng, dùng thuốc ức chế miễn dịch, HIV không kiểm soát; "
+                "hoặc có bệnh mạn tính đang điều trị (tim, phổi, gan, thận, tiểu đường, thalassemia)"
+            ),
+            negative_values={"chronic_conditions": "none"},
+        ),
+        ScreeningGroup(
+            id="G4-SURG",
+            stage=stage,
+            cluster_ids=("Q4-05",),
+            probe_hint="30 ngày gần đây có phẫu thuật, hoặc hiện có ống thông/catheter/dẫn lưu",
+            negative_values={"indwelling_device": "none"},
+        ),
+    )
+
+
 def early_visit_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
     """Nhóm cho `clusters.early_visit_scan_clusters(stage)`.
 

@@ -2,12 +2,12 @@
 `logs/<namespace>/<session_id>/` - `namespace` mặc định `"fever"` nhưng bất kỳ symptom_group nào cắm
 vào engine chung đều tự có thư mục log riêng (truyền `namespace=` cho `start()`).
 
-Khác `session_log.py` (một file JSON ghi đè cho toàn phiên `disease_session`), module này phục vụ các
-agent hội thoại theo cụm câu hỏi (xem `_guidance/fever-detect-agent-task.md` §5 - lúc đầu viết riêng
-cho fever, sau tách chung khi thêm symptom_group thứ 2): mỗi lượt người dùng nhắn sinh ra một chuỗi
+Module này phục vụ các agent hội thoại theo cụm câu hỏi (xem `_guidance/fever-detect-agent-task.md`
+§5 - lúc đầu viết riêng cho fever, sau tách chung khi thêm symptom_group thứ 2): mỗi lượt người dùng
+nhắn sinh ra một chuỗi
 step - user nói gì, hệ thống `retrieve` cụm/field nào, gọi tool nào với input/output gì, gọi LLM với
 prompt/response gì, rule engine quyết định gì, agent trả lời gì. Ghi APPEND (JSONL) thay vì ghi đè cả
-file như `session_log.py`, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem đúng thứ
+file, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem đúng thứ
 tự step" ngay cả khi phiên đang chạy dở, và mỗi dòng là JSON độc lập nên process chết giữa chừng chỉ
 mất đúng dòng cuối.
 

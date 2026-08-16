@@ -1,5 +1,5 @@
-"""Vòng đời phiên hỏi-đáp DÙNG CHUNG cho mọi symptom_group - in-memory store, không auth, theo đúng
-mẫu `intake_session.py` (demo). Nối 3 tầng cơ chế đã có thành 1 luồng phiên hoàn chỉnh:
+"""Vòng đời phiên hỏi-đáp DÙNG CHUNG cho mọi symptom_group - in-memory store, không auth. Nối 3 tầng
+cơ chế đã có thành 1 luồng phiên hoàn chỉnh:
 
 - `stage_machine` quyết định cụm câu hỏi kế tiếp / stage / dừng - THUẦN rule.
 - `rule_engine` là nguồn thật duy nhất cho `triage_level`/`reason_codes`/`triggered_rules`.
@@ -193,6 +193,11 @@ class ProtocolSessionStore:
         if session.pending_probe:
             cluster = screening.probe_cluster(protocol, step.stage, session.pending_probe)
             session.screening_history[step.stage] = (frozenset(g.id for g in session.pending_probe),)
+        # Câu MỞ PHIÊN cố ý KHÔNG gộp (`batching.next_batch` không được gọi ở đây). Đã thử và bỏ:
+        # câu này là câu DUY NHẤT không đi qua bước LLM diễn đạt lại - nó dùng thẳng `script_hint` -
+        # nên gộp ở đây khiến người bệnh đọc được nguyên văn "Mình hỏi nhanh vài ý: (1)...; (2)...".
+        # Đó đúng là cảm giác biểu mẫu mà việc gộp sinh ra để xoá. Từ lượt thứ hai trở đi `run_turn`
+        # có LLM viết lại thành câu liền mạch nên gộp mới có lãi.
         session.current_cluster = cluster
         session.last_question = cluster.script_hint if cluster is not None else ""
         if session.last_question:

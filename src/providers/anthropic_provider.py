@@ -39,11 +39,11 @@ class AnthropicProvider:
         *,
         api_key_env: str = "ANTHROPIC_API_KEY",
         api_key: str | None = None,
-        default_model: str = "claude-haiku-4-5-20251001",
+        default_model: str | None = None,
     ) -> None:
         self.api_key_env = api_key_env
         self.api_key = api_key  # xem ghi chú ở OpenAIProvider về việc không dùng os.environ
-        self.default_model = default_model
+        self.default_model = default_model or "claude-haiku-4-5-20251001"
 
     def complete(
         self,

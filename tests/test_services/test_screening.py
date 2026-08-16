@@ -28,6 +28,12 @@ STAGE_3A, STAGE_3B = FEVER_PROTOCOL.gate_stages
 GROUPS_3A = tuple(g for g in FEVER_PROTOCOL.screening_groups if g.stage == STAGE_3A)
 GROUPS_3B = tuple(g for g in FEVER_PROTOCOL.screening_groups if g.stage == STAGE_3B)
 
+# Stage 3A có 5 nhóm nhưng MỘT câu sàng lọc chỉ được đọc tối đa `MAX_GROUPS_PER_PROBE` nhóm - phần
+# dư rơi sang vòng sau. Tính từ hằng số thay vì viết cứng 3: đổi trần là quyết định về UX, không phải
+# lý do phải sửa lại từng assert ở đây.
+GROUPS_3A_ROUND_1 = GROUPS_3A[: screening.MAX_GROUPS_PER_PROBE]
+GROUPS_3A_ROUND_2 = GROUPS_3A[screening.MAX_GROUPS_PER_PROBE :]
+
 ADULT = {"age_value": "30", "age_unit": "year", "sex": "male", "reporter_type": "self"}
 # Trạng thái NGAY TRƯỚC lượt sàng lọc đầu tiên của Stage 3A: hai cụm đứng ngoài mọi nhóm (tri giác,
 # co giật) đã được hỏi riêng xong, nên cụm kế tiếp là Q3-04 - cụm đầu tiên nằm trong một nhóm.
@@ -211,7 +217,16 @@ def test_no_probe_for_a_cluster_outside_every_group():
 
 def test_probe_fires_once_the_candidate_is_inside_a_group():
     groups = screening.next_probe(FEVER_PROTOCOL, STAGE_3A, dict(ADULT), CLUSTERS_BY_ID["Q3-04"])
-    assert [group.id for group in groups] == [group.id for group in GROUPS_3A]
+    assert [group.id for group in groups] == [group.id for group in GROUPS_3A_ROUND_1]
+
+
+def test_one_probe_never_reads_more_than_the_length_cap():
+    """Cả cơ chế dựa trên tiền đề "người bệnh ĐÃ nhìn thấy danh sách dấu hiệu của nhóm". Tiền đề đó
+    yếu dần theo độ dài câu hỏi, nên số dòng đọc lên trong MỘT câu phải có trần."""
+    groups = screening.next_probe(FEVER_PROTOCOL, STAGE_3A, dict(ADULT), CLUSTERS_BY_ID["Q3-04"])
+
+    assert len(GROUPS_3A) > screening.MAX_GROUPS_PER_PROBE  # nếu không thì test này vô nghĩa
+    assert len(groups) == screening.MAX_GROUPS_PER_PROBE
 
 
 def test_no_probe_when_fewer_than_two_groups_remain():
@@ -229,33 +244,50 @@ def test_no_probe_after_the_round_budget_is_used_up():
     ) == ()
 
 
-def test_second_round_must_ask_strictly_less_than_the_first():
-    """Vòng đầu không thu được gì ⇒ tập nhóm y nguyên ⇒ vòng hai sẽ đọc lại NGUYÊN VĂN danh sách dài
-    đó. Đọc lại là cách nhanh nhất để người bệnh bỏ cuộc, nên đường lùi đúng là hỏi từng cụm."""
+def test_no_second_round_when_every_group_left_was_already_read_out():
+    """Vòng đầu không thu được gì ⇒ các nhóm còn lại đều là nhóm vừa đọc ⇒ vòng hai sẽ đọc lại NGUYÊN
+    VĂN danh sách đó. Đọc lại là cách nhanh nhất để người bệnh bỏ cuộc, nên đường lùi đúng là hỏi
+    từng cụm."""
     same = frozenset(group.id for group in GROUPS_3A)
     assert screening.next_probe(
         FEVER_PROTOCOL, STAGE_3A, dict(ADULT), CLUSTERS_BY_ID["Q3-04"], history=(same,),
     ) == ()
 
 
-def test_second_round_is_allowed_when_the_first_closed_some_groups():
-    """Đây mới là ca `max_screening_rounds=2` sinh ra để phục vụ: vòng đầu đóng được vài nhóm, phần
-    còn dư gộp lại thành một câu NGẮN HƠN."""
-    answers = dict(ADULT)
-    closed = frozenset({"Q3-11", "Q3-12"})  # G3A-BLEED đã đóng ở vòng đầu
+def test_second_round_reads_out_the_groups_the_first_round_had_no_room_for():
+    """Đây là ca `max_screening_rounds=2` sinh ra để phục vụ, và cũng là lý do điều kiện chặn lặp
+    phải là "có nhóm chưa đọc" chứ không phải "tập nhóm co lại": vòng đầu chỉ đủ chỗ cho
+    `MAX_GROUPS_PER_PROBE` nhóm, phần dư CHƯA ai nghe nên bắt buộc phải có vòng sau."""
+    read_first = frozenset(g.id for g in GROUPS_3A_ROUND_1)
     groups = screening.next_probe(
-        FEVER_PROTOCOL, STAGE_3A, answers, CLUSTERS_BY_ID["Q3-04"],
-        closed_ids=closed, history=(frozenset(g.id for g in GROUPS_3A),),
+        FEVER_PROTOCOL, STAGE_3A, dict(ADULT), CLUSTERS_BY_ID["Q3-04"], history=(read_first,),
     )
-    assert {group.id for group in groups} == {g.id for g in GROUPS_3A} - {"G3A-BLEED"}
+
+    assert {g.id for g in GROUPS_3A_ROUND_2} <= {group.id for group in groups}
+    assert len(groups) <= screening.MAX_GROUPS_PER_PROBE
 
 
 def test_probe_is_never_offered_to_a_protocol_without_screening_groups():
-    """Bằng chứng cho lời hứa "protocol không khai nhóm chạy y như cũ" - generic hiện là một protocol
-    như vậy, và mọi test của nó phải xanh mà không sửa gì."""
-    assert GENERIC_PROTOCOL.screening_groups == ()
-    for cluster in GENERIC_PROTOCOL.clusters[:5]:
-        assert screening.next_probe(GENERIC_PROTOCOL, cluster.stage, {}, cluster) == ()
+    """Bằng chứng cho lời hứa "protocol không khai nhóm chạy y như cũ": `screening.py` không có gì để
+    làm nên không lượt nào đổi hành vi.
+
+    Trước đây test này dùng `GENERIC_PROTOCOL` làm ví dụ. Generic giờ ĐÃ khai nhóm (nó phục vụ 6/7
+    nhóm triệu chứng, để nó hỏi tuần tự từng cụm quét đỏ là bỏ phí đúng cơ chế này), nên bất biến
+    phải được kiểm trên một protocol thật sự không khai nhóm - dựng tại chỗ từ chính generic."""
+    from dataclasses import replace
+
+    without_groups = replace(GENERIC_PROTOCOL, screening_groups=())
+    for cluster in without_groups.clusters[:5]:
+        assert screening.next_probe(without_groups, cluster.stage, {}, cluster) == ()
+
+
+def test_generic_protocol_screens_the_same_universal_groups_as_fever():
+    """Generic dùng lại đúng bộ cụm quét đỏ/quét khám sớm của `common_safety`, chỉ khác tên stage -
+    nên phải dùng lại đúng bộ nhóm đó, không được để trống."""
+    stages = {group.stage for group in GENERIC_PROTOCOL.screening_groups}
+
+    assert GENERIC_PROTOCOL.screening_groups != ()
+    assert set(GENERIC_PROTOCOL.gate_stages) <= stages
 
 
 # --- câu hỏi sàng lọc ----------------------------------------------------------------------------
@@ -382,8 +414,8 @@ def test_probe_question_is_static_and_costs_no_extra_llm_call(monkeypatch):
         asked_ids=frozenset({"Q3-01"}),
     )
 
-    assert [group.id for group in result.next_probe] == [group.id for group in GROUPS_3A]
-    assert result.agent_message == screening.probe_question(GROUPS_3A)
+    assert [group.id for group in result.next_probe] == [group.id for group in GROUPS_3A_ROUND_1]
+    assert result.agent_message == screening.probe_question(GROUPS_3A_ROUND_1)
     assert fake.call_count == 1
 
 

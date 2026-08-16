@@ -329,6 +329,19 @@ body.is-high-contrast { --muted:#364758; --muted-2:#526476; --line:#c1cad4; --li
 .chat-message.is-patient { align-self:flex-end; color:#fff; background:var(--blue); }
 .chat-message.is-system, .chat-message.is-pending { align-self:center; max-width:90%; padding:7px 10px; color:var(--muted); background:transparent; font-size:13px; text-align:center; }
 .chat-message.is-error { align-self:center; color:var(--red); background:var(--red-soft); font-size:13px; }
+/* Chấm nhấp nháy khi trợ lý đang soạn câu hỏi. Một lượt chat gọi LLM 2 lần nối tiếp (trích xuất rồi
+   mới diễn đạt câu hỏi) nên chờ vài giây là bình thường - dòng chữ tĩnh không cho biết hệ thống còn
+   sống hay đã treo, chấm động thì có. */
+.chat-message.is-pending { display:flex; gap:8px; align-items:center; justify-content:center; }
+.typing-dots { display:inline-flex; gap:4px; }
+.typing-dots i { width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.35; animation:typing-bounce 1.25s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay:.18s; }
+.typing-dots i:nth-child(3) { animation-delay:.36s; }
+@keyframes typing-bounce { 0%, 70%, 100% { opacity:.3; transform:translateY(0); } 35% { opacity:.95; transform:translateY(-3px); } }
+/* Người dùng có thể tắt hiệu ứng ở cấp hệ điều hành - tôn trọng lựa chọn đó, chấm vẫn hiện, chỉ
+   không nhảy. */
+@media (prefers-reduced-motion: reduce) { .typing-dots i { animation:none; opacity:.55; } }
+.chat-composer textarea:disabled, .chat-composer .primary-button:disabled { cursor:not-allowed; opacity:.6; }
 .symptom-chips { display:flex; flex-wrap:wrap; gap:7px; padding:0 24px 16px; background:#fbfcfd; }
 .symptom-chips button { border:1px solid var(--line-strong); border-radius:999px; padding:6px 10px; color:#3d4c5b; background:#fff; font-size:13px; }
 .symptom-chips button:hover { border-color:#9cc3e9; color:var(--blue); background:var(--blue-soft); }

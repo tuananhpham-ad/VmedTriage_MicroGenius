@@ -43,7 +43,7 @@ khỏi TriagePipeline chính):
     - [ ] Explainability UI cho nurse (mục 2 ở trên) trước khi tắt shadow-mode.
 
 Class dưới đây chỉ là điểm neo (anchor) cho interface tương lai - KHÔNG có logic thật, KHÔNG được
-gọi ở bất kỳ đâu trong TriagePipeline/case_flow/case_approval hiện tại.
+gọi ở bất kỳ đâu trong luồng hiện tại (`routes.chat` -> `symptom_protocol` -> `case_approval`).
 """
 
 from __future__ import annotations

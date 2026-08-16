@@ -39,7 +39,11 @@ Route = Literal[
 
 STAGE_ORDER: tuple[str, ...] = ("0", "1", "2", "3A", "3B", "4", "5")
 GATE_STAGES: tuple[str, str] = ("3A", "3B")
-BUDGET_FLOOR_STAGE = "5"
+# Ngân sách CS §6.5 bắt đầu có hiệu lực từ Stage 4. Trước đây là "5" - cũng chính là stage CUỐI, nên
+# ngân sách 12-16 cụm không bao giờ cắt được gì trước khi hội thoại đã đi hết Stage 4 (10 cụm). Đặt ở
+# "4" cho ngân sách đúng vai trò của nó, trong khi Stage 3A/3B (quét đỏ, không được rút gọn) vẫn nằm
+# ngoài tầm với của nó.
+BUDGET_FLOOR_STAGE = "4"
 
 # CS §6.5 - ngân sách câu hỏi tính theo CỤM (không phải field đơn lẻ), khoá theo route/kết luận.
 # ROUTE_DENGUE_CONTEXT không có hàng riêng trong §6.5 - tài liệu mô tả nó "đào sâu" bộ câu hỏi trước
@@ -67,6 +71,11 @@ EMERGENCY_TRI_STATE_FIELDS: tuple[str, ...] = common_rules.EMERGENCY_TRI_STATE_F
 # - không phải dấu hiệu đỏ, nhưng người dùng thường kể ngay ở tin nhắn đầu (vd "bé 38 độ", "sốt 2 ngày
 # nay") dù chưa tới lượt hỏi cụm tương ứng. Thiếu quét kèm khiến hệ thống hỏi lại thông tin đã có
 # (phát hiện qua test tay với LLM thật).
+#
+# Bộ bối cảnh nguy cơ (`is_pregnant`/`chronic_conditions`/`immunocompromised`) nằm ở Stage 4, cách
+# lượt mở hơn cả cửa sổ `SAFETY_LOOKAHEAD_CLUSTERS` - nhưng đó lại đúng nhóm người bệnh tự khai sớm
+# nhất ("em đang mang thai 20 tuần", "tôi bị tiểu đường"). Không quét kèm thì lời khai đó rơi mất và
+# tới Stage 4 hệ thống hỏi lại nguyên văn. Chỉ MỞ SCHEMA trích xuất, không đụng rule nào.
 _EARLY_VOLUNTEERED_FIELDS: tuple[str, ...] = (
     "temp_c",
     "temp_site",
@@ -74,6 +83,9 @@ _EARLY_VOLUNTEERED_FIELDS: tuple[str, ...] = (
     "consciousness_level",
     "feeding_intake",
     "urine_output",
+    "is_pregnant",
+    "chronic_conditions",
+    "immunocompromised",
 )
 SAFETY_SIGNAL_FIELDS: tuple[str, ...] = EMERGENCY_TRI_STATE_FIELDS + _EARLY_VOLUNTEERED_FIELDS
 _EMERGENCY_ENUM_MATCHES: dict[str, frozenset[str]] = common_rules.EMERGENCY_ENUM_MATCHES
@@ -637,9 +649,14 @@ CONTRADICTION_RULES: tuple = (_contradiction_no_fever_but_hot,)
 #
 # Nội dung nhóm nằm ở `common_safety` chứ không phải ở đây: chúng gộp các cụm dấu hiệu NGUY KỊCH phổ
 # quát, không phải kiến thức về sốt (xem docstring `common_safety/screening_groups.py`).
+# Stage 4 (quần thể nguy cơ) cũng cần nhóm: 10 cụm mà ca lành tính trả lời "không" cho gần hết, và
+# `Q4-00` gộp sẵn KHÔNG đóng được `Q4-03`/`Q4-05` vì field con của chúng còn `unknown` - đo được đây
+# là nút thắt lớn nhất còn lại sau khi 3A/3B đã được nén (~7-8 lượt cho một stage toàn câu trả lời
+# "không").
 SCREENING_GROUPS: tuple = (
     common_screening.emergency_scan_groups(GATE_STAGES[0])
     + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    + common_screening.risk_context_groups("4")
 )
 
 # Xoá nhầm 2 field này là đắt nhất: chúng kéo theo TOÀN BỘ phần đặc điểm sốt (12 field) và làm câu

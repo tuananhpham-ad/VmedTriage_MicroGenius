@@ -6,6 +6,8 @@ vì thứ tự đó CHÍNH LÀ hành vi cần bảo vệ (429 -> model free kế
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from src.config import OPENROUTER_FREE_MODELS, Settings
@@ -156,7 +158,7 @@ def test_user_credential_without_model_rotates_free_models(openrouter_only, monk
     attempts: list[str] = []
     monkeypatch.setattr(
         "src.providers.make_provider",
-        lambda name, *, api_key=None: _FakeProvider(attempts, {first: 429}),
+        lambda name, **kwargs: _FakeProvider(attempts, {first: 429}),
     )
     credential = provider_router.LLMCredential(provider="openrouter", api_key="sk-user-1234567890")
 
@@ -170,7 +172,7 @@ def test_user_credential_with_model_is_respected_without_rotation(openrouter_onl
     attempts: list[str] = []
     monkeypatch.setattr(
         "src.providers.make_provider",
-        lambda name, *, api_key=None: _FakeProvider(attempts, {}),
+        lambda name, **kwargs: _FakeProvider(attempts, {}),
     )
     credential = provider_router.LLMCredential(
         provider="openrouter", api_key="sk-user-1234567890", model="openai/gpt-4o-mini"
@@ -179,6 +181,93 @@ def test_user_credential_with_model_is_respected_without_rotation(openrouter_onl
     provider_router.complete([{"role": "user", "content": "chào"}], credential=credential)
 
     assert attempts == ["openai/gpt-4o-mini"]
+
+
+# --- cô lập giữa các request ------------------------------------------------------------------
+
+
+def test_building_a_provider_never_writes_to_os_environ(openrouter_only, monkeypatch):
+    """os.environ là biến TOÀN PROCESS: ghi model vào đó thì hai request song song đè lên nhau."""
+    monkeypatch.delenv("OPENROUTER_MODEL_NAME", raising=False)
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+
+    provider = provider_router._build_provider(
+        provider_router.SPECS_BY_NAME["openrouter"], "a/one:free"
+    )
+
+    assert "OPENROUTER_MODEL_NAME" not in os.environ
+    assert "OPENROUTER_BASE_URL" not in os.environ
+    # Cấu hình đi thẳng vào adapter thay vì qua môi trường chung.
+    assert provider.default_model == "a/one:free"
+    assert provider.base_url == openrouter_only.openrouter_base_url
+    assert provider.api_key == "sk-test-key-1234567890"
+
+
+def test_two_providers_built_in_sequence_keep_their_own_model(openrouter_only):
+    """Adapter dựng trước KHÔNG được đổi model khi adapter sau được dựng - đó là race cũ."""
+    spec = provider_router.SPECS_BY_NAME["openrouter"]
+
+    first = provider_router._build_provider(spec, "a/one:free")
+    second = provider_router._build_provider(spec, "b/two:free")
+
+    assert (first.default_model, second.default_model) == ("a/one:free", "b/two:free")
+
+
+# --- ngân sách của một request -----------------------------------------------------------------
+
+
+def test_total_attempt_budget_stops_the_rotation_early(openrouter_only, monkeypatch):
+    openrouter_only.openrouter_max_model_attempts = 8
+    openrouter_only.llm_max_total_attempts = 2
+    attempts = _install_fake_provider(monkeypatch, dict.fromkeys(OPENROUTER_FREE_MODELS, 429))
+
+    with pytest.raises(provider_router.NoProviderConfiguredError) as excinfo:
+        provider_router.complete([{"role": "user", "content": "chào"}])
+
+    assert len(attempts) == 2
+    assert "ngân sách" in str(excinfo.value)
+
+
+def test_time_budget_stops_before_the_next_model(openrouter_only, monkeypatch):
+    """Trần thời gian mới là cái cứu request: đếm lượt vô nghĩa khi mỗi model treo hàng chục giây."""
+    openrouter_only.llm_total_budget_seconds = 5.0
+    now = {"seconds": 0.0}
+    monkeypatch.setattr(provider_router.time, "monotonic", lambda: now["seconds"])
+
+    attempts: list[str] = []
+
+    class _SlowProvider(_FakeProvider):
+        """Mỗi lượt ngốn 99s trước khi lỗi - đúng kịch bản model treo tới lúc timeout."""
+
+        def complete(self, *args, **kwargs):
+            now["seconds"] += 99.0
+            return super().complete(*args, **kwargs)
+
+    monkeypatch.setattr(
+        provider_router,
+        "_build_provider",
+        lambda spec, model=None: _SlowProvider(attempts, dict.fromkeys(OPENROUTER_FREE_MODELS, 429)),
+    )
+
+    with pytest.raises(provider_router.NoProviderConfiguredError):
+        provider_router.complete([{"role": "user", "content": "chào"}])
+
+    assert attempts == [OPENROUTER_FREE_MODELS[0]]
+
+
+def test_user_credential_rotation_respects_the_same_budget(openrouter_only, monkeypatch):
+    openrouter_only.llm_max_total_attempts = 1
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        "src.providers.make_provider",
+        lambda name, **kwargs: _FakeProvider(attempts, dict.fromkeys(OPENROUTER_FREE_MODELS, 429)),
+    )
+    credential = provider_router.LLMCredential(provider="openrouter", api_key="sk-user-1234567890")
+
+    with pytest.raises(provider_router.NoProviderConfiguredError):
+        provider_router.complete([{"role": "user", "content": "chào"}], credential=credential)
+
+    assert len(attempts) == 1
 
 
 # --- log ------------------------------------------------------------------------------------
