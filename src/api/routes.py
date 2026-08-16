@@ -1,4 +1,10 @@
+import asyncio
+import json
+import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -28,7 +34,9 @@ from src.models.schemas import (
     NurseReviewResponse,
     PipelineTraceStage,
     TriageCase,
+    TriagePriority,
 )
+from src.services.engines.priority_labels import PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
 from src.services.infra.auth import (
     EmailNotVerifiedError,
@@ -43,6 +51,8 @@ from src.services.stores.case_store import case_store
 from src.services.symptom_protocol.session import EmptyMessageError, SessionNotFoundError
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
+
+logger = logging.getLogger("vmedtriage.api")
 
 router = APIRouter()
 
@@ -188,6 +198,19 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     `symptom_case_bridge` - hàng đợi điều dưỡng, lịch sử bệnh nhân và luồng duyệt HITL chạy y như cũ.
     `case_id` chính là `session_id` của phiên agent."""
     patient_id = int(request.state.auth.sub)
+    session_id, previous = _prepare_chat_turn(payload, patient_id)
+    try:
+        session = symptom_session.session_store.submit_message(session_id, payload.message)
+    except EmptyMessageError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+
+
+def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, TriageCase | None]:
+    """Kiểm quyền + tìm/mở phiên. Tách ra để `/chat` và `/chat/stream` không lệch nhau về quyền sở
+    hữu case - hai bản sao của một kiểm tra 403 là hai chỗ để quên một chỗ."""
     previous = case_store.get(payload.case_id) if payload.case_id else None
     if previous and previous.patient_id not in (None, patient_id):
         raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
@@ -198,18 +221,88 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         # phiên mới rồi đưa luôn tin nhắn đầu tiên vào, không bắt người dùng gõ lại.
         session_id = symptom_session.session_store.start_session().session_id
         previous = None
+    return session_id, previous
 
-    try:
-        session = symptom_session.session_store.submit_message(session_id, payload.message)
-    except EmptyMessageError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except SessionNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
 
+async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     await _attach_graph_decision(triage_case, previous)
     case_store.save(triage_case)
     return _patient_chat_response(triage_case)
+
+
+def _sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat/stream")
+async def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
+    """Như `POST /chat` nhưng đẩy câu trả lời ra dần (SSE) thay vì đợi trọn lượt.
+
+    Vì sao là endpoint RIÊNG chứ không thêm cờ vào `/chat`: `/chat` trả một JSON `ChatResponse` và
+    có ~8 test khẳng định đúng hình dạng đó. Một endpoint trả hai kiểu thân khác nhau tuỳ tham số là
+    thứ không mô tả nổi trong OpenAPI, và client cũ sẽ vỡ khi cờ bị bật nhầm.
+
+    SSE qua `StreamingResponse` chứ không WebSocket - `CLAUDE.md` xếp realtime WebSocket ngoài phạm
+    vi MVP. Client PHẢI dùng `fetch()` + `ReadableStream`, không dùng `EventSource`:
+    `RoleAuthorizationMiddleware` đòi Bearer token ở header mà `EventSource` không đặt được header.
+
+    Ba loại sự kiện, theo đúng thứ tự một lượt diễn ra:
+
+    - `status`  - đang trích xuất lời khai (LLM #1, không hiển thị được vì nó trả JSON);
+    - `token`   - từng mẩu câu hỏi (LLM #2, thứ duy nhất người bệnh đọc);
+    - `done`    - NGUYÊN VĂN body của `ChatResponse`, để client dùng lại đúng đường xử lý cũ;
+    - `error`   - lỗi sau khi header đã gửi đi, lúc đó không còn đặt được HTTP status nữa.
+
+    Lỗi TRƯỚC khi stream bắt đầu (403/400/404) vẫn là HTTP status thật - `_prepare_chat_turn` chạy
+    ngoài generator để giữ được điều đó.
+    """
+    patient_id = int(request.state.auth.sub)
+    session_id, previous = _prepare_chat_turn(payload, patient_id)
+
+    async def events():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+        def on_token(piece: str) -> None:
+            # Chạy trong THREADPOOL, không phải event loop - `call_soon_threadsafe` là cách duy nhất
+            # đúng để đẩy dữ liệu về đây.
+            loop.call_soon_threadsafe(queue.put_nowait, ("token", piece))
+
+        async def run_turn() -> None:
+            try:
+                session = await run_in_threadpool(
+                    symptom_session.session_store.submit_message,
+                    session_id, payload.message, on_token=on_token,
+                )
+                body = await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+                await queue.put(("done", body.model_dump(mode="json")))
+            except EmptyMessageError as error:
+                await queue.put(("error", {"detail": str(error), "status": 400}))
+            except SessionNotFoundError as error:
+                await queue.put(("error", {"detail": str(error), "status": 404}))
+            except Exception:
+                logger.exception("chat_stream.failed session_id=%s", session_id)
+                await queue.put(("error", {"detail": "Không xử lý được tin nhắn.", "status": 500}))
+
+        task = asyncio.create_task(run_turn())
+        yield _sse("status", {"phase": "reading", "text": "Đang đọc câu trả lời của bạn"})
+        try:
+            while True:
+                kind, data = await queue.get()
+                yield _sse(kind, data)
+                if kind in ("done", "error"):
+                    return
+        finally:
+            # Người dùng đóng tab giữa chừng: huỷ lượt để threadpool không giữ chỗ vô ích.
+            task.cancel()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # Proxy đệm lại thì SSE mất hết ý nghĩa - nó về đúng bằng một response chậm.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:
@@ -258,8 +351,28 @@ async def call_tool(tool_name: str, request: MCPToolCallRequest) -> MCPToolCallR
 
 @router.get("/nurse/queue", response_model=list[TriageCase])
 async def nurse_queue() -> list[TriageCase]:
-    """List triage cases visible to the nurse dashboard."""
-    return case_store.list_cases()
+    """Hàng đợi điều dưỡng: TẤT CẢ case, sắp theo mức ưu tiên rồi tới thời gian chờ.
+
+    Trả về tất cả chứ không lọc, vì màn hình điều dưỡng có tab "Tất cả ca" bên cạnh tab "Đang chờ
+    duyệt" và tự lọc phía client (`features/nurse.js`). Endpoint `/queue` cũ (đã gỡ cùng
+    `case_approval`) lọc sẵn ở server nên không phục vụ được tab đó.
+
+    Thứ tự thì GIỮ từ `/queue` cũ và là phần đáng giữ nhất của nó: ca cấp cứu lên đầu, cùng mức thì
+    ai chờ lâu hơn đứng trước. Sắp ở server chứ không ở client vì đây là thứ tự AN TOÀN - một bug
+    sắp xếp phía client sẽ đẩy ca cấp cứu xuống cuối danh sách mà không ai nhận ra.
+    """
+    now = datetime.now(timezone.utc)
+
+    def rank(triage_case: TriageCase) -> tuple[int, float]:
+        priority = (
+            triage_case.triage_proposal.priority
+            if triage_case.triage_proposal
+            else TriagePriority.MANUAL_REVIEW
+        )
+        waiting_minutes = max(0.0, (now - triage_case.created_at).total_seconds() / 60)
+        return (PRIORITY_RANK.get(priority, 9), -waiting_minutes)
+
+    return sorted(case_store.list_cases(), key=rank)
 
 
 @router.get("/patient/history", response_model=list[TriageCase])

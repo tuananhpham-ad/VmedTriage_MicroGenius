@@ -23,8 +23,8 @@ from __future__ import annotations
 import pytest
 
 from src import paths
-from src.services.engines import fever_stage_machine as fsm
 from src.services.infra import fever_stage_log
+from tests.helpers import fever_api as fsm
 
 
 @pytest.fixture(autouse=True)
@@ -287,9 +287,9 @@ def test_module_never_imports_llm_provider():
     import ast
     import inspect
 
-    from src.services.engines import fever_stage_machine
+    from src.services.symptom_protocol import stage_machine
 
-    tree = ast.parse(inspect.getsource(fever_stage_machine))
+    tree = ast.parse(inspect.getsource(stage_machine))
     imported_modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

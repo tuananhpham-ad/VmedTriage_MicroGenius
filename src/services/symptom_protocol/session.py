@@ -223,7 +223,14 @@ class ProtocolSessionStore:
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
 
-    def submit_message(self, session_id: str, message: str) -> Session:
+    def submit_message(
+        self, session_id: str, message: str, *, on_token: agent.TokenSink | None = None,
+    ) -> Session:
+        """`on_token` != None: phát từng mẩu CÂU HỎI ra ngoài ngay khi model sinh (endpoint SSE).
+
+        Không đổi gì khác trong vòng đời phiên - cùng một lượt, cùng một kết quả, chỉ khác ở chỗ văn
+        bản hiển thị được đẩy dần thay vì đợi trọn. Trích xuất field vẫn chạy trước và vẫn không
+        stream: nó trả JSON."""
         session = self._require(session_id)
         if session.state != SessionState.COLLECTING:
             return session
@@ -231,7 +238,7 @@ class ProtocolSessionStore:
         if not cleaned:
             raise EmptyMessageError("Nội dung tin nhắn không được để trống.")
         if session.phase is SessionPhase.OPENING:
-            return self._submit_open_message(session, cleaned)
+            return self._submit_open_message(session, cleaned, on_token=on_token)
 
         protocol = self._protocol(session)
         if session.current_cluster is None:
@@ -260,6 +267,7 @@ class ProtocolSessionStore:
             retry_count=session.retry_count_by_cluster.get(session.cluster_key(cluster.id), 0),
             conversation=list(session.conversation),
             credential=session.credential,
+            on_token=on_token,
             # Phiên đã ghim protocol thì KHÔNG truyền hàm chọn - caller tuyên bố đây là ca gì, hệ
             # thống không được tự chuyển hướng khỏi tuyên bố đó. (Người bệnh rút lời khai vẫn được
             # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
@@ -316,7 +324,9 @@ class ProtocolSessionStore:
         self._progress(session, result)
         return session
 
-    def _submit_open_message(self, session: Session, message: str) -> Session:
+    def _submit_open_message(
+        self, session: Session, message: str, *, on_token: agent.TokenSink | None = None,
+    ) -> Session:
         """Lượt mở: lời kể tự do của người bệnh, và là lượt CHỌN protocol.
 
         Không dùng `_record_cluster_outcome`: chưa có cụm nào được hỏi nên không có cụm nào để đánh
@@ -335,6 +345,7 @@ class ProtocolSessionStore:
             protocol_for=registry.protocol_for,
             conversation=list(session.conversation),
             credential=session.credential,
+            on_token=on_token,
         )
 
         session.answers = result.answers

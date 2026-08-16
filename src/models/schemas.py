@@ -56,7 +56,7 @@ class RejectReasonCode(str, Enum):
 
 
 # Nhãn chất lượng hội thoại do quality guard gán mỗi turn (không có quyền chặn tuyệt đối - xem
-# src/services/quality_guard.py). low_quality chỉ ảnh hưởng việc case có bị suppress khỏi hàng đợi
+# quality_guard - ĐÃ GỠ). low_quality chỉ ảnh hưởng việc case có bị suppress khỏi hàng đợi
 # điều dưỡng hay không, KHÔNG BAO GIỜ chặn/ghi đè red-flag escalation.
 class ConversationQualityFlag(str, Enum):
     NORMAL = "normal"
@@ -195,7 +195,7 @@ class TriageCase(BaseModel):
     )
     quality_flag: ConversationQualityFlag = Field(
         default=ConversationQualityFlag.NORMAL,
-        description="Gán bởi quality_guard mỗi turn; low_quality chỉ dùng để suppress hàng đợi khi KHÔNG có red-flag.",
+        description="Nhãn chất lượng hội thoại. HIỆN KHÔNG AI GÁN - `quality_guard` đã bị gỡ cùng luồng Gen 2 (2026-08-16). Giữ trường để dữ liệu cũ đọc lại được và để cơ chế suppress hàng đợi nối lại được mà không phải migrate.",
     )
 
 
@@ -234,6 +234,10 @@ class NurseReviewRequest(BaseModel):
     edited_priority: TriagePriority | None = None
     nurse_notes: str | None = None
     ask_more_question: str | None = None
+    # Chỉ dùng khi action=REJECT. Là MÃ chứ không phải ghi chú tự do vì nó là đầu vào của thống kê
+    # độ chính xác AI-vs-điều dưỡng: chỉ `ai_incorrect` được tính, `already_handled_offline`/`other`
+    # bị loại khỏi phép đo ngay từ nguồn. Không bắt buộc để không vỡ client cũ.
+    reject_reason_code: RejectReasonCode | None = None
 
 
 # Response trả về sau khi điều dưỡng duyệt case, xác nhận trạng thái mới và nội dung sẽ gửi cho bệnh nhân.
