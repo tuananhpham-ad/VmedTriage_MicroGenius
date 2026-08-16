@@ -108,11 +108,30 @@ Route được bảo vệ yêu cầu header `Authorization: Bearer <token>` (JWT
 | Method | Endpoint | Purpose | Auth | Request | Response | Error codes |
 |---|---|---|---|---|---|---|
 | POST | `/api/v1/chat` | **Luồng chính.** Bệnh nhân nhắn tự do; agent triệu chứng hỏi tiếp theo cụm/stage. Bỏ trống `case_id` để mở ca mới, truyền lại `case_id` để nhắn tiếp trong cùng ca | patient | `message, case_id?` | `ChatResponse{case_id, response, status, requires_human_approval}` | 400 tin nhắn rỗng, 403 không phải chủ case, 404 phiên không tồn tại |
+| POST | `/api/v1/chat/stream` | Y hệt `/chat` nhưng đẩy câu trả lời ra dần (SSE) — dùng cho ô chat để chữ hiện dần thay vì đứng im vài giây | patient | `message, case_id?` | `text/event-stream` (xem ghi chú dưới) | 400, 403, 404 |
 | POST | `/api/v1/fever/sessions/{session_id}/confirm` | Bệnh nhân xác nhận phiếu tóm tắt Đúng/Chưa đúng trước khi bàn giao điều dưỡng — truyền thẳng `case_id` nhận từ `/chat` vào `{session_id}` | public | `is_correct` | `FeverSessionResponse` | 404, 400 |
 | GET | `/api/v1/patient/history` | Danh sách ca của chính bệnh nhân (đã redact tới khi duyệt) | patient | — | `list[TriageCase]` | 401 |
 | GET | `/api/v1/cases/{case_id}` | Xem chi tiết case | authenticated | — | `TriageCase` | 404, 403 không sở hữu case (patient) |
 | GET | `/api/v1/cases/{case_id}/result` | Bệnh nhân xem kết quả (chỉ sau khi duyệt) | patient (ownership check) | — | `CaseResultResponse` | 404, 403 không sở hữu case |
 | GET | `/api/v1/disclaimer` | Nội dung disclaimer tĩnh | public | — | `DisclaimerResponse` | — |
+
+> **Streaming (`POST /chat/stream`).** Cùng đầu vào, cùng kết quả cuối như `/chat` — chỉ khác cách
+> trả. Bốn loại sự kiện SSE, theo thứ tự một lượt diễn ra:
+>
+> | Sự kiện | Dữ liệu | Ý nghĩa |
+> |---|---|---|
+> | `status` | `{phase, text}` | Đang trích xuất lời khai (lượt gọi LLM #1, không hiển thị được vì trả JSON) |
+> | `token` | chuỗi | Một mẩu câu hỏi (lượt gọi LLM #2 — thứ duy nhất người bệnh đọc) |
+> | `done` | `ChatResponse` | NGUYÊN VĂN body của `/chat`, để client dùng lại đúng đường xử lý cũ |
+> | `error` | `{detail, status}` | Lỗi xảy ra SAU khi header đã gửi (lúc đó không đặt lại HTTP status được) |
+>
+> Lỗi TRƯỚC khi stream bắt đầu (401/403/400/404) vẫn là HTTP status thật, không phải sự kiện `error`.
+> Client phải dùng `fetch()` + `ReadableStream`, **không dùng `EventSource`**: `EventSource` không đặt
+> được header `Authorization`, mà endpoint này yêu cầu Bearer token của role patient. Không dùng
+> WebSocket — `CLAUDE.md` xếp realtime WebSocket ngoài phạm vi MVP.
+>
+> `POST /chat` được giữ nguyên và vẫn là đường dự phòng: `src/ui/new/features/patient.js` tự rơi về
+> nó khi proxy chặn `text/event-stream` hoặc stream đứt giữa chừng.
 
 > **`case_id` = `session_id`.** Một ca ứng với đúng một phiên agent, nên `case_id` trả về từ `/chat`
 > dùng thẳng được cho `/fever/sessions/{id}/confirm`, `GET /cases/{id}` và hàng đợi điều dưỡng — xem

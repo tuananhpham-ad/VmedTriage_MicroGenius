@@ -19,12 +19,12 @@ from unittest.mock import Mock
 import pytest
 
 from src import paths
-from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import fever_stage_log, provider_router
 from src.services.symptom_protocol import intake_agent as _engine
 from src.services.symptom_protocol import retraction
+from tests.helpers import fever_api as agent
 
 O1_USER_MESSAGE = (
     "Con em 3 tuổi, sốt 2 ngày 38,5 độ, bé vẫn tỉnh táo, chơi đùa bình thường, ăn uống tốt, "

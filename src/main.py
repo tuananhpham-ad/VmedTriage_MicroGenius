@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers.fever_intake import router as fever_intake_router
-from src.api.routers.queue import router as queue_router
 from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
@@ -54,7 +53,6 @@ app.add_middleware(
 # `cases_router` (POST /cases, POST /cases/{id}/responses) và `intake_router` (/intake/*) đã bị gỡ
 # ngày 2026-08-16: cả hai chạy pipeline rule-based cũ / luồng demo, không frontend hay test nào gọi.
 app.include_router(router, prefix="/api/v1")
-app.include_router(queue_router, prefix="/api/v1")
 app.include_router(result_router, prefix="/api/v1")
 app.include_router(fever_intake_router, prefix="/api/v1")
 

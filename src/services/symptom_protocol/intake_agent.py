@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
@@ -31,6 +32,12 @@ from src.services.symptom_protocol.protocol import SymptomProtocol
 logger = logging.getLogger("vmedtriage.symptom_intake")
 
 TriState = str  # "true" | "false" | "unknown"
+
+TokenSink = Callable[[str], None]
+"""Nhận từng mẩu văn bản câu hỏi ngay khi model sinh ra.
+
+`None` (mặc định) = không stream, hành vi y như trước. Truyền hàm vào chỉ khi phía gọi thật sự phát
+được từng mẩu ra ngoài (endpoint SSE) - không có ai nghe thì streaming chỉ thêm một lớp gián tiếp."""
 
 # Mức khắt khe của việc đòi `evidence_span` - xem `_needs_evidence`/`_collect_fields`.
 EvidencePolicy = Literal["off", "asked", "unasked"]
@@ -803,6 +810,7 @@ def _generate_question(
     parts: int = 1,
     conversation: list[dict[str, str]] | None = None,
     credential: provider_router.LLMCredential | None,
+    on_token: TokenSink | None = None,
 ) -> tuple[str, bool]:
     """Call LLM thứ hai: CHỈ diễn đạt câu hỏi cho cụm mà RULE đã chọn. Trả `(câu hỏi, llm_used)`.
 
@@ -872,6 +880,7 @@ def run_turn(
     message: str,
     answers: dict[str, TriState],
     protocol_name: str = "",
+    on_token: TokenSink | None = None,
     asked_ids: frozenset[str] = frozenset(),
     retry_count: int = 0,
     conversation: list[dict[str, str]] | None = None,
@@ -1096,7 +1105,7 @@ def run_turn(
                 missing_keys=_missing_in_cluster(active, following, merged),
                 rephrase=retry_this_cluster,
                 parts=len(batched) or 1,
-                conversation=conversation, credential=credential,
+                conversation=conversation, credential=credential, on_token=on_token,
             )
             if following is not None
             else ("", False)
@@ -1133,6 +1142,7 @@ def run_open_turn(
     protocol_for,
     conversation: list[dict[str, str]] | None = None,
     credential: provider_router.LLMCredential | None = None,
+    on_token: TokenSink | None = None,
 ) -> TurnResult:
     """LƯỢT MỞ: người bệnh kể tự do, chưa ai hỏi gì cả.
 
@@ -1228,7 +1238,7 @@ def run_open_turn(
                 protocol, following, answers=merged,
                 missing_keys=_missing_in_cluster(protocol, following, merged),
                 parts=len(batched) or 1,
-                conversation=conversation, credential=credential,
+                conversation=conversation, credential=credential, on_token=on_token,
             )
             if following is not None
             else ("", False)
