@@ -385,6 +385,14 @@ body.is-high-contrast { --muted:#364758; --muted-2:#526476; --line:#c1cad4; --li
 .record-header p:not(.eyebrow) { margin:4px 0 0; color:var(--muted); font-size:13px; }
 .record-header > div:last-child { display:flex; flex-wrap:wrap; justify-content:end; gap:7px; }
 .red-flag-alert { margin:18px 20px 0; border-left:3px solid var(--red); border-radius:0 8px 8px 0; padding:12px 13px; color:#7d2525; background:var(--red-soft); font-weight:600; }
+/* Ý kiến tham khảo từ agent quyết định (src/graph_triage/). Cố tình KHÔNG dùng màu của thang
+   priority: khối này không phải một mức ưu tiên có hiệu lực, chỉ là ý kiến thứ hai. */
+.advisory-block { background:var(--surface-muted, #f6f7f9); }
+.advisory-note { margin:0 0 12px; font-size:13px; color:var(--muted, #6b7280); }
+.advisory-label { margin:0 0 8px; font-size:15px; }
+.advisory-summary { margin:0 0 8px; font-size:14px; line-height:1.55; }
+.advisory-review { margin:0 0 8px; font-size:13px; font-weight:600; color:#7d2525; }
+.advisory-disclaimer { margin:0; font-size:12px; color:var(--muted, #6b7280); font-style:italic; }
 .record-section { padding:23px 24px; border-bottom:1px solid var(--line); }
 .record-section:last-child { border-bottom:0; }
 .record-section h2 { margin:0 0 15px; font-size:18px; letter-spacing:-.02em; }

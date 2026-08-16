@@ -1,0 +1,161 @@
+"""Điểm vào duy nhất của luồng web tới agent quyết định trong `src/graph_triage/`.
+
+VÌ SAO CẦN LỚP NÀY: `agent/run.py` và `agent/run_llm.py` là CLI - chúng parse argv, dựng model mới
+mỗi lần chạy rồi thoát. Luồng web cần đúng ngược lại: dựng một lần, dùng lại nhiều request, và không
+bao giờ được làm hỏng lượt chat khi hỏng.
+
+BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
+
+1. IMPORT PHẢI LAZY. `torch`/`transformers`/`joblib` nằm ở `requirements-graph.txt`, KHÔNG nằm ở
+   `requirements.txt`. Import chúng ở top-level module này thì cả app chết lúc khởi động trên môi
+   trường chưa cài (kể cả CI). Mọi import nặng nằm trong hàm và `ImportError` được nuốt thành "tính
+   năng tắt".
+
+2. MODEL LOAD MỘT LẦN. Thư mục PhoBERT hơn 500 MB - dựng lại mỗi request là không dùng được. Singleton
+   lười, khoá bằng `threading.Lock` vì uvicorn chạy nhiều worker thread.
+
+3. BEST-EFFORT. DeepSeek hoặc OpenAI lỗi thì case vẫn phải vào hàng đợi điều dưỡng như thường. Theo
+   đúng cách `TriagePipeline._persist_to_weaviate` xử lý Weaviate: bắt hết, log, đi tiếp.
+
+4. KHÔNG QUYẾT ĐỊNH. Trả về dict để lưu vào `TriageCase.graph_decision`. Người gọi TUYỆT ĐỐI không
+   được gán giá trị này vào `TriageProposal.priority` hay `RedFlagFinding`.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from pathlib import Path
+from typing import Any
+
+from src.config import get_settings
+from src.graph_triage.summary_text import build_summary_text
+from src.models.schemas import TriageCase
+from src.paths import RUNS_DIR
+
+logger = logging.getLogger("vmedtriage.graph_triage")
+
+_lock = threading.Lock()
+_agent: Any | None = None
+_unavailable_reason: str | None = None
+
+
+def _artifact_root() -> Path:
+    configured = get_settings().graph_triage_artifact_root.strip()
+    return Path(configured) if configured else RUNS_DIR
+
+
+def _build_agent() -> Any:
+    """Dựng `ToolCallingDecisionAgent`. Mọi import nặng nằm trong hàm - xem ràng buộc 1."""
+    import torch
+
+    from src.graph_triage.agent.decision import (
+        BertPredictor,
+        DecisionAgent,
+        FusionPredictor,
+        GraphResolver,
+        LogRegPredictor,
+    )
+    from src.graph_triage.agent.llm_decision import ToolCallingDecisionAgent
+
+    settings = get_settings()
+    root = _artifact_root()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    fusion_dir = root / "fusion_full"
+
+    # Fusion là BẮT BUỘC (quyết định 2026-08-16): thiếu artifact thì tắt hẳn tính năng chứ không âm
+    # thầm chạy 2 model. Ý kiến tham khảo dựng trên 3 model và ý kiến dựng trên 2 model không so sánh
+    # được với nhau, mà điều dưỡng nhìn màn hình thì không thấy sự khác biệt đó.
+    if not fusion_dir.is_dir():
+        raise FileNotFoundError(
+            f"Thiếu artifact fusion tại {fusion_dir}. Copy runs/fusion_clean từ repo graph vào đó, "
+            "hoặc trỏ GRAPH_TRIAGE_ARTIFACT_ROOT sang thư mục có logreg_full/, bert_full/ và fusion_full/."
+        )
+
+    ensemble = DecisionAgent(
+        logreg=LogRegPredictor(root / "logreg_full" / "model.joblib"),
+        bert=BertPredictor(root / "bert_full" / "model", device, settings.graph_triage_max_length),
+        # `graph_cache=None` + live extraction: phiếu tóm tắt là văn bản mới sinh mỗi ca, không bao giờ
+        # khớp sha256 của cache golden.csv nên tra cache luôn trượt.
+        graph_resolver=GraphResolver(None, allow_live_extraction=True),
+        fusion=FusionPredictor(fusion_dir, device),
+    )
+    logger.info("graph_triage.agent_ready device=%s models=logreg,bert,fusion root=%s", device.type, root)
+    return ToolCallingDecisionAgent(ensemble)
+
+
+def _get_agent() -> Any | None:
+    global _agent, _unavailable_reason
+    if _agent is not None or _unavailable_reason is not None:
+        return _agent
+    with _lock:
+        if _agent is None and _unavailable_reason is None:
+            try:
+                _agent = _build_agent()
+            except Exception as error:  # ImportError, thiếu artifact, thiếu API key - đều là "tắt".
+                _unavailable_reason = f"{type(error).__name__}: {error}"
+                logger.warning("graph_triage.unavailable reason=%s", _unavailable_reason)
+    return _agent
+
+
+def decide_for_case(triage_case: TriageCase) -> dict | None:
+    """Chạy agent quyết định cho một case đã chốt phiếu. `None` = không có gì để lưu.
+
+    Không bao giờ raise: người gọi nằm trên đường phản hồi của bệnh nhân.
+    """
+    if not get_settings().enable_graph_triage_agent:
+        return None
+    summary_text = build_summary_text(triage_case)
+    if not summary_text:
+        logger.info("graph_triage.skipped case_id=%s reason=empty_summary", triage_case.case_id)
+        return None
+    agent = _get_agent()
+    if agent is None:
+        return None
+    try:
+        result = agent.decide(summary_text)
+    except Exception as error:
+        logger.warning(
+            "graph_triage.failed case_id=%s error=%s: %s", triage_case.case_id, type(error).__name__, error
+        )
+        return None
+    decision = result["llm_decision"]
+    analysis = result["model_analysis"]
+    logger.info(
+        "graph_triage.decided case_id=%s label=%s human_review=%s model=%s models=%s disagreement=%s",
+        triage_case.case_id,
+        decision["triage_label"],
+        decision["requires_human_review"],
+        result["tool_audit"]["model"],
+        "/".join(f"{name}:{item['predicted_label']}" for name, item in analysis["models"].items()),
+        analysis["model_disagreement"],
+    )
+    # Xác suất từng model và evidence graph KHÔNG ra tới UI (quyết định thiết kế, mục A5), nhưng khi
+    # gỡ lỗi thì đó chính là thứ cần nhìn - nên ghi ở mức DEBUG. Bật bằng:
+    #     logging.getLogger("vmedtriage.graph_triage").setLevel(logging.DEBUG)
+    if logger.isEnabledFor(logging.DEBUG):
+        for name, item in analysis["models"].items():
+            probabilities = " ".join(f"{label}={value:.3f}" for label, value in item["probabilities"].items())
+            logger.debug("graph_triage.model case_id=%s %s -> %s | scope=%s",
+                         triage_case.case_id, name, probabilities, item["run_metrics"].get("evaluation_scope"))
+        for item in analysis["evidence_graph"]["evidence"]:
+            logger.debug("graph_triage.evidence case_id=%s [%s] %s <- %r",
+                         triage_case.case_id, item["status"], item["concept"], item["source_span"])
+        logger.debug("graph_triage.summary_text case_id=%s\n%s", triage_case.case_id, summary_text)
+    # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
+    # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
+    return {
+        "triage_label": decision["triage_label"],
+        "decision_summary": decision["decision_summary"],
+        "requires_human_review": decision["requires_human_review"],
+        "disclaimer": decision["disclaimer"],
+        "model": result["tool_audit"]["model"],
+    }
+
+
+def reset_agent_cache() -> None:
+    """Chỉ dùng cho test: quên singleton và lý do tắt."""
+    global _agent, _unavailable_reason
+    with _lock:
+        _agent = None
+        _unavailable_reason = None
