@@ -12,6 +12,7 @@ from src.api.routes import router
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
 from src.middleware.auth import RoleAuthorizationMiddleware
+from src.services.infra import provider_router
 from src.ui.static_files import build_demo_static_app
 
 
@@ -26,6 +27,9 @@ async def lifespan(app: FastAPI):
     configure_database(settings.database_url)
     create_tables()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    # In cấu hình LLM ngay lúc khởi động: sai model/thiếu key là lỗi cấu hình hay gặp nhất, và triệu
+    # chứng của nó (agent trả lời bằng câu mẫu) rất giống lỗi logic nếu không thấy dòng này.
+    print(f"LLM: {provider_router.describe_selection()}")
     yield
     dispose_database()
     print("Shutting down...")

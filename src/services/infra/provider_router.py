@@ -11,18 +11,32 @@ Vì sao cần module này (thay vì dùng thẳng `src/services/llm.py`):
 3. Cần fallback: nếu provider đầu tiên lỗi (hết quota, mạng, model sai tên) thì tự chuyển sang
    provider tiếp theo còn key, thay vì hỏng cả tính năng.
 
-Thứ tự ưu tiên đọc từ `Settings.llm_provider_order`; đặt `Settings.llm_provider` khác `"auto"` để ép
-dùng đúng một provider.
+Có HAI cấp fallback, đừng nhầm:
+
+- **Cấp provider** - thứ tự đọc từ `Settings.llm_provider_order`; đặt `Settings.llm_provider` khác
+  `"auto"` để ép dùng đúng một provider.
+- **Cấp model, chỉ áp dụng cho OpenRouter** - một API key OpenRouter gọi được rất nhiều model, trong
+  đó có các model `:free` bị rate-limit rất sớm. Hết quota một model KHÔNG có nghĩa là hết quota cả
+  key, nên chuyển provider ngay là phí: ta xoay vòng sang model free kế tiếp trong
+  `config.OPENROUTER_FREE_MODELS` trước, chỉ khi cạn danh sách mới đổi provider.
+
+Ngoại lệ của cấp model: lỗi 401/403 là lỗi CỦA KEY chứ không phải của model - đổi model cũng vô ích
+nên bỏ luôn phần còn lại của danh sách và sang provider khác.
+
+Mọi lần gọi đều log ra provider + model thực sự dùng (`logger.info` + trace console), vì khi có
+fallback hai cấp thì "model nào vừa trả lời" không còn suy ra được từ `.env`.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from src.config import get_settings
+from src.config import OPENROUTER_FREE_MODELS, get_settings
+from src.services.infra import console_log
 
 logger = logging.getLogger("vmedtriage.provider")
 
@@ -66,8 +80,39 @@ SUGGESTED_MODELS: dict[str, tuple[str, ...]] = {
     "deepseek": ("deepseek-chat", "deepseek-reasoner"),
     "openai": ("gpt-4o-mini", "gpt-4o"),
     "anthropic": ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-5"),
-    "openrouter": ("openai/gpt-4o-mini", "anthropic/claude-sonnet-5", "google/gemini-2.0-flash"),
+    # Model free lên đầu vì đó là mặc định của router; các model trả phí vẫn gõ tay được.
+    "openrouter": OPENROUTER_FREE_MODELS + ("openai/gpt-4o-mini", "anthropic/claude-sonnet-5"),
 }
+
+# 401/403 = key sai hoặc không có quyền. Đổi model với cùng cái key đó thì vẫn hỏng y hệt, nên dừng
+# xoay vòng model ngay để không đốt thêm vòng HTTP.
+_KEY_LEVEL_STATUSES = frozenset({401, 403})
+
+
+def openrouter_model_candidates() -> list[str]:
+    """Các model OpenRouter sẽ thử lần lượt trong một lần gọi.
+
+    `OPENROUTER_MODEL_NAME` (nếu đặt) đứng đầu, sau đó là danh sách free trong
+    `OPENROUTER_FREE_MODELS` / `OPENROUTER_FREE_MODELS` của `.env`. Cắt theo
+    `openrouter_max_model_attempts`.
+    """
+    settings = get_settings()
+    candidates: list[str] = []
+    for raw in [settings.openrouter_model_name, *settings.openrouter_free_models.split(",")]:
+        model = raw.strip().strip('"').strip("'")
+        if model and model not in candidates:
+            candidates.append(model)
+    return candidates[: settings.openrouter_max_model_attempts]
+
+
+def _candidate_models(spec: ProviderSpec) -> list[str | None]:
+    """Model sẽ thử cho một provider. Chỉ OpenRouter có nhiều hơn một."""
+    if spec.name == "openrouter":
+        candidates = openrouter_model_candidates()
+        if candidates:
+            return list(candidates)
+    # `None` = để adapter tự dùng model mặc định của nó.
+    return [getattr(get_settings(), spec.model_attr, "").strip() or None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +160,27 @@ def available_providers() -> list[str]:
     ]
 
 
+def describe_selection(credential: LLMCredential | None = None) -> str:
+    """Provider + model sẽ được dùng cho lượt gọi kế tiếp, dạng in được ra log/console.
+
+    KHÔNG chứa API key. Dùng cho dòng mở phiên và log khởi động server: biết trước "sẽ gọi model nào"
+    quan trọng ngang biết "vừa gọi model nào", nhất là khi model đầu danh sách hay hết quota.
+    """
+    if credential is not None:
+        return f"{credential.provider} · {credential.model or 'model mặc định'} (key người dùng)"
+
+    providers = available_providers()
+    if not providers:
+        return "chưa cấu hình provider nào · dùng nhánh deterministic"
+
+    spec = SPECS_BY_NAME[providers[0]]
+    models = _candidate_models(spec)
+    head = models[0] or "model mặc định của adapter"
+    backup = f" (+{len(models) - 1} model dự phòng)" if len(models) > 1 else ""
+    rest = f", sau đó: {', '.join(providers[1:])}" if len(providers) > 1 else ""
+    return f"{spec.name} · {head}{backup}{rest}"
+
+
 def _ordered_specs(configured_provider: str, configured_order: str) -> list[ProviderSpec]:
     if configured_provider != "auto":
         spec = SPECS_BY_NAME.get(configured_provider)
@@ -130,16 +196,19 @@ def _ordered_specs(configured_provider: str, configured_order: str) -> list[Prov
     return ordered
 
 
-def _build_provider(spec: ProviderSpec):
+def _build_provider(spec: ProviderSpec, model: str | None = None):
     """Khởi tạo adapter và đồng bộ API key sang os.environ (xem lý do ở docstring module)."""
     settings = get_settings()
     api_key = getattr(settings, spec.api_key_attr, "").strip().strip('"').strip("'")
     os.environ[spec.env_var] = api_key
 
     if spec.name == "openrouter":
-        # OpenRouterProvider đọc base_url/model từ os.environ chứ không qua Settings.
-        os.environ.setdefault("OPENROUTER_BASE_URL", settings.openrouter_base_url)
-        os.environ.setdefault("OPENROUTER_MODEL_NAME", settings.openrouter_model_name)
+        # OpenRouterProvider đọc base_url/model từ os.environ chứ không qua Settings. Gán thẳng chứ
+        # KHÔNG `setdefault`: giá trị sót lại từ lần gọi trước sẽ ghim adapter vào model cũ, đúng
+        # thứ làm vòng xoay model ở `complete()` mất tác dụng.
+        os.environ["OPENROUTER_BASE_URL"] = settings.openrouter_base_url
+        if model:
+            os.environ["OPENROUTER_MODEL_NAME"] = model
 
     from src.providers import make_provider
 
@@ -172,15 +241,20 @@ def _status_code_of(exc: Exception) -> int | None:
     return None
 
 
-def describe_provider_error(provider: str, exc: Exception) -> str:
-    """Mô tả lỗi gọi LLM đủ để người dùng biết phải làm gì, KHÔNG kèm nguyên văn từ SDK."""
+def describe_provider_error(provider: str, exc: Exception, *, model: str | None = None) -> str:
+    """Mô tả lỗi gọi LLM đủ để người dùng biết phải làm gì, KHÔNG kèm nguyên văn từ SDK.
+
+    Có `model` thì kèm luôn tên model: với OpenRouter, "429" của model free này không nói gì về
+    model free kế tiếp - thiếu tên model thì đọc log không biết cái nào vừa hỏng.
+    """
+    label = f"{provider}/{model}" if model else provider
     status = _status_code_of(exc)
     hint = _STATUS_HINTS.get(status or 0)
     if hint:
-        return f"{provider}: {hint} (HTTP {status})"
+        return f"{label}: {hint} (HTTP {status})"
     if status:
-        return f"{provider}: lỗi HTTP {status} ({type(exc).__name__})"
-    return f"{provider}: {type(exc).__name__}"
+        return f"{label}: lỗi HTTP {status} ({type(exc).__name__})"
+    return f"{label}: {type(exc).__name__}"
 
 
 @dataclass(slots=True)
@@ -197,7 +271,9 @@ def complete(
     max_attempts: int = 3,
     credential: LLMCredential | None = None,
 ) -> CompletionResult:
-    """Gọi LLM qua provider đầu tiên khả dụng, tự chuyển provider khác nếu lỗi.
+    """Gọi LLM qua provider đầu tiên khả dụng, tự chuyển model rồi chuyển provider nếu lỗi.
+
+    Với OpenRouter, mỗi provider còn có vòng trong xoay qua các model free (xem docstring module).
 
     `credential` != None: dùng ĐÚNG provider + key người dùng đưa, KHÔNG fallback sang provider khác
     (key của họ, không tự ý chuyển sang provider khác thay họ) và KHÔNG đụng `os.environ`.
@@ -224,27 +300,38 @@ def complete(
 
     errors: list[str] = []
     for spec in specs[:max_attempts]:
-        model = getattr(settings, spec.model_attr, "") or None
-        try:
-            provider = _build_provider(spec)
-            response = provider.complete(
-                list(messages),
-                model=model,
-                temperature=resolved_temperature,
+        for model in _candidate_models(spec):
+            label = model or "(mặc định của adapter)"
+            started = time.monotonic()
+            try:
+                provider = _build_provider(spec, model)
+                response = provider.complete(
+                    list(messages),
+                    model=model,
+                    temperature=resolved_temperature,
+                )
+            except Exception as exc:
+                described = describe_provider_error(spec.name, exc, model=model)
+                errors.append(described)
+                logger.warning("provider.failed %s", described)
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note=described)
+                if _status_code_of(exc) in _KEY_LEVEL_STATUSES:
+                    break  # lỗi của key, không phải của model -> sang provider khác luôn
+                continue
+
+            latency_ms = int((time.monotonic() - started) * 1000)
+            text = (response.text or "").strip()
+            if not text:
+                errors.append(f"{spec.name}/{label}: trả về nội dung rỗng")
+                logger.warning("provider.empty_response name=%s model=%s", spec.name, label)
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note="nội dung rỗng")
+                continue
+
+            logger.info(
+                "provider.selected provider=%s model=%s latency_ms=%d", spec.name, label, latency_ms
             )
-        except Exception as exc:
-            described = describe_provider_error(spec.name, exc)
-            errors.append(described)
-            logger.warning("provider.failed %s", described)
-            continue
-
-        text = (response.text or "").strip()
-        if not text:
-            errors.append(f"{spec.name}: trả về nội dung rỗng")
-            logger.warning("provider.empty_response name=%s", spec.name)
-            continue
-
-        return CompletionResult(text=text, provider=spec.name, model=model or "(mặc định của adapter)")
+            console_log.llm_attempt(provider=spec.name, model=label, ok=True, latency_ms=latency_ms)
+            return CompletionResult(text=text, provider=spec.name, model=label)
 
     raise NoProviderConfiguredError("Mọi provider đều lỗi -> " + " | ".join(errors))
 
@@ -254,7 +341,11 @@ def _complete_with_credential(
     messages: Sequence[dict[str, str]],
     temperature: float,
 ) -> CompletionResult:
-    """Gọi LLM bằng key người dùng đưa. Không fallback provider, không ghi os.environ."""
+    """Gọi LLM bằng key người dùng đưa. Không fallback provider, không ghi os.environ.
+
+    Vẫn xoay vòng MODEL khi người dùng đưa key OpenRouter mà không chỉ định model: đó vẫn là key của
+    họ, chỉ là không có tên model nào để tôn trọng.
+    """
     if credential.provider not in SPECS_BY_NAME:
         raise UnknownProviderError(
             f"Provider không hợp lệ: {credential.provider}. Chọn một trong: "
@@ -265,16 +356,42 @@ def _complete_with_credential(
 
     from src.providers import make_provider
 
-    provider = make_provider(credential.provider, api_key=credential.api_key.strip())
-    try:
-        response = provider.complete(list(messages), model=credential.model, temperature=temperature)
-    except Exception as exc:
-        # Thông báo lỗi của SDK có thể chứa lại API key -> chỉ đưa ra mã HTTP đã được diễn giải.
-        described = describe_provider_error(credential.provider, exc)
-        logger.warning("provider.user_credential_failed %s", described)
-        raise NoProviderConfiguredError(f"Gọi thất bại -> {described}") from exc
+    if credential.model:
+        candidates: list[str | None] = [credential.model]
+    elif credential.provider == "openrouter":
+        candidates = list(openrouter_model_candidates()) or [None]
+    else:
+        candidates = [None]
 
-    text = (response.text or "").strip()
-    if not text:
-        raise NoProviderConfiguredError(f"{credential.provider} trả về nội dung rỗng.")
-    return CompletionResult(text=text, provider=credential.provider, model=credential.model or "(mặc định)")
+    errors: list[str] = []
+    for model in candidates:
+        label = model or "(mặc định)"
+        provider = make_provider(credential.provider, api_key=credential.api_key.strip())
+        started = time.monotonic()
+        try:
+            response = provider.complete(list(messages), model=model, temperature=temperature)
+        except Exception as exc:
+            # Thông báo lỗi của SDK có thể chứa lại API key -> chỉ đưa ra mã HTTP đã được diễn giải.
+            described = describe_provider_error(credential.provider, exc, model=model)
+            errors.append(described)
+            logger.warning("provider.user_credential_failed %s", described)
+            console_log.llm_attempt(provider=credential.provider, model=label, ok=False, note=described)
+            if _status_code_of(exc) in _KEY_LEVEL_STATUSES:
+                break
+            continue
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        text = (response.text or "").strip()
+        if not text:
+            errors.append(f"{credential.provider}/{label}: trả về nội dung rỗng")
+            console_log.llm_attempt(provider=credential.provider, model=label, ok=False, note="nội dung rỗng")
+            continue
+
+        logger.info(
+            "provider.selected provider=%s model=%s latency_ms=%d source=user_credential",
+            credential.provider, label, latency_ms,
+        )
+        console_log.llm_attempt(provider=credential.provider, model=label, ok=True, latency_ms=latency_ms)
+        return CompletionResult(text=text, provider=credential.provider, model=label)
+
+    raise NoProviderConfiguredError("Gọi thất bại -> " + " | ".join(errors))

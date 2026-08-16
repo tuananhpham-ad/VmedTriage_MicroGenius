@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services.infra import console_log
+from src.services.infra import console_log, provider_router
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra.provider_router import LLMCredential
 from src.services.symptom_protocol import intake_agent as agent
@@ -198,7 +198,7 @@ class ProtocolSessionStore:
         if session.last_question:
             session.conversation.append({"role": "assistant", "content": session.last_question})
 
-        provider = (session.credential.provider if session.credential else None) or "server/fallback"
+        provider = provider_router.describe_selection(session.credential)
         console_log.session_start(session.session_id, label=f"{protocol.name} intake", llm=provider)
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
@@ -213,7 +213,7 @@ class ProtocolSessionStore:
         session.conversation.append({"role": "assistant", "content": session.last_question})
         stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
 
-        provider = (session.credential.provider if session.credential else None) or "server/fallback"
+        provider = provider_router.describe_selection(session.credential)
         console_log.session_start(session.session_id, label="symptom intake", llm=provider)
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session

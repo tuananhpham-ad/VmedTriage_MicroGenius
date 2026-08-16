@@ -5,6 +5,22 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Danh sách model MIỄN PHÍ trên OpenRouter, thử lần lượt từ trên xuống khi model trước bị
+# 429 (hết quota/rate limit), 402 (hết số dư) hoặc 404 (model bị gỡ). Đây là danh sách duy nhất
+# cần sửa khi OpenRouter đổi/khai tử model free - `provider_router` đọc thẳng từ đây.
+#
+# Ghi đè không cần sửa code: đặt `OPENROUTER_FREE_MODELS` trong `.env` (các tên cách nhau bằng dấu phẩy).
+OPENROUTER_FREE_MODELS: tuple[str, ...] = (
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "poolside/laguna-s-2.1:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "google/gemma-4-26b-a4b-it:free",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -37,9 +53,17 @@ class Settings(BaseSettings):
     gemini_model_name: str = "gemini-3.5-flash"
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model_name: str = "claude-haiku-4-5-20251001"
-    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
-    openrouter_model_name: str = "openai/gpt-4o-mini"
+    openrouter_api_key: str = Field(
+        default="", validation_alias=AliasChoices("OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY")
+    )
+    # Rỗng = xoay vòng trên `OPENROUTER_FREE_MODELS`. Đặt tên model ở đây thì model đó được thử
+    # TRƯỚC, danh sách free vẫn là phương án dự phòng phía sau.
+    openrouter_model_name: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_free_models: str = ",".join(OPENROUTER_FREE_MODELS)
+    # Trần số model OpenRouter được thử trong MỘT lần gọi. Có trần vì mỗi model lỗi tốn một vòng
+    # HTTP: duyệt hết danh sách khi OpenRouter đang sập sẽ treo request hàng chục giây.
+    openrouter_max_model_attempts: int = Field(default=4, ge=1, le=20)
     model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     supported_model_name: str = "Qwen/Qwen3-8B"

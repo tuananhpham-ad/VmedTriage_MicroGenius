@@ -120,6 +120,33 @@ def session_start(session_id: str, *, label: str, llm: str) -> None:
     _emit(_paint(header, _Color.BOLD + _Color.CYAN))
 
 
+def llm_attempt(
+    *,
+    provider: str,
+    model: str,
+    ok: bool,
+    latency_ms: int | None = None,
+    note: str = "",
+) -> None:
+    """In provider + MODEL của từng lần gọi LLM, cả lần thành công lẫn lần bị bỏ qua.
+
+    Không nhận `session_id` vì `provider_router` không biết phiên nào đang gọi - đổi lại, dòng này
+    nằm ngay giữa các dòng của phiên đang chạy nên vẫn đọc được theo thứ tự thời gian.
+
+    Vì sao phải in cả lần THẤT BẠI: router xoay vòng qua nhiều model free, nếu chỉ in lần cuối thì
+    không thấy được model đầu danh sách đang hết quota - triệu chứng duy nhất là latency tăng.
+    """
+    if not enabled():
+        return
+    if ok:
+        detail = f"{latency_ms}ms" if latency_ms is not None else ""
+        body = f"{provider} {_DOT} {model}" + (f" {_DOT} {detail}" if detail else "")
+        _emit(f"{_MID}   {_ARROW} {_paint('LLM  ' + body, _Color.DIM)}")
+        return
+    reason = note or "lỗi"
+    _emit(f"{_MID}   {_ARROW} {_paint(f'LLM  {provider} {_DOT} {model} {_DOT} bỏ qua: {reason}', _Color.YELLOW)}")
+
+
 def agent_question(session_id: str, question: str, *, llm_used: bool) -> None:
     if not enabled():
         return
