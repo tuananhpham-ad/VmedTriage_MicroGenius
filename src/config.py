@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     deepseek_model_name: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
     gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
-    gemini_model_name: str = "gemini-1.5-flash"
+    # Đã kiểm 2026-08-15: `gemini-1.5-flash` (default cũ) và `gemini-2.5-flash` đều trả HTTP 404 -
+    # Google đã gỡ khỏi API cho key mới. Provider gemini vì thế luôn hỏng rồi mới rơi về deepseek,
+    # tốn 2 lời gọi vứt đi mỗi lượt chat. Dùng bản có số hiệu cố định chứ KHÔNG dùng
+    # `gemini-flash-latest`: alias đó đổi model dưới chân mình, một hệ y tế cần tái lập được.
+    gemini_model_name: str = "gemini-3.5-flash"
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model_name: str = "claude-haiku-4-5-20251001"
     openrouter_api_key: str = Field(
@@ -105,6 +109,15 @@ class Settings(BaseSettings):
     default_symptom_group: str = "general"
     nurse_queue_high_priority: str = "high"
     nurse_queue_standard_priority: str = "standard"
+
+    # Agent quyết định chạy trên artifact đã train (src/graph_triage/). Mặc định TẮT: nó cần
+    # requirements-graph.txt (torch ~2.5 GB) và gọi thêm DeepSeek + OpenAI mỗi khi phiếu chốt.
+    # Kết quả CHỈ là ý kiến tham khảo thứ hai cho điều dưỡng, không bao giờ ghi vào
+    # TriageProposal.priority - ProtocolTriageEngine/RedFlagSafetyLayer vẫn quyết định duy nhất.
+    enable_graph_triage_agent: bool = False
+    graph_triage_artifact_root: str = ""
+    """Thư mục chứa `logreg_full/` và `bert_full/`. Bỏ trống thì dùng `<repo>/runs`."""
+    graph_triage_max_length: int = Field(default=256, ge=1, le=512)
 
     # MCP external tools
     mcp_call_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)

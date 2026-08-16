@@ -75,7 +75,8 @@ SPECS_BY_NAME: dict[str, ProviderSpec] = {spec.name: spec for spec in PROVIDER_S
 # Model gợi ý cho UI. KHÔNG phải danh sách đóng - người dùng vẫn gõ tay được tên model khác, vì
 # nhà cung cấp ra model mới liên tục và hardcode cứng sẽ nhanh lỗi thời.
 SUGGESTED_MODELS: dict[str, tuple[str, ...]] = {
-    "gemini": ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"),
+    # Kiểm 2026-08-15: mọi bản 1.5/2.0/2.5 đều đã bị Google gỡ (HTTP 404). Chỉ liệt kê bản còn gọi được.
+    "gemini": ("gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"),
     "deepseek": ("deepseek-chat", "deepseek-reasoner"),
     "openai": ("gpt-4o-mini", "gpt-4o"),
     "anthropic": ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-5"),
