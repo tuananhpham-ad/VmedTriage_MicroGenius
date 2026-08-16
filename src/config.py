@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     # Trần số model OpenRouter được thử trong MỘT lần gọi. Có trần vì mỗi model lỗi tốn một vòng
     # HTTP: duyệt hết danh sách khi OpenRouter đang sập sẽ treo request hàng chục giây.
     openrouter_max_model_attempts: int = Field(default=4, ge=1, le=20)
+    # Trần TỔNG cho MỘT lần gọi `provider_router.complete()`, cộng dồn mọi provider × mọi model.
+    # Cần trần riêng vì hai trần kia nhân với nhau: 3 provider × 4 model = 12 vòng HTTP nối tiếp,
+    # đủ để một request của điều dưỡng treo hàng phút khi nhà cung cấp đang sập. Trần thời gian là
+    # cái quan trọng hơn - một model timeout 30s thì đếm số lượt không cứu được gì.
+    llm_max_total_attempts: int = Field(default=6, ge=1, le=50)
+    llm_total_budget_seconds: float = Field(default=45.0, ge=5.0, le=600.0)
     model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     supported_model_name: str = "Qwen/Qwen3-8B"
