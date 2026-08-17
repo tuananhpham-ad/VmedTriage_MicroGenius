@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     supported_model_name: str = "Qwen/Qwen3-8B"
 
+    # Định tuyến model theo VAI TRÒ (`provider_router.RoleProfile`). Rỗng = dùng `llm_provider_order`
+    # chung, tức mặc định KHÔNG đổi hành vi gì. Có giá trị ngay cả khi không bao giờ có SLM: nó tách
+    # được cấu hình model của bước trích xuất khỏi bước diễn đạt câu hỏi - hai việc có yêu cầu chất
+    # lượng rất khác nhau (sai ở trích xuất là sai hồ sơ lâm sàng; sai ở diễn đạt là câu văn khô).
+    role_order_fact_extractor: str = ""
+    role_order_synthesis: str = ""
+    role_order_symptom_group_router: str = ""
+
     # Database
     database_url: str = "sqlite:///./data/app.db"
 

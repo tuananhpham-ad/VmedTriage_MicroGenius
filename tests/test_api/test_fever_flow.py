@@ -57,7 +57,7 @@ class _ScriptedProvider:
         self.known = known
         self.call_count = 0
 
-    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3):
+    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         self.call_count += 1
         system = messages[0]["content"]
         field_keys = _FIELD_KEY_RE.findall(system)
@@ -245,13 +245,18 @@ async def test_benign_case_clears_the_early_visit_scan_in_two_turns(client):
 
 @pytest.mark.asyncio
 async def test_screening_shortens_the_benign_case_without_changing_its_conclusion(client):
-    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 20 lượt là mức đo được sau khi
+    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 21 lượt là mức đo được sau khi
     thêm nhóm sàng lọc cho Stage 4 và mở lại luật dừng sớm (30 lượt trước khi có sàng lọc, 24 sau
-    vòng sàng lọc đầu tiên) - nó ở đây để một thay đổi làm hội thoại dài trở lại bị bắt ngay, chứ
-    không phải để ghim một con số chính xác."""
+    vòng sàng lọc đầu tiên, 20 sau khi mở lại luật dừng sớm) - nó ở đây để một thay đổi làm hội
+    thoại dài trở lại bị bắt ngay, chứ không phải để ghim một con số chính xác.
+
+    20 -> 21 là ĐÚNG MỘT lượt thêm có chủ đích: bước quét sót trước khi chốt (§8.6 mục 4,
+    `session.CATCH_ALL_QUESTION`). Nó là câu duy nhất bắt được triệu chứng checklist không hỏi tới,
+    và cố ý không bị cắt khi hết ngân sách. Việc mở lại luật dừng theo độ phủ (§8.5 quy tắc 2) KHÔNG
+    tốn thêm lượt nào ở ca này - đã đo."""
     body = await _drive_conversation(client, "H1")
     assert body["triage_level"] == "SELF_CARE"
-    assert body["_turns"] <= 20, body["_turns"]
+    assert body["_turns"] <= 21, body["_turns"]
     probes = [q for q in body["_questions"] if screening.PROBE_INTRO in q]
     # 2 vòng cho Stage 3A (5 nhóm, trần 3 nhóm/câu), 1 cho Stage 3B, 1 cho Stage 4.
     assert len(probes) == 4

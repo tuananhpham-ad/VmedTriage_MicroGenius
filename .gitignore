@@ -67,5 +67,7 @@ out/
 .ai-log/archive/
 
 _guidance/*
-/notebooks/
-/runs/
+# /notebooks/
+# /runs/
+.eval_run/
+eval/
