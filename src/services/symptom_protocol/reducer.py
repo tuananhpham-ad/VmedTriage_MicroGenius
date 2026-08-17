@@ -30,10 +30,11 @@ thêm giá trị thứ tư là thay đổi lan ra toàn bộ tầng luật an to
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Literal
 
-from src.services.symptom_protocol import retraction
+from src.services.symptom_protocol import flags, retraction
 from src.services.symptom_protocol.output_guard import DISEASE_NAMES
 from src.services.symptom_protocol.protocol import SymptomProtocol
 from src.services.symptom_protocol.stage_machine import NEGATED_PARENT_VALUES, is_filled
@@ -145,11 +146,22 @@ def certainty_of(value: object, evidence_span: object) -> Certainty:
     if not isinstance(evidence_span, str):
         return "inferred"
     normalized = " ".join(evidence_span.split()).casefold()
-    if normalized in _BARE_EVIDENCE:
-        return "inferred"
-    if any(name in normalized for name in DISEASE_NAMES):
+    if normalized in _BARE_EVIDENCE or mentions_disease_name(normalized):
         return "inferred"
     return "explicit"
+
+
+def mentions_disease_name(evidence_span: object) -> bool:
+    """Đoạn trích có nhắc TÊN BỆNH không - loại `inferred` NGUY HIỂM NHẤT, tách riêng khỏi
+    `certainty_of` vì nó được xử lý khác hẳn (xem `_risky_retractions`).
+
+    "Bé không sốt xuất huyết" và "bé không sốt" chỉ khác nhau ba chữ nhưng khác nhau hoàn toàn về ý:
+    một câu phủ định TÊN BỆNH, một câu phủ định TRIỆU CHỨNG. Chuỗi "sốt" nằm trong cả hai nên không
+    matcher nào phân biệt được nếu không biết danh sách tên bệnh."""
+    if not isinstance(evidence_span, str):
+        return False
+    normalized = " ".join(evidence_span.split()).casefold()
+    return any(name in normalized for name in DISEASE_NAMES)
 
 
 def events_from_values(
@@ -218,28 +230,40 @@ def _risky_retractions(
 ) -> frozenset[str]:
     """Field cha nào vừa bị phủ định bằng một đính chính CHƯA ĐỦ RÕ (§5 quy tắc 5).
 
-    Hai điều kiện phải cùng đúng, cố ý HẸP:
+    Cổng này cố ý HẸP, và độ hẹp của nó là điều quan trọng nhất trong cả module: mỗi field bị giữ lại
+    tốn của người bệnh một lượt hội thoại, mà một agent hỏi lại quá nhiều thì người bệnh bỏ giữa chừng
+    và độ phủ bằng 0 (§1 mục 5). Bản đầu chỉ kiểm `certainty == "inferred"` đã làm ca lành tính H1 dài
+    thêm một lượt: model trả JSON dạng phẳng (không `evidence_span`) nên MỌI câu "không" đều thành
+    `inferred`, kể cả lần trả lời ĐẦU TIÊN cho chính câu vừa hỏi - mà trả lời lần đầu thì không có gì
+    để rút lại.
 
-    - field nằm trong `protocol.confirm_before_retract` - tập protocol tự khai "xoá nhầm cái này thì
-      đắt". Mở rộng ra mọi field thì mỗi lời phủ định đều tốn một lượt xác nhận, và người bệnh sẽ bỏ
-      giữa chừng (§1 mục 5);
-    - `certainty == "inferred"` - đính chính rõ ràng ("à nhầm, tôi không sốt") vẫn được xoá NGAY, đúng
-      như trước. Chỉ đường mờ mới bị giữ lại."""
+    Bốn điều kiện phải cùng đúng:
+
+    1. field nằm trong `protocol.confirm_before_retract` - tập protocol tự khai "xoá nhầm cái này thì
+       đắt";
+    2. giá trị mới là phủ định và KHÁC giá trị cũ;
+    3. có field con đã điền - không có gì để mất thì việc xác nhận không bảo vệ được gì;
+    4. và đây thật sự là một ĐÍNH CHÍNH ĐÁNG NGỜ, tức một trong hai:
+       - đoạn trích nhắc TÊN BỆNH ("không sốt xuất huyết") - luôn đáng ngờ, kể cả khi người bệnh chưa
+         từng khai gì, vì nó là lỗi hiểu nhầm ngữ nghĩa chứ không phải lỗi thiếu bằng chứng;
+       - hoặc nó LẬT NGƯỢC một lời khai khẳng định trước đó (`before == "true"`) mà không trích được
+         câu nào. Lật ngược thì mới có cái để mất; trả lời lần đầu thì không."""
     guarded = protocol.confirm_before_retract
     if not guarded:
         return frozenset()
-    weak = {
+    suspicious = {
         event.field for event in events
-        if event.operation == "set" and event.certainty == "inferred"
-        and event.value in NEGATED_PARENT_VALUES
+        if event.operation == "set" and event.value in NEGATED_PARENT_VALUES
+        and (
+            mentions_disease_name(event.evidence_span)
+            or (event.certainty == "inferred" and before.get(event.field) == "true")
+        )
     }
     return frozenset(
         key for key in guarded
-        if key in weak
+        if key in suspicious
         and before.get(key) != after.get(key)
         and after.get(key) in NEGATED_PARENT_VALUES
-        # Chỉ giữ lại khi thật sự CÓ cái để mất: không field con nào đã điền thì việc xác nhận không
-        # bảo vệ được gì, mà vẫn tốn của người bệnh một lượt.
         and any(is_filled(after.get(child)) for child in protocol.field_dependencies.get(key, ()))
     )
 
@@ -266,7 +290,11 @@ def reduce(
     merged, audit = _apply_events(before, events)
     merged = _derive(protocol, merged)
 
-    held = _risky_retractions(protocol, before, merged, events) - confirmed_retractions
+    held = (
+        _risky_retractions(protocol, before, merged, events) - confirmed_retractions
+        if flags.retraction_confirmation_enabled()
+        else frozenset()
+    )
     for key in sorted(held):
         # Trả field cha về giá trị CŨ, không giữ giá trị mới rồi bỏ xoá dây chuyền. Nếu giữ, hồ sơ ở
         # trạng thái nửa vời ("không sốt" + "39 độ") và `rule_engine`/`select_protocol` của CHÍNH lượt

@@ -1,7 +1,7 @@
 """LLM extraction theo cụm + ghép hướng C/E theo stage - DÙNG CHUNG cho mọi symptom_group.
 
 Tái dùng hạ tầng đã có, không viết lại: `provider_router.complete()` +
-`intake_agent._parse_json_object()` (`src/services/agents/intake_agent.py`) để gọi LLM/bóc JSON, và
+`infra/json_output.parse_json_object()` để gọi LLM/bóc JSON, và
 kỹ thuật `_contains_any` của `semantic_mapper.py` để quét từ khoá nhẹ cho field "cơ hội".
 
 LLM ở đây CHỈ làm một việc: trích field từ free text vào đúng schema của MỘT cụm câu hỏi
@@ -21,19 +21,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-from src.services.agents.intake_agent import _parse_json_object
 from src.services.engines.semantic_mapper import _contains_any
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
+from src.services.infra.json_output import parse_json_object
 from src.services.symptom_protocol import (
     batching,
     controller,
     coverage,
     dialogue,
+    flags,
     output_guard,
     ranking,
     reducer,
-    retraction,
     rule_engine,
     screening,
     stage_machine,
@@ -512,10 +512,10 @@ def _invoke_json(
 
     latency_ms = int((time.monotonic() - started) * 1000)
     try:
-        parsed = _parse_json_object(result.text)
+        parsed = parse_json_object(result.text)
     except Exception:
         try:
-            parsed = _parse_json_object(_repair_bareword_unknown(result.text))
+            parsed = parse_json_object(_repair_bareword_unknown(result.text))
         except Exception as exc:  # JSON vẫn hỏng sau khi đã thử sửa - không phải lỗi gọi provider
             logger.warning("symptom_intake.parse_failed reason=%s", type(exc).__name__)
             return None, f"{type(exc).__name__}: {exc}", result.provider, result.model, result.text, latency_ms
@@ -681,7 +681,7 @@ def _collect_fields(
             # RÚT LẠI lời khai: người bệnh nói thông tin cũ không còn đúng nhưng chưa có giá trị thay
             # thế (§4.1). Bắt buộc có bằng chứng đúng như `set false` - không có thì hạ về
             # `no_change`, vì một lệnh xoá không chứng minh được là đường ngắn nhất để mất hồ sơ.
-            if _evidence_in_message(evidence_span, message):
+            if flags.unset_operation_enabled() and _evidence_in_message(evidence_span, message):
                 collected[key] = "unknown"
                 if events is not None:
                     events.append(reducer.FieldEvent(
@@ -942,6 +942,10 @@ def _generate_question(
     Kết quả đi qua `output_guard` TRƯỚC khi ra ngoài; fail thì rơi về `script_hint` tất định."""
     if not cluster.script_hint:
         return "", False
+    if not flags.synthesis_enabled():
+        # Công tắc ngắt (§9 P4 mục 5): phát nguyên văn `script_hint`. Đây đúng là đường mà
+        # `output_guard` rơi về khi model viết sai, nên nhánh này không phải code chưa ai chạy.
+        return cluster.script_hint, False
 
     missing = plan.missing_fields if plan is not None else missing_keys
     focus = ""
@@ -1056,7 +1060,12 @@ def _recent_fields(*sources: dict[str, TriState]) -> frozenset[str]:
 
 def _ranking_context(
     recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None,
-) -> ranking.RankingContext:
+) -> ranking.RankingContext | None:
+    if not flags.ranking_enabled():
+        # `None` là đúng đường quay lui của §8.3, không phải một nhánh mới: `select_cluster` không có
+        # tín hiệu nào để chấm thì mọi cụm hoà điểm, và hoà điểm giữ nguyên thứ tự khai báo - tức
+        # first-fit cũ. Cả hai hành vi dùng chung một đoạn code.
+        return None
     if ledger is None:
         return ranking.RankingContext(recent_fields=recent_fields)
     return ranking.RankingContext(

@@ -82,6 +82,30 @@ class Settings(BaseSettings):
     role_order_synthesis: str = ""
     role_order_symptom_group_router: str = ""
 
+    # Công tắc ngắt cho các cơ chế hội thoại thêm vào ở P2-P3 (§9 P4 mục 5). Mặc định BẬT - đây là
+    # đường quay lui, không phải nút bật tính năng.
+    #
+    # Vì sao có: mỗi cơ chế dưới đây đổi hành vi trên đường người bệnh đang đi, và cách sửa duy nhất
+    # trước đây là deploy lại. Bốn công tắc riêng chứ không phải một cờ "flow cũ": một cờ tổng thì
+    # không ai dám bật (nó tắt cả những thứ đang chạy đúng), nên trên thực tế nó không phải đường
+    # quay lui nào cả. Xem `symptom_protocol/flags.py` để biết mỗi công tắc rơi về đâu.
+    #
+    # KHÔNG có công tắc nào cho tầng an toàn: `text_safety_signals`, `common_safety/rules`,
+    # `rule_engine`, `escalation_lock`, `output_guard` và bước quét sót không được phép tắt (§8.1
+    # loại 1). Một công tắc tắt được lớp bảo vệ là một công tắc sẽ bị bật nhầm.
+    agent_ranking_enabled: bool = True
+    """Tắt ⇒ `next_cluster` quay về first-fit thuần thứ tự khai báo (§8.3). Độ phủ KHÔNG đổi: tier
+    field M0/M1 quyết độ phủ, xếp hạng chỉ quyết thứ tự."""
+    agent_synthesis_enabled: bool = True
+    """Tắt ⇒ câu hỏi phát ra nguyên văn `script_hint`, không gọi model diễn đạt. Đây cũng đúng là
+    đường mà `output_guard` rơi về khi model viết sai, nên nhánh này luôn được test sẵn."""
+    agent_retraction_confirmation_enabled: bool = True
+    """Tắt ⇒ đính chính rủi ro được áp NGAY, không hỏi xác nhận (§5 quy tắc 5). Tắt nếu cổng này hỏi
+    lại quá nhiều trong thực tế - đổi lại chấp nhận rủi ro xoá nhầm hồ sơ."""
+    agent_unset_operation_enabled: bool = True
+    """Tắt ⇒ bỏ qua `operation: "unset"` của model (§4.1), hồ sơ chỉ bị xoá qua đường phủ định field
+    cha như trước P2.4. Đây là công tắc cho cơ chế MỚI NHẤT và ít giờ chạy thật nhất."""
+
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
