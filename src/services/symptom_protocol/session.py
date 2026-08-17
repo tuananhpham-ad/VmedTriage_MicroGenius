@@ -39,6 +39,7 @@ from src.services.symptom_protocol import (
     stage_machine,
 )
 from src.services.symptom_protocol import intake_agent as agent
+from src.services.symptom_protocol import metrics as metrics_mod
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -118,6 +119,9 @@ class Session:
     asked_safety_signal_codes: set[str] = field(default_factory=set)
     """Mã đã được hỏi xác nhận bằng câu TĨNH. Mỗi mã chỉ hỏi một lần - nếu không, một phiên gặp lúc
     model chết sẽ lặp mãi cùng một câu xác nhận."""
+    metrics: metrics_mod.ConversationMetrics = field(default_factory=metrics_mod.ConversationMetrics)
+    """Bộ đếm trải nghiệm + độ phủ (§12). CHỈ đếm - không nhánh nào được đọc nó để đổi hành vi, vì
+    một chỉ số vừa đo vừa điều khiển thì không còn đo được cái gì (§8.8)."""
     ledger: coverage.CoverageLedger = field(default_factory=coverage.CoverageLedger)
     """Sổ sách độ phủ (§8.5). Xếp hạng cụm được phép HOÃN một cụm để đi theo mạch người bệnh; sổ này
     là thứ bảo đảm cụm bị hoãn vẫn được hỏi lại chứ không biến mất."""
@@ -351,6 +355,7 @@ class ProtocolSessionStore:
         if is_opening:
             return self._submit_open_message(session, cleaned, on_token=on_token)
 
+        answering_catch_all = session.awaiting_catch_all
         session.awaiting_catch_all = False
 
         session.turn_count += 1
@@ -388,6 +393,11 @@ class ProtocolSessionStore:
         )
 
         session.answers = result.answers
+        if answering_catch_all:
+            # `catch_all_yield` (§12): bước quét sót có bắt được thứ checklist không hỏi tới không.
+            # Gần 0 trên toàn tập nghĩa là HOẶC checklist đã đủ, HOẶC câu quét sót đang hỏi sai cách -
+            # hai kết luận rất khác nhau, nên con số này chỉ đọc được kèm `catch_all_asked`.
+            session.metrics.record_catch_all_answer(yielded=_extracted_anything(result.extracted))
         # Ghi nhận kết quả cụm TRƯỚC khi đổi `protocol_name`: cụm vừa hỏi thuộc protocol CŨ, ghi nó
         # dưới tên protocol mới sẽ làm cụm cùng mã của protocol mới bị coi là đã hỏi rồi.
         self._record_cluster_outcome(session, cluster, result)
@@ -704,6 +714,14 @@ class ProtocolSessionStore:
         đã được sinh cho đúng cụm đó. Bản cũ duyệt lần hai ở đây, nên khi cụm cuối stage vừa được trả
         lời thì agent trả tin nhắn rỗng còn session lại âm thầm nhảy sang cụm mới - người bệnh không
         được hỏi gì nhưng lượt sau vẫn bị trích theo schema của cụm đó."""
+        # Đếm metric TRƯỚC `ledger.record_turn`: `deferral_depth` cần số nợ TẠI THỜI ĐIỂM cụm được
+        # chọn, mà `record_turn` xoá nợ của cụm vừa được chọn ngay sau đây (§12).
+        if result.next_cluster is not None:
+            session.metrics.record_question(
+                result.next_cluster,
+                recent_fields=result.recent_fields,
+                deferral_count=session.ledger.deferral_count(result.next_cluster.id),
+            )
         # Ghi sổ TRƯỚC khi cập nhật trạng thái: cụm được chọn về 0 nợ, cụm thua điểm cộng thêm một
         # lượt chờ. Không có bước này thì xếp hạng chỉ là "hoãn", không phải "hoãn rồi hỏi lại".
         session.ledger.record_turn(
@@ -754,6 +772,7 @@ class ProtocolSessionStore:
             return False
         session.catch_all_asked = True
         session.awaiting_catch_all = True
+        session.metrics.record_catch_all_asked()
         session.current_cluster = None
         session.last_question = CATCH_ALL_QUESTION
         session.conversation.append({"role": "assistant", "content": CATCH_ALL_QUESTION})
@@ -769,8 +788,27 @@ class ProtocolSessionStore:
         session.state = SessionState.EMERGENCY if result.triage_level == "EMERGENCY" else SessionState.AWAITING_CONFIRMATION
         session.current_cluster = None
         session.last_question = ""
-        stage_log.finish(session.session_id, triage_level=result.triage_level, stop_reason=stop_reason, turns=session.turn_count)
+        # Số liệu §12 đi kèm phiên vào log: dashboard của P4.4 dựng được bằng cách đọc thư mục log
+        # chứ không cần thêm hạ tầng. Tính SAU khi `stop_reason`/`triage_level` đã chốt - đó là hai
+        # trường quyết định phiên này có nằm trong mẫu số của gate độ phủ hay không.
+        stage_log.finish(
+            session.session_id, triage_level=result.triage_level, stop_reason=stop_reason,
+            turns=session.turn_count,
+            metrics=self.metrics_summary(session.session_id),
+        )
         console_log.summary(session.session_id, "generated", percent=100)
+
+    def metrics_summary(self, session_id: str) -> dict:
+        """Bản đọc được của phiên cho §12. Chỉ ĐỌC - không đổi trạng thái gì.
+
+        Đặt trên store chứ không trên `Session` vì nó cần `protocol` để biết field nào là M0/M1, mà
+        `Session` cố ý không giữ đối tượng protocol (phiên có thể đổi protocol giữa chừng, giữ tham
+        chiếu là mời chấm hồ sơ bằng luật của protocol cũ)."""
+        session = self._require(session_id)
+        return session.metrics.summary(
+            self._protocol(session), session.answers,
+            turns=session.turn_count, stop_reason=session.stop_reason, triage_level=session.triage_level,
+        )
 
     def confirm_summary(self, session_id: str, is_correct: bool) -> Session:
         session = self._require(session_id)

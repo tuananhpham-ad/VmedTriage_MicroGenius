@@ -8,7 +8,11 @@ Thư mục này dùng để chạy evaluation cho VMedTriage sau mỗi version.
 eval/
   README.md
   scripts/
-    run_eval.py
+    run_eval.py                  # chấm nhãn trên 2 lượt gốc của golden case
+    run_conversation_eval.py     # chạy hội thoại ĐẦY ĐỦ tới khi phiên đóng
+    simulated_patient.py
+    record_baseline.py
+  baselines/                     # số liệu mốc, có ngày trong tên file
   results/
     logging/
       <version>/
@@ -81,6 +85,30 @@ Make target mặc định chạy:
 ```text
 python eval/scripts/run_eval.py
 ```
+
+## Chạy hội thoại đầy đủ (bệnh nhân mô phỏng)
+
+`run_eval.py` phát đúng **2 lượt bệnh nhân** của mỗi golden case rồi chấm. Đủ để đo nhánh ĐỎ, nhưng
+không bao giờ chạm tới lúc phiên đóng — nên mọi chỉ số về độ dài hội thoại, độ phủ khi đóng và trải
+nghiệm (§12) không có dữ liệu. `run_conversation_eval.py` lấy chính golden case làm **hồ sơ** cho một
+bệnh nhân mô phỏng rồi để nó trả lời tới cùng:
+
+```powershell
+python eval/scripts/run_conversation_eval.py --limit 10 --stratify
+```
+
+- `--stratify` lấy mẫu **đều theo `expected_triage`**. Gần như bắt buộc: `golden_cases_v1.jsonl` sắp
+  xếp theo mức, 45 ca `emergency_now` nằm liền nhau ở đầu — lấy 10 ca đầu là chỉ đo nhánh đỏ.
+- Chạy **in-process qua luồng chuẩn** (`symptom_protocol.session`), không phải `TriagePipeline`
+  legacy mà `run_eval.py --mode direct` chạy. Không cần server, nhưng cũng không đo tầng HTTP/auth.
+- Tốn API thật: mỗi ca ~15-20 lượt × 3 lời gọi (trích xuất + diễn đạt + bệnh nhân giả).
+
+**Script này KHÔNG đo triage accuracy.** Nhãn golden case gắn với 2 lượt gốc; phần hội thoại sau là do
+model bệnh nhân sinh ra trong khuôn khổ lời kể, nên một ca có thể diễn tiến hợp lý mà vẫn ra mức khác
+nhãn. Mức triage in ra là để xem **phân bố** (có chạm được `EARLY_VISIT`/`SELF_CARE` không).
+
+Bệnh nhân mô phỏng **không được biết nhãn** — nó chỉ nhận lời kể của chính người bệnh. Cho nó biết đáp
+án thì nó sẽ lái hội thoại về phía đáp án, và bài đo hoá ra đo chính cái đáp án vừa đưa vào.
 
 ## Metrics chính
 

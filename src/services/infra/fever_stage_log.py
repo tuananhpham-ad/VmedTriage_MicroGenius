@@ -334,7 +334,15 @@ def llm_io(
     return io_ref
 
 
-def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) -> None:
+def finish(
+    session_id: str, *, triage_level: str, stop_reason: str, turns: int,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """`metrics`: bản chụp §12 của phiên (`ProtocolSessionStore.metrics_summary`).
+
+    Ghi vào chính file meta của phiên thay vì một kho riêng: dashboard của §9 P4.4 dựng được bằng
+    cách đọc thư mục log, không cần thêm hạ tầng. Tuỳ chọn vì `finish` còn được gọi từ nhánh cấp cứu
+    ở `intake_agent`, nơi chưa có `Session` trong tay - thiếu số liệu tốt hơn là chặn đường escalate."""
     with _lock:
         meta = _session_meta.get(session_id)
         if meta is None:
@@ -342,6 +350,8 @@ def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) 
         meta["triage_level"] = triage_level
         meta["stop_reason"] = stop_reason
         meta["turns"] = turns
+        if metrics is not None:
+            meta["metrics"] = metrics
         meta["updated_at"] = _now()
         _write_json(_session_json_path(session_id), meta)
 
