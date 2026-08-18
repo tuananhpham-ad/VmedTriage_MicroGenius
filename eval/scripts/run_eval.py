@@ -19,6 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.services.infra import provider_router  # noqa: E402 - phải đứng sau khi vá sys.path
+
 logger = logging.getLogger("eval.run_eval")
 
 
@@ -56,6 +58,8 @@ class EvalConfig:
     base_url: str
     limit: int | None
     log_level: str
+    bearer_token: str | None
+    nurse_token: str | None
     fail_under_triage_accuracy: float | None
     fail_under_red_flag_recall: float | None
 
@@ -77,9 +81,29 @@ def parse_args() -> EvalConfig:
         "--mode",
         choices=("direct", "api"),
         default="direct",
-        help="direct calls the Python pipeline; api calls a running FastAPI server.",
+        help=(
+            "api goi POST /chat cua server dang chay - DAY LA LUONG THAT. "
+            "direct goi TriagePipeline LEGACY (khong co caller san pham), chi dung de doi chieu."
+        ),
     )
     parser.add_argument("--base-url", default="http://localhost:8000", help="FastAPI base URL for --mode api.")
+    parser.add_argument(
+        "--nurse-token",
+        default=None,
+        help=(
+            "Access token vai tro NURSE cho --mode api. Bat buoc neu muon do triage/red-flag: "
+            "endpoint benh nhan CO Y che triage_proposal va red_flags (HITL), nen cham diem tren "
+            "response cua /chat luon ra 0%%. Voi token nay, harness doc lai case qua GET /cases/{id}."
+        ),
+    )
+    parser.add_argument(
+        "--bearer-token",
+        default=None,
+        help=(
+            "Access token cho --mode api. /api/v1/chat yeu cau Bearer token ke tu khi them auth, "
+            "nen thieu tham so nay moi ca deu tra HTTP 401. Truyen chuoi token, hoac @duong/dan/file."
+        ),
+    )
     parser.add_argument("--limit", type=int, default=None, help="Evaluate only the first N cases.")
     parser.add_argument(
         "--log-level",
@@ -99,9 +123,20 @@ def parse_args() -> EvalConfig:
         base_url=args.base_url.rstrip("/"),
         limit=args.limit,
         log_level=args.log_level,
+        bearer_token=read_bearer_token(args.bearer_token),
+        nurse_token=read_bearer_token(args.nurse_token),
         fail_under_triage_accuracy=args.fail_under_triage_accuracy,
         fail_under_red_flag_recall=args.fail_under_red_flag_recall,
     )
+
+
+def read_bearer_token(raw: str | None) -> str | None:
+    """Token truyen thang, hoac `@path` de doc tu file - tranh de token nam trong lich su shell."""
+    if not raw:
+        return None
+    if raw.startswith("@"):
+        return Path(raw[1:]).read_text(encoding="utf-8").strip()
+    return raw.strip()
 
 
 def setup_logging(config: EvalConfig) -> Path:
@@ -158,9 +193,22 @@ def patient_messages(case: dict[str, Any]) -> list[str]:
 
 
 async def run_case_direct(case: dict[str, Any]) -> dict[str, Any]:
+    """CHÚ Ý: chế độ này chạy `TriagePipeline` - pipeline LEGACY, KHÔNG phải luồng đang phục vụ UI.
+
+    Luồng chuẩn là `POST /chat` -> `symptom_session` -> `symptom_protocol.session.submit_message`
+    (xem `_guidance/what_to_do_next.md` §2.2). `TriagePipeline` không có caller sản phẩm nào.
+
+    Hệ quả: **baseline của §9 P0.2 phải chạy `--mode api`**, nếu không con số thu được là của một
+    pipeline không ai dùng - và mọi so sánh "trước/sau" sau đó đều vô nghĩa.
+    """
     from src.services.case_store import InMemoryCaseStore
+
     from src.services.triage_pipeline import TriagePipeline
 
+    logger.warning(
+        "run_case_direct dung TriagePipeline LEGACY - khong phai luong /chat. "
+        "Baseline P0.2 phai chay --mode api."
+    )
     pipeline = TriagePipeline(store=InMemoryCaseStore())
     case_id: str | None = None
     triage_case: Any = None
@@ -175,7 +223,14 @@ async def run_case_direct(case: dict[str, Any]) -> dict[str, Any]:
     return triage_case.model_dump(mode="json")
 
 
-async def run_case_api(case: dict[str, Any], base_url: str) -> dict[str, Any]:
+async def run_case_api(
+    case: dict[str, Any], base_url: str, token: str | None, nurse_token: str | None = None,
+) -> dict[str, Any]:
+    """Chay het luot benh nhan, roi doc lai case bang con mat DIEU DUONG de cham diem.
+
+    Vi sao hai buoc: `_patient_chat_response` CO Y khong tra `triage_proposal`/`red_flags` cho benh
+    nhan - do la rang buoc HITL cua du an, khong phai thieu sot. Cham diem tren response benh nhan
+    se luon ra 0%% du he thong ket luan dung."""
     case_id: str | None = None
     response_payload: dict[str, Any] | None = None
 
@@ -184,23 +239,43 @@ async def run_case_api(case: dict[str, Any], base_url: str) -> dict[str, Any]:
         if case_id:
             payload["case_id"] = case_id
 
-        response_payload = await asyncio.to_thread(post_json, f"{base_url}/api/v1/chat", payload)
+        response_payload = await asyncio.to_thread(post_json, f"{base_url}/api/v1/chat", payload, token)
         case_id = response_payload["case_id"]
 
     if response_payload is None:
         raise ValueError("Case has no patient messages.")
 
+    if nurse_token and case_id:
+        nurse_view = await asyncio.to_thread(
+            get_json, f"{base_url}/api/v1/cases/{case_id}", nurse_token
+        )
+        # Giu lai `response` cua benh nhan de doc transcript khi debug; phan cham diem lay tu view
+        # dieu duong.
+        nurse_view["patient_visible_response"] = response_payload.get("response")
+        return nurse_view
+
     return response_payload
 
 
-def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def get_json(url: str, token: str | None = None) -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code} from {url}: {error_body}") from exc
+
+
+def post_json(url: str, payload: dict[str, Any], token: str | None = None) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -212,7 +287,7 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 async def run_one_case(case: dict[str, Any], config: EvalConfig) -> dict[str, Any]:
     started = time.perf_counter()
     if config.mode == "api":
-        actual = await run_case_api(case, config.base_url)
+        actual = await run_case_api(case, config.base_url, config.bearer_token, config.nurse_token)
     else:
         actual = await run_case_direct(case)
     latency_ms = (time.perf_counter() - started) * 1000
@@ -322,9 +397,16 @@ def summarize(predictions: list[dict[str, Any]], failures: list[dict[str, Any]])
         "emergency_recall": emergency_recall(predictions),
         "latency_ms": {
             "avg": round(statistics.mean(latencies), 2) if latencies else None,
+            # p50 đứng cạnh p95 vì baseline §9 P0.3 cần CẢ HAI: p95 bắt đuôi chậm, p50 nói về ca
+            # điển hình. Chỉ có p95 thì một cải thiện ở ca thường trông như không có gì.
+            "p50": percentile(latencies, 50),
             "p95": percentile(latencies, 95),
             "max": max(latencies) if latencies else None,
         },
+        # Số liệu THEO VAI TRÒ (`provider_router.RoleProfile`, §9 P1.4). Chỉ khác rỗng ở `--mode
+        # direct`: chế độ `api` gọi sang một process khác nên bộ đếm in-memory của process này không
+        # thấy gì - đó là giới hạn của cách đo, không phải lỗi.
+        "role_usage": provider_router.role_usage_snapshot(),
         "expected_priority_distribution": dict(Counter(item["expected"]["priority"] for item in predictions)),
         "actual_priority_distribution": dict(Counter(item["actual"]["priority"] for item in predictions)),
         "expected_red_flag_distribution": red_flag_distribution(predictions, "expected"),
@@ -468,6 +550,23 @@ def write_outputs(
     return run_dir
 
 
+def role_usage_table(role_usage: dict[str, Any]) -> str:
+    """Bảng latency/số lời gọi theo vai trò - dữ liệu để trả lời điều kiện tiên quyết ở §7.2."""
+    if not role_usage:
+        return "_Không có số liệu theo vai trò (chạy `--mode direct` để thu)._"
+    lines = [
+        "| Role | Calls | Failures | p50 (ms) | p95 (ms) | Providers |",
+        "|---|---:|---:|---:|---:|---|",
+    ]
+    for role, usage in sorted(role_usage.items()):
+        providers = ", ".join(f"{name}×{count}" for name, count in usage["by_provider"].items()) or "-"
+        lines.append(
+            f"| {role} | {usage['calls']} | {usage['failures']} | "
+            f"{usage['p50_ms']} | {usage['p95_ms']} | {providers} |"
+        )
+    return "\n".join(lines)
+
+
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as file:
         for row in rows:
@@ -498,7 +597,12 @@ def build_report(metadata: dict[str, Any], metrics: dict[str, Any], failures: li
         f"| Red-flag macro precision | {format_pct(metrics['red_flag_macro_precision'])} |",
         f"| Emergency recall | {format_pct(metrics['emergency_recall'])} |",
         f"| Avg latency | {metrics['latency_ms']['avg']} ms |",
+        f"| P50 latency | {metrics['latency_ms']['p50']} ms |",
         f"| P95 latency | {metrics['latency_ms']['p95']} ms |",
+        "",
+        "## Per-Role LLM Usage",
+        "",
+        role_usage_table(metrics.get("role_usage") or {}),
         "",
         "## Priority Distribution",
         "",
@@ -700,6 +804,7 @@ async def main() -> None:
     print(f"Evaluation complete: {run_dir}")
     print(f"Cases: {metrics['total_cases']} passed runner, {metrics['failed_runs']} failed runner")
     print(f"Triage accuracy: {format_pct(metrics['triage_accuracy'])}")
+    print(f"Latency p50/p95: {metrics['latency_ms']['p50']} / {metrics['latency_ms']['p95']} ms")
     print(f"Red-flag macro recall: {format_pct(metrics['red_flag_macro_recall'])}")
     print(f"Report: {run_dir / 'report.md'}")
     print(f"Log: {log_path}")

@@ -15,7 +15,7 @@ class _EchoExtractor:
     def __init__(self, extracted: dict[str, tuple[object, str]]) -> None:
         self.extracted = extracted
 
-    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3):
+    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         system = messages[0]["content"]
         # Khớp cụm BẤT BIẾN giữa hai biến thể prompt: lượt hỏi lẻ ghi "Ý CẦN HỎI", lượt hỏi gộp
         # ghi "3 Ý CẦN HỎI" (`intake_agent._batch_scope`).
@@ -225,7 +225,7 @@ async def test_chat_stream_emits_status_tokens_then_the_same_body_as_chat(
     của `/chat`, nên lệch một field là một nhánh xử lý riêng phải viết thêm ở frontend."""
     scripted_llm({"fever_reported": ("true", "sốt")})
 
-    def fake_stream(messages, *, temperature=None, max_attempts=3, credential=None):
+    def fake_stream(messages, *, temperature=None, max_attempts=3, credential=None, role=None):
         yield "Dạ cho "
         yield "em hỏi thêm ạ?"
 

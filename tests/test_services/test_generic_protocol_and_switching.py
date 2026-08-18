@@ -35,7 +35,7 @@ def _fake_llm(monkeypatch, extracted: dict[str, tuple[object, str]] | None = Non
     `"false"` không có trích dẫn sẽ bị loại - đúng như thiết kế."""
     payload = extracted or {}
 
-    def complete(messages, *, credential=None, temperature=None, max_attempts=3):
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         system = messages[0]["content"]
         if "Hãy diễn đạt lại Ý CẦN HỎI" in system:
             return provider_router.CompletionResult(text="Dạ cho em hỏi thêm ạ?", provider="fake", model="fake")
