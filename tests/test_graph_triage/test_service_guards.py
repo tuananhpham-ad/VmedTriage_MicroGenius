@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.graph_triage import service
 from src.models.schemas import HandoffSummary, SummaryField, TriageCase
 
@@ -38,8 +38,14 @@ def _ready_case() -> TriageCase:
     )
 
 
-def test_disabled_by_default():
-    assert get_settings().enable_graph_triage_agent is False
+def test_disabled_by_default(monkeypatch):
+    """Mặc định của MÃ NGUỒN phải là tắt.
+
+    Kiểm trên `Settings.model_fields` chứ không trên `get_settings()`: `get_settings()` đọc `.env`
+    của máy đang chạy, nên khi lập trình viên bật cờ để thử tay thì test sẽ đỏ oan.
+    """
+    assert Settings.model_fields["enable_graph_triage_agent"].default is False
+    monkeypatch.setattr(get_settings(), "enable_graph_triage_agent", False)
     assert service.decide_for_case(_ready_case()) is None
 
 

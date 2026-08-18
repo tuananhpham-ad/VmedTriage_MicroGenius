@@ -153,16 +153,27 @@ def main() -> None:
     # uvicorn chỉ cấu hình logger của chính nó, logger khác rơi về root (mặc định WARNING) nên mọi
     # dòng `graph_triage.*` biến mất. Cấu hình root ở đây để xem được trên terminal.
     debug = "--debug" in sys.argv
+    # `--no-seed`: chỉ mở server, không dựng ca demo. Dùng khi muốn TỰ CHAT trên giao diện rồi
+    # xem log chạy trên terminal - không tốn lời gọi API nào trước khi bạn bắt đầu gõ.
+    no_seed = "--no-seed" in sys.argv
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s | %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("vmedtriage.graph_triage").setLevel(logging.DEBUG if debug else logging.INFO)
     # httpx log từng lời gọi DeepSeek/OpenAI - hữu ích để thấy đúng bao nhiêu request đã đi ra.
     logging.getLogger("httpx").setLevel(logging.INFO if debug else logging.WARNING)
     if debug:
         print(">> chế độ --debug: in cả xác suất từng model, evidence graph và phiếu tóm tắt gửi đi\n")
-    seed()
+    settings = get_settings()
+    if not settings.enable_graph_triage_agent:
+        print("!! ENABLE_GRAPH_TRIAGE_AGENT đang tắt -> bật cho tiến trình này.")
+        settings.enable_graph_triage_agent = True
+    if no_seed:
+        print(">> --no-seed: không dựng ca demo, tự chat trên giao diện.")
+    else:
+        seed()
     print("\n" + "=" * 72)
-    print("Mở http://localhost:8000  ->  đăng nhập  nurse0 / nurse0  ->  hàng đợi  ->  mở một ca")
-    print("Khối cần xem: 'Ý kiến tham khảo từ mô hình', nằm ngay dưới cảnh báo dấu hiệu nguy hiểm.")
+    print("Mở http://localhost:8000")
+    print("  bệnh nhân : user0 / user0    - chat để tạo ca mới, log chạy trên terminal này")
+    print("  điều dưỡng: nurse0 / nurse0  - hàng đợi -> mở ca -> khối 'Ý kiến tham khảo từ mô hình'")
     print("Chưa có tài khoản? Ctrl+C rồi chạy: python -m scripts.seed_demo_users")
     print("=" * 72 + "\n")
     # reload=False bắt buộc: reload dùng tiến trình con, case_store vừa seed sẽ không đi theo.
