@@ -19,7 +19,7 @@ from src import paths
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.engines.generic_protocol import GENERIC_PROTOCOL
 from src.services.infra import provider_router
-from src.services.symptom_protocol import registry, rule_engine, stage_machine
+from src.services.symptom_protocol import batching, registry, rule_engine, stage_machine
 from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase, SessionState
 
 
@@ -35,7 +35,7 @@ def _fake_llm(monkeypatch, extracted: dict[str, tuple[object, str]] | None = Non
     `"false"` không có trích dẫn sẽ bị loại - đúng như thiết kế."""
     payload = extracted or {}
 
-    def complete(messages, *, credential=None, temperature=None, max_attempts=3):
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         system = messages[0]["content"]
         if "Hãy diễn đạt lại Ý CẦN HỎI" in system:
             return provider_router.CompletionResult(text="Dạ cho em hỏi thêm ạ?", provider="fake", model="fake")
@@ -52,9 +52,13 @@ def _fake_llm(monkeypatch, extracted: dict[str, tuple[object, str]] | None = Non
 # --- protocol generic: hợp đồng HẸP --------------------------------------------------------------
 
 
-def test_generic_protocol_never_concludes_self_care():
-    """Hệ quả CÓ Ý THỨC: protocol này chỉ quét được tập dấu hiệu phổ quát, nó không có căn cứ nào để
-    nói "cứ ở nhà". Không tuyên bố an toàn là điều đúng duy nhất làm được."""
+def test_blanket_false_answers_do_not_unlock_self_care():
+    """Gán "false" cho MỌI field không mở được đường "tự theo dõi".
+
+    Trước đây protocol này không bao giờ kết luận mức nhẹ nhất (`never_self_care`). Giờ nó kết luận
+    được, nên bất biến cần canh đã đổi: checklist phải đòi những giá trị CỤ THỂ (mức khó chịu là một
+    con số, diễn tiến là better/same, tri giác là "alert") chứ không chấp nhận một biển "false" quét
+    đều - đó là hình dạng của một hồ sơ chưa ai hỏi, không phải của một ca nhẹ."""
     spotless = {key: "false" for key in GENERIC_PROTOCOL.fields_by_key}
     assert GENERIC_PROTOCOL.self_care_checklist_satisfied(spotless) is False
     assert rule_engine.evaluate(GENERIC_PROTOCOL, spotless).triage_level == "EARLY_VISIT"
@@ -227,7 +231,15 @@ def test_session_switches_from_fever_to_generic_when_the_claim_is_retracted(monk
 
     assert session.protocol_name == GENERIC_PROTOCOL.name
     assert session.current_cluster is not None
-    assert session.current_cluster.id in {c.id for c in GENERIC_PROTOCOL.clusters}
+    # Cụm kế tiếp phải THUỘC generic - đây là điều test canh: không được sót lại cụm của fever. Cụm
+    # có thể là một GÓI (`batching`) gồm 2-3 cụm generic, nên kiểm theo cụm thành phần.
+    generic_ids = {cluster.id for cluster in GENERIC_PROTOCOL.clusters}
+    asked_ids = (
+        set(batching._components_of(session.current_cluster.id))
+        if batching.is_batch(session.current_cluster)
+        else {session.current_cluster.id}
+    )
+    assert asked_ids and asked_ids <= generic_ids
     assert session.last_question  # vẫn phải có câu hỏi, không được trả tin nhắn rỗng
     # Phần đặc điểm sốt đã bị xoá khỏi hồ sơ (`retraction.apply_retraction`), không còn gửi cho
     # điều dưỡng như một sự thật.
@@ -299,3 +311,80 @@ def test_pinned_session_never_switches_protocol_even_when_fever_is_denied(monkey
 
     assert session.protocol_name == FEVER_PROTOCOL.name
     assert session.answers.get("fever_reported") == "false"
+
+
+# --- "tự theo dõi" cho protocol phổ quát ---------------------------------------------------------
+
+
+SAFE_GENERIC_CASE = {
+    "age_value": "30", "age_unit": "year", "sex": "female", "reporter_type": "self",
+    "consciousness_level": "alert", "feeding_intake": "normal", "urine_output": "normal",
+    "complaint_severity": "2", "complaint_progression": "better",
+    "is_pregnant": "false", "postpartum_6w": "false", "immunocompromised": "false",
+    "recent_surgery_30d": "false", "chronic_conditions": "none",
+    "caregiver_available": "true", "can_return_for_followup": "true",
+}
+
+
+def test_generic_can_now_conclude_self_care_for_a_clearly_benign_case():
+    """Trước đây `never_self_care` khiến MỌI than phiền ngoài sốt ra "khám sớm", kể cả ca nhẹ rõ ràng."""
+    assert GENERIC_PROTOCOL.self_care_checklist_satisfied(dict(SAFE_GENERIC_CASE)) is True
+
+    result = rule_engine.evaluate(GENERIC_PROTOCOL, dict(SAFE_GENERIC_CASE))
+
+    assert result.triage_level == "SELF_CARE"
+
+
+def test_unanswered_field_is_not_treated_as_safe():
+    """"Chưa hỏi" KHÔNG phải "không có" (P0-6). Đây là bất biến quan trọng nhất của checklist này -
+    nếu bỏ, một phiên dừng sớm sẽ tuyên bố an toàn dựa trên các ô còn trống."""
+    for key in ("complaint_severity", "urine_output", "can_return_for_followup", "chronic_conditions"):
+        answers = dict(SAFE_GENERIC_CASE)
+        answers[key] = "unknown"
+
+        assert GENERIC_PROTOCOL.self_care_checklist_satisfied(answers) is False, key
+
+
+def test_risk_context_blocks_self_care_even_when_everything_else_is_green():
+    """Đúng ca mà việc mở self_care cho generic có thể làm hỏng: mọi dấu hiệu đều âm tính nhưng người
+    bệnh đang mang thai / suy giảm miễn dịch / rất cao tuổi."""
+    for key, value in (
+        ("is_pregnant", "true"),
+        ("immunocompromised", "true"),
+        ("recent_surgery_30d", "true"),
+        ("age_value", "80"),
+    ):
+        answers = dict(SAFE_GENERIC_CASE)
+        answers[key] = value
+
+        assert GENERIC_PROTOCOL.self_care_checklist_satisfied(answers) is False, key
+
+
+def test_high_discomfort_blocks_self_care():
+    """Protocol phổ quát không biết nguyên nhân than phiền, nên mức khó chịu cao là lý do đủ để
+    chuyển cho điều dưỡng xem."""
+    answers = dict(SAFE_GENERIC_CASE, complaint_severity="7")
+
+    assert GENERIC_PROTOCOL.self_care_checklist_satisfied(answers) is False
+
+
+def test_worsening_complaint_blocks_self_care():
+    answers = dict(SAFE_GENERIC_CASE, complaint_progression="worse")
+
+    assert GENERIC_PROTOCOL.self_care_checklist_satisfied(answers) is False
+
+
+def test_any_universal_red_flag_still_wins_over_the_self_care_checklist():
+    """Thứ tự không đổi: chốt đỏ đứng trên mọi thứ."""
+    answers = dict(SAFE_GENERIC_CASE, seizure_occurred="true")
+
+    assert GENERIC_PROTOCOL.self_care_checklist_satisfied(answers) is False
+    assert rule_engine.evaluate(GENERIC_PROTOCOL, answers).triage_level == "EMERGENCY"
+
+
+def test_self_care_conclusion_is_traceable_to_the_universal_checklist():
+    """Mã `R-S-02` phân biệt với `R-S-01` của fever - đọc phiếu bàn giao phải biết kết luận này đến
+    từ checklist phổ quát, không phải từ một tài liệu lâm sàng riêng."""
+    result = rule_engine.evaluate(GENERIC_PROTOCOL, dict(SAFE_GENERIC_CASE))
+
+    assert result.triggered_rules == ("R-S-02",)

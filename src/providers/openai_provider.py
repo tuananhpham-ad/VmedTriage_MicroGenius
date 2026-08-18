@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from typing import Any
 
 from src.config import get_settings
@@ -58,8 +59,46 @@ class OpenAIProvider:
 
         resp = client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
+
         calls: list[ToolCall] = []
         for call in msg.tool_calls or []:
             args = json.loads(call.function.arguments or "{}")
             calls.append(ToolCall(name=call.function.name, args=args))
         return ModelResponse(text=msg.content, tool_calls=calls, raw=resp)
+
+    def complete_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+    ) -> Iterator[str]:
+        """Trả text theo từng mẩu ngay khi model sinh ra, thay vì đợi trọn câu trả lời.
+
+        CỐ Ý không nhận `tools`/`tool_choice`: đường streaming chỉ phục vụ bước diễn đạt câu hỏi cho
+        người bệnh - thứ duy nhất được hiển thị dần. Trích xuất field vẫn đi qua `complete()` vì nó
+        trả JSON, mà JSON dở dang thì không parse được, streaming không giúp gì.
+
+        DeepSeek và OpenRouter kế thừa nguyên hàm này: cả ba đều là Chat Completions của OpenAI.
+        """
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("Install live provider dependency first: pip install openai") from exc
+
+        api_key = self.api_key or os.getenv(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"Missing API key env var: {self.api_key_env}")
+
+        client = OpenAI(api_key=api_key, base_url=self.base_url)
+        stream = client.chat.completions.create(
+            model=model or self.default_model,
+            messages=messages,
+            temperature=temperature,
+            stream=True,
+        )
+        for chunk in stream:
+            for choice in chunk.choices or []:
+                piece = getattr(choice.delta, "content", None)
+                if piece:
+                    yield piece

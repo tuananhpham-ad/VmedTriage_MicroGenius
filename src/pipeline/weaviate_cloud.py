@@ -38,7 +38,8 @@ def _load_ml_deps() -> None:
     if SentenceTransformer is not None:
         return
     import numpy as _np
-    from sentence_transformers import CrossEncoder as _CrossEncoder, SentenceTransformer as _SentenceTransformer
+    from sentence_transformers import CrossEncoder as _CrossEncoder
+    from sentence_transformers import SentenceTransformer as _SentenceTransformer
     from underthesea import word_tokenize as _word_tokenize
 
     np = _np

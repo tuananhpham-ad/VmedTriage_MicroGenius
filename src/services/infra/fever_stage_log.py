@@ -2,12 +2,12 @@
 `logs/<namespace>/<session_id>/` - `namespace` mặc định `"fever"` nhưng bất kỳ symptom_group nào cắm
 vào engine chung đều tự có thư mục log riêng (truyền `namespace=` cho `start()`).
 
-Khác `session_log.py` (một file JSON ghi đè cho toàn phiên `disease_session`), module này phục vụ các
-agent hội thoại theo cụm câu hỏi (xem `_guidance/fever-detect-agent-task.md` §5 - lúc đầu viết riêng
-cho fever, sau tách chung khi thêm symptom_group thứ 2): mỗi lượt người dùng nhắn sinh ra một chuỗi
+Module này phục vụ các agent hội thoại theo cụm câu hỏi (xem `_guidance/fever-detect-agent-task.md`
+§5 - lúc đầu viết riêng cho fever, sau tách chung khi thêm symptom_group thứ 2): mỗi lượt người dùng
+nhắn sinh ra một chuỗi
 step - user nói gì, hệ thống `retrieve` cụm/field nào, gọi tool nào với input/output gì, gọi LLM với
 prompt/response gì, rule engine quyết định gì, agent trả lời gì. Ghi APPEND (JSONL) thay vì ghi đè cả
-file như `session_log.py`, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem đúng thứ
+file, vì log ở đây được đọc theo kiểu "đếm dòng / grep một stage / xem đúng thứ
 tự step" ngay cả khi phiên đang chạy dở, và mỗi dòng là JSON độc lập nên process chết giữa chừng chỉ
 mất đúng dòng cuối.
 
@@ -334,7 +334,15 @@ def llm_io(
     return io_ref
 
 
-def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) -> None:
+def finish(
+    session_id: str, *, triage_level: str, stop_reason: str, turns: int,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """`metrics`: bản chụp §12 của phiên (`ProtocolSessionStore.metrics_summary`).
+
+    Ghi vào chính file meta của phiên thay vì một kho riêng: dashboard của §9 P4.4 dựng được bằng
+    cách đọc thư mục log, không cần thêm hạ tầng. Tuỳ chọn vì `finish` còn được gọi từ nhánh cấp cứu
+    ở `intake_agent`, nơi chưa có `Session` trong tay - thiếu số liệu tốt hơn là chặn đường escalate."""
     with _lock:
         meta = _session_meta.get(session_id)
         if meta is None:
@@ -342,6 +350,8 @@ def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) 
         meta["triage_level"] = triage_level
         meta["stop_reason"] = stop_reason
         meta["turns"] = turns
+        if metrics is not None:
+            meta["metrics"] = metrics
         meta["updated_at"] = _now()
         _write_json(_session_json_path(session_id), meta)
 

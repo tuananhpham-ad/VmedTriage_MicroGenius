@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api, ApiError, apiStream } from "../api.js";
 import { accountMenu, bindAccountMenu } from "./account.js?v=settings-full-20260813";
 import { setActiveCase, state } from "../state.js";
 import { escapeHtml, logo, shortCaseId, showToast, statusClass, statusLabels, symptomGroupLabels } from "../shared.js";
@@ -55,7 +55,11 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
 export function renderPatientChat(root, { navigate, logout }) {
   const current = state.currentPatientCase;
   const messages = state.patientMessages.length ? state.patientMessages : initialMessages(current);
-  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit">Gửi</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
+  // `state.patientBusy` trước đây chỉ dùng để chặn double-submit bên trong `submitMessage`, không hề
+  // đi vào markup - nên ô nhập và nút Gửi vẫn bấm được trong lúc chờ, người dùng gõ tiếp mà không
+  // hiểu vì sao không có gì xảy ra. Đưa vào markup để trạng thái chờ có đúng MỘT nguồn sự thật.
+  const busyAttr = state.patientBusy ? " disabled" : "";
+  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"${busyAttr}></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit"${busyAttr}>${state.patientBusy ? "Đang gửi…" : "Gửi"}</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
   root.querySelector("[data-home]").addEventListener("click", () => navigate("patient-home"));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
   root.querySelectorAll("[data-symptom]").forEach((button) => button.addEventListener("click", () => { root.querySelector("#patient-message").value = button.dataset.symptom; root.querySelector("#patient-message").focus(); }));
@@ -63,7 +67,9 @@ export function renderPatientChat(root, { navigate, logout }) {
   root.querySelector("[data-check-result]")?.addEventListener("click", () => checkResult(root, { navigate, logout }));
   root.querySelectorAll("[data-confirm]").forEach((button) => button.addEventListener("click", () => confirmSummary(root, { navigate, logout }, button.dataset.confirm === "yes")));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
-  root.querySelector("#patient-message").focus();
+  // Không focus khi đang khoá: focus vào ô disabled là no-op ở mọi trình duyệt, nhưng gọi nó
+  // vẫn kéo màn hình về composer trên mobile giữa lúc người dùng đang đọc câu trả lời.
+  if (!state.patientBusy) root.querySelector("#patient-message").focus();
   scrollChat(root);
 }
 
@@ -72,7 +78,14 @@ function initialMessages(current) {
   return [{ role: "agent", text: "Xin chào, bạn hãy mô tả tự do triệu chứng bạn đang gặp phải." }];
 }
 
-function messageMarkup(message) { return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`; }
+function messageMarkup(message) {
+  // Bong bóng "đang xử lý" là thông báo trạng thái, không phải lời thoại: `role="status"` +
+  // `aria-live` để trình đọc màn hình đọc lên, còn ba chấm là trang trí nên `aria-hidden`.
+  if (message.role === "pending") {
+    return `<div class="chat-message is-pending" role="status" aria-live="polite"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(message.text)}</span></div>`;
+  }
+  return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`;
+}
 
 // Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`,
 // `intakeChecklistMarkup`) ngày 2026-08-14, đúng đích đến ghi trong ghi chú 2026-08-13. Nó phơi ra
@@ -115,6 +128,47 @@ function outcomeMarkup(current) {
   return `<section class="patient-outcome ${emergency ? "is-emergency" : ""}"><div><p class="eyebrow">${statusLabels[status] || "Đang xử lý"}</p><h2>${heading}</h2><p>${escapeHtml(body)}</p></div><div class="action-row">${!approved && !emergency ? '<button class="secondary-button" type="button" data-check-result>Kiểm tra kết quả</button>' : ""}<button class="link-button" type="button" data-new-case>Bắt đầu ca mới</button></div></section>`;
 }
 
+/**
+ * Chạy một lượt chat qua `/api/v1/chat/stream` và vẽ câu trả lời dần ra màn hình.
+ *
+ * Rơi về `POST /api/v1/chat` khi stream không dùng được (proxy chặn `text/event-stream`, trình duyệt
+ * cũ không có `ReadableStream`). Đây là fallback THẬT chứ không phải phòng hờ: mất streaming chỉ là
+ * mất một cải thiện cảm nhận, còn mất lượt chat là mất tính năng.
+ */
+async function streamChatTurn(message, root, context) {
+  const body = JSON.stringify({ message, ...(state.caseId ? { case_id: state.caseId } : {}) });
+  let done = null;
+  let failed = null;
+  let text = "";
+
+  const paint = () => {
+    // Thay bong bóng "đang xử lý" bằng phần văn bản đã nhận được - đây chính là điểm khác biệt người
+    // dùng cảm nhận được: chữ hiện dần thay vì màn hình đứng im vài giây.
+    state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending" && item.role !== "streaming");
+    state.patientMessages.push({ role: "streaming", text });
+    renderPatientChat(root, context);
+  };
+
+  try {
+    await apiStream("/api/v1/chat/stream", {
+      body,
+      onEvent: (event, data) => {
+        if (event === "token") { text += data; paint(); }
+        else if (event === "done") done = data;
+        else if (event === "error") failed = data;
+      },
+    });
+  } catch (problem) {
+    if (problem.status === 401 || problem.status === 403) throw problem;
+    return api("/api/v1/chat", { method: "POST", body });
+  }
+
+  if (failed) throw new ApiError(failed.detail || "Không xử lý được tin nhắn.", failed.status || 500);
+  // Stream kết thúc mà không có `done`: kết nối đứt giữa chừng. Hỏi lại bằng đường thường thay vì
+  // hiển thị nửa câu như thể đó là câu trả lời hoàn chỉnh.
+  return done ?? api("/api/v1/chat", { method: "POST", body });
+}
+
 async function submitMessage(event, root, context) {
   event.preventDefault();
   if (state.patientBusy) return;
@@ -129,16 +183,16 @@ async function submitMessage(event, root, context) {
   state.patientBusy = true;
   renderPatientChat(root, context);
   try {
-    const data = await api("/api/v1/chat", { method: "POST", body: JSON.stringify({ message, ...(state.caseId ? { case_id: state.caseId } : {}) }) });
+    const data = await streamChatTurn(message, root, context);
     setActiveCase(data.case_id);
     // `/chat` chỉ trả câu trả lời + trạng thái. Lấy thêm case đầy đủ để cột bên phải hiện đúng tiến
     // độ (`summary_fields`) - request này KHÔNG gọi LLM nên không làm chậm lượt chat đáng kể. Lỗi ở
     // đây không được làm hỏng lượt chat, nên fallback về chính response của `/chat`.
     state.currentPatientCase = await api(`/api/v1/cases/${data.case_id}`).catch(() => data);
-    state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending");
+    state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending" && item.role !== "streaming");
     state.patientMessages.push({ role: "agent", text: data.response || "Thông tin đã được ghi nhận." });
   } catch (problem) {
-    state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending");
+    state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending" && item.role !== "streaming");
     state.patientMessages.push({ role: "error", text: problem.message || "Không thể gửi thông tin. Vui lòng thử lại." });
   } finally {
     state.patientBusy = false;

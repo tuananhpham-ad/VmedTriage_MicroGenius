@@ -10,8 +10,7 @@ class FeverMessageRequest(BaseModel):
 
 
 class FeverCredentialRequest(BaseModel):
-    """Giống `IntakeCredentialRequest` (`src/models/intake_api.py`) - API key riêng của người test,
-    chỉ giữ in-memory theo phiên, không ghi log/không trả lại nguyên văn."""
+    """API key riêng của người test, chỉ giữ in-memory theo phiên, không ghi log/không trả lại nguyên văn."""
 
     provider: str | None = Field(default=None, max_length=32)
     api_key: str | None = Field(default=None, max_length=512)

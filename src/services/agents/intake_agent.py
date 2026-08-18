@@ -14,9 +14,7 @@ Ranh giới an toàn (giữ đúng nguyên tắc đã chốt ở _guidance/vmedt
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -29,6 +27,7 @@ from src.services.checklists.intake_checklist import (
 )
 from src.services.engines.red_flag_text_rules import detect_text_red_flags
 from src.services.infra import provider_router
+from src.services.infra.json_output import parse_json_object
 
 logger = logging.getLogger("vmedtriage.intake")
 
@@ -113,23 +112,9 @@ def scan_red_flags(*texts: str) -> list[RedFlagHit]:
 
 # --- LLM helpers -----------------------------------------------------------------------------
 
-_JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def _parse_json_object(raw: str) -> dict:
-    """Bóc JSON object khỏi output LLM (chịu được ```json fence và chữ thừa xung quanh)."""
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        match = _JSON_BLOCK_RE.search(cleaned)
-        if not match:
-            raise
-        parsed = json.loads(match.group(0))
-    return parsed if isinstance(parsed, dict) else {}
+# Định nghĩa đã dời sang `infra/json_output.py` (§9 P5 mục 2): luồng chuẩn từng phải import ngược vào
+# đây, khiến agent CŨ này không xoá được. Bí danh giữ lại để không phải sửa module sắp bị khai tử.
+_parse_json_object = parse_json_object
 
 
 # --- Extraction ------------------------------------------------------------------------------
@@ -338,7 +323,7 @@ intake_agent = IntakeAgent()
 
 @dataclass(slots=True)
 class TurnResult:
-    """Kết quả một lượt hỏi-đáp, dùng bởi intake_session."""
+    """Kết quả một lượt hỏi-đáp."""
 
     extracted: dict[str, str] = field(default_factory=dict)
     red_flags: list[RedFlagHit] = field(default_factory=list)

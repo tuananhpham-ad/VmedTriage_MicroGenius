@@ -4,15 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routers.cases import router as cases_router
 from src.api.routers.fever_intake import router as fever_intake_router
-from src.api.routers.intake import router as intake_router
-from src.api.routers.queue import router as queue_router
 from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
 from src.middleware.auth import RoleAuthorizationMiddleware
+from src.services.infra import provider_router
 from src.ui.static_files import build_demo_static_app
 
 
@@ -57,6 +55,9 @@ async def lifespan(app: FastAPI):
     configure_database(settings.database_url)
     create_tables()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    # In cấu hình LLM ngay lúc khởi động: sai model/thiếu key là lỗi cấu hình hay gặp nhất, và triệu
+    # chứng của nó (agent trả lời bằng câu mẫu) rất giống lỗi logic nếu không thấy dòng này.
+    print(f"LLM: {provider_router.describe_selection()}")
     yield
     dispose_database()
     print("Shutting down...")
@@ -79,11 +80,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Luồng bệnh nhân khai triệu chứng là POST /chat (trong `router`) - xem docstring `routes.chat`.
+# `cases_router` (POST /cases, POST /cases/{id}/responses) và `intake_router` (/intake/*) đã bị gỡ
+# ngày 2026-08-16: cả hai chạy pipeline rule-based cũ / luồng demo, không frontend hay test nào gọi.
 app.include_router(router, prefix="/api/v1")
-app.include_router(cases_router, prefix="/api/v1")
-app.include_router(queue_router, prefix="/api/v1")
 app.include_router(result_router, prefix="/api/v1")
-app.include_router(intake_router, prefix="/api/v1")
 app.include_router(fever_intake_router, prefix="/api/v1")
 
 

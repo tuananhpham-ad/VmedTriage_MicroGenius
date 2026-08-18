@@ -350,6 +350,86 @@ def default_early_visit_rule(_a: dict[str, object]) -> RuleMatch:
     return RuleMatch("R-G-02", (), "EARLY_VISIT", "within_24h")
 
 
+BASELINE_SELF_CARE_MAX_SEVERITY = 4.0
+"""Trần mức khó chịu (thang 0-10) còn được phép kết luận "tự theo dõi" khi KHÔNG có protocol chuyên
+biệt. Cố ý thấp: đây là ngưỡng cho một protocol chỉ quét được dấu hiệu PHỔ QUÁT, không biết gì về
+nguyên nhân của than phiền cụ thể. 5-10 điểm là mức người bệnh tự thấy đáng lo - với hiểu biết ở mức
+này, câu trả lời đúng là để điều dưỡng xem."""
+
+
+def baseline_self_care_satisfied(answers: dict[str, object]) -> bool:
+    """Checklist "tự theo dõi" chỉ dùng field PHỔ QUÁT - không đọc field của bệnh nào cả.
+
+    Dành cho protocol không có tài liệu lâm sàng riêng (`generic`). Nó KHẮT KHE HƠN checklist của
+    fever một cách có chủ ý, và đây là chỗ mang phán đoán an toàn nên đọc kỹ trước khi nới:
+
+    - fever biết mình đang nói về bệnh gì nên đọc được các dấu hiệu đặc thù (thời gian sốt, đáp ứng
+      hạ sốt). Protocol phổ quát không có gì tương đương, nên phải bù bằng những điều kiện chặt hơn:
+      KHÔNG có bối cảnh nguy cơ nào, và mức khó chịu phải thấp.
+    - Mọi field còn `unknown` đều làm hàm trả `False`. Đây là điểm khác biệt quan trọng nhất so với
+      "không tìm thấy dấu hiệu nguy hiểm": chưa hỏi KHÔNG phải là an toàn (P0-6).
+
+    Trước đây `generic` không bao giờ kết luận được mức nhẹ nhất (`never_self_care`), nên MỌI than
+    phiền ngoài sốt đều vào hàng đợi điều dưỡng ở mức "Khám sớm" - kể cả một vết xước tay. Ràng buộc
+    HITL không đổi: kết quả vẫn là ĐỀ XUẤT và vẫn cần điều dưỡng duyệt.
+    """
+    if has_emergency_signal(answers):
+        return False
+    if answers.get("consciousness_level") != "alert":
+        return False
+    if answers.get("feeding_intake") not in ("normal", "reduced"):
+        return False
+    if answers.get("urine_output") != "normal":
+        return False
+    if answers.get("complaint_progression") not in ("better", "same"):
+        return False
+
+    severity = as_float(answers.get("complaint_severity"))
+    if severity is None or severity > BASELINE_SELF_CARE_MAX_SEVERITY:
+        return False
+
+    if _has_any_risk_context(answers) or not _risk_context_is_answered(answers):
+        return False
+
+    age_months = age_in_months(answers)
+    if age_months is None or age_months < 6:
+        return False
+    self_sufficient_adult = age_months >= 16 * 12 and answers.get("reporter_type") == "self"
+    if not (is_true(answers.get("caregiver_available")) or self_sufficient_adult):
+        return False
+    return bool(is_true(answers.get("can_return_for_followup")))
+
+
+RISK_CONTEXT_FIELDS: tuple[str, ...] = (
+    "is_pregnant", "postpartum_6w", "immunocompromised", "recent_surgery_30d", "chronic_conditions",
+)
+
+
+def _risk_context_is_answered(a: dict[str, object]) -> bool:
+    """Mọi field bối cảnh nguy cơ phải CÓ câu trả lời xác định.
+
+    `_has_any_risk_context` một mình không đủ: nó chỉ hỏi "có dương tính nào không", nên một hồ sơ
+    chưa từng hỏi tới thai sản cũng trả `False` và lọt qua như thể đã loại trừ. Với protocol phổ quát
+    - vốn không biết gì về nguyên nhân than phiền - bối cảnh nguy cơ là thứ duy nhất còn phân biệt
+    được "nhẹ" với "nhẹ bề ngoài", nên nó phải được HỎI chứ không được suy ra từ im lặng."""
+    return all(a.get(key) not in (None, "", "unknown") for key in RISK_CONTEXT_FIELDS)
+
+
+def _has_any_risk_context(a: dict[str, object]) -> bool:
+    """Bối cảnh nguy cơ phổ quát. `unknown` KHÔNG tính là "không có" - nó chỉ chặn `self_care` qua
+    việc các field này còn trống, không tự nâng mức (nâng mức là việc của `EARLY_VISIT_RULES`)."""
+    age_months = age_in_months(a)
+    if age_months is not None and (age_months < 3 or age_months >= 75 * 12):
+        return True
+    return (
+        is_true(a.get("immunocompromised"))
+        or is_true(a.get("is_pregnant"))
+        or is_true(a.get("postpartum_6w"))
+        or is_true(a.get("recent_surgery_30d"))
+        or array_has_any(a.get("chronic_conditions"), CHRONIC_SEVERE)
+    )
+
+
 EMERGENCY_RULES: tuple = (
     r_e_01, r_e_02, r_e_03, r_e_04, r_e_05, r_e_06, r_e_07, r_e_08, r_e_09, r_e_10,
     r_e_11, r_e_12, r_e_13, r_e_20,

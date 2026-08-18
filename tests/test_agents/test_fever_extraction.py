@@ -19,12 +19,12 @@ from unittest.mock import Mock
 import pytest
 
 from src import paths
-from src.services.agents import fever_intake_agent as agent
 from src.services.checklists.fever_checklist import CLUSTERS_BY_ID
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.infra import fever_stage_log, provider_router
 from src.services.symptom_protocol import intake_agent as _engine
 from src.services.symptom_protocol import retraction
+from tests.helpers import fever_api as agent
 
 O1_USER_MESSAGE = (
     "Con em 3 tuổi, sốt 2 ngày 38,5 độ, bé vẫn tỉnh táo, chơi đùa bình thường, ăn uống tốt, "
@@ -401,3 +401,58 @@ def test_extract_cluster_logs_retrieve_llm_and_extract_in_order(monkeypatch):
     io_rows = fever_stage_log.read_llm_io(session_id)
     assert len(io_rows) == 1
     assert io_rows[0]["messages"][1]["content"] == O1_USER_MESSAGE
+
+
+# --- quét kèm field ngoài cụm (`_safety_extra_keys`) ------------------------------------------
+
+
+ADULT_DEMOGRAPHICS = {"age_value": "30", "age_unit": "year", "sex": "female", "reporter_type": "self"}
+
+
+def test_risk_context_is_extractable_from_the_very_first_turn():
+    """Bối cảnh nguy cơ nằm ở Stage 4 nhưng người bệnh hay khai ngay câu đầu ("em đang mang thai").
+    Không có ô nào trong schema thì lời khai đó rơi mất, và tới Stage 4 hệ thống hỏi lại nguyên văn -
+    đúng phàn nàn "có thông tin trong câu trả lời rồi mà vẫn hỏi"."""
+    cluster = CLUSTERS_BY_ID["Q1-01"]
+
+    keys = _engine._safety_extra_keys(
+        FEVER_PROTOCOL, "1", cluster, dict(ADULT_DEMOGRAPHICS), frozenset(),
+    )
+
+    assert {"is_pregnant", "chronic_conditions", "immunocompromised"} <= set(keys)
+
+
+def test_lookahead_covers_more_than_the_next_handful_of_clusters():
+    """Cửa sổ cũ là 5 cụm - quá hẹp so với thứ người bệnh kể vượt trước."""
+    cluster = CLUSTERS_BY_ID["Q1-01"]
+
+    keys = _engine._safety_extra_keys(
+        FEVER_PROTOCOL, "1", cluster, dict(ADULT_DEMOGRAPHICS), frozenset(),
+    )
+
+    assert _engine.SAFETY_LOOKAHEAD_CLUSTERS > 5
+    assert len(keys) > 20
+
+
+def test_extraction_schema_stays_bounded_even_with_the_wider_lookahead():
+    """Nới cửa sổ đổi lấy prompt dài hơn, nên phải có trần đo được. Ngưỡng 60 ở đây là mốc chặn hồi
+    quy (số đo thật ~33-39 field/lượt), không phải con số thiêng."""
+    for cluster_id in ("Q1-01", "Q3-04", "Q4-00"):
+        cluster = CLUSTERS_BY_ID[cluster_id]
+        keys = _engine._safety_extra_keys(
+            FEVER_PROTOCOL, cluster.stage, cluster, dict(ADULT_DEMOGRAPHICS), frozenset(),
+        )
+        assert len(keys) + len(cluster.fields) < 60, cluster_id
+
+
+def test_field_whose_parent_was_denied_is_left_out_of_the_schema():
+    """Đã trả lời "không suy giảm miễn dịch" thì "nguyên nhân suy giảm miễn dịch" không phải field
+    còn thiếu - nó vô nghĩa. Mời model điền nó là mở đường cho một giá trị bịa."""
+    answers = dict(ADULT_DEMOGRAPHICS, immunocompromised="false")
+
+    keys = _engine._safety_extra_keys(
+        FEVER_PROTOCOL, "1", CLUSTERS_BY_ID["Q1-01"], answers, frozenset(),
+    )
+
+    assert "immunocompromise_cause" not in keys
+    assert "known_neutropenia" not in keys

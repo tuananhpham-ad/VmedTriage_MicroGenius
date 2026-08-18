@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, inspect
@@ -110,7 +111,7 @@ def _apply_additive_sqlite_migrations(engine: Engine) -> None:
 
 
 def create_tables() -> None:
-    from src.models import password_reset, user  # noqa: F401 - registers ORM models with Base metadata
+    from src.models import case_record, password_reset, user  # noqa: F401 - registers ORM models with Base metadata
 
     engine = _engine or configure_database()
     Base.metadata.create_all(bind=engine)
@@ -129,6 +130,32 @@ def get_db_session() -> Generator[Session, None, None]:
     session = _session_factory()
     try:
         yield session
+    finally:
+        session.close()
+
+
+@contextmanager
+def session_scope() -> Generator[Session, None, None]:
+    """Session cho code chạy NGOÀI phạm vi một request (các store singleton).
+
+    `get_db_session` là dependency của FastAPI: nó không commit và để framework lo vòng đời. Store
+    thì được gọi từ mọi nơi - kể cả threadpool của endpoint SSE và script CLI - nên cần một phạm vi
+    tự đóng và tự commit. Rollback khi có exception là bắt buộc chứ không phải lịch sự: một case ghi
+    dở dang là một case điều dưỡng nhìn thấy sai."""
+    global _session_factory
+
+    if _session_factory is None:
+        configure_database()
+        create_tables()
+    assert _session_factory is not None
+
+    session = _session_factory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

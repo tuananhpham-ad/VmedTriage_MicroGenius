@@ -325,10 +325,29 @@ body.is-high-contrast { --muted:#364758; --muted-2:#526476; --line:#c1cad4; --li
 .case-reference { border:1px solid var(--line); border-radius:999px; padding:5px 9px; color:var(--muted); background:var(--surface-soft); font-size:12px; font-weight:600; }
 .chat-log { display:flex; flex:1; flex-direction:column; gap:12px; min-height:360px; max-height:545px; overflow:auto; padding:24px; background:#fbfcfd; }
 .chat-message { max-width:min(78%, 620px); border-radius:13px; padding:11px 13px; line-height:1.55; }
-.chat-message.is-agent { align-self:flex-start; border:1px solid var(--line); background:#fff; }
+.chat-message.is-agent, .chat-message.is-streaming { align-self:flex-start; border:1px solid var(--line); background:#fff; }
+/* Bong bóng đang được viết dần: giống hệt bong bóng trợ lý, thêm con trỏ nhấp nháy ở cuối để phân
+   biệt "đang viết tiếp" với "đã viết xong" - không có nó, câu dừng giữa chừng trông y như câu hoàn
+   chỉnh. */
+.chat-message.is-streaming::after { content:""; display:inline-block; width:2px; height:1em; margin-left:2px; background:var(--blue); vertical-align:text-bottom; animation:caret-blink 1s step-end infinite; }
+@keyframes caret-blink { 50% { opacity:0; } }
+@media (prefers-reduced-motion: reduce) { .chat-message.is-streaming::after { animation:none; } }
 .chat-message.is-patient { align-self:flex-end; color:#fff; background:var(--blue); }
 .chat-message.is-system, .chat-message.is-pending { align-self:center; max-width:90%; padding:7px 10px; color:var(--muted); background:transparent; font-size:13px; text-align:center; }
 .chat-message.is-error { align-self:center; color:var(--red); background:var(--red-soft); font-size:13px; }
+/* Chấm nhấp nháy khi trợ lý đang soạn câu hỏi. Một lượt chat gọi LLM 2 lần nối tiếp (trích xuất rồi
+   mới diễn đạt câu hỏi) nên chờ vài giây là bình thường - dòng chữ tĩnh không cho biết hệ thống còn
+   sống hay đã treo, chấm động thì có. */
+.chat-message.is-pending { display:flex; gap:8px; align-items:center; justify-content:center; }
+.typing-dots { display:inline-flex; gap:4px; }
+.typing-dots i { width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.35; animation:typing-bounce 1.25s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay:.18s; }
+.typing-dots i:nth-child(3) { animation-delay:.36s; }
+@keyframes typing-bounce { 0%, 70%, 100% { opacity:.3; transform:translateY(0); } 35% { opacity:.95; transform:translateY(-3px); } }
+/* Người dùng có thể tắt hiệu ứng ở cấp hệ điều hành - tôn trọng lựa chọn đó, chấm vẫn hiện, chỉ
+   không nhảy. */
+@media (prefers-reduced-motion: reduce) { .typing-dots i { animation:none; opacity:.55; } }
+.chat-composer textarea:disabled, .chat-composer .primary-button:disabled { cursor:not-allowed; opacity:.6; }
 .symptom-chips { display:flex; flex-wrap:wrap; gap:7px; padding:0 24px 16px; background:#fbfcfd; }
 .symptom-chips button { border:1px solid var(--line-strong); border-radius:999px; padding:6px 10px; color:#3d4c5b; background:#fff; font-size:13px; }
 .symptom-chips button:hover { border-color:#9cc3e9; color:var(--blue); background:var(--blue-soft); }

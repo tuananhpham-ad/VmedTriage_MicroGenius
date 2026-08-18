@@ -21,7 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.services.engines import fever_red_flag_engine as engine
+from tests.helpers import fever_api as engine
 
 FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "fever" / "part8_cases.json"
 

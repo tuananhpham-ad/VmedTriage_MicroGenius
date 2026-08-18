@@ -1,5 +1,5 @@
-"""Vòng đời phiên hỏi-đáp DÙNG CHUNG cho mọi symptom_group - in-memory store, không auth, theo đúng
-mẫu `intake_session.py` (demo). Nối 3 tầng cơ chế đã có thành 1 luồng phiên hoàn chỉnh:
+"""Vòng đời phiên hỏi-đáp DÙNG CHUNG cho mọi symptom_group - in-memory store, không auth. Nối 3 tầng
+cơ chế đã có thành 1 luồng phiên hoàn chỉnh:
 
 - `stage_machine` quyết định cụm câu hỏi kế tiếp / stage / dừng - THUẦN rule.
 - `rule_engine` là nguồn thật duy nhất cho `triage_level`/`reason_codes`/`triggered_rules`.
@@ -20,18 +20,31 @@ protocol nằm TRONG `Session.protocol_name`, không phải trong store.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from src.services.infra import console_log
+from src.services.infra import console_log, provider_router
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra.provider_router import LLMCredential
+from src.services.symptom_protocol import (
+    controller,
+    coverage,
+    dialogue,
+    registry,
+    rule_engine,
+    screening,
+    stage_machine,
+)
 from src.services.symptom_protocol import intake_agent as agent
-from src.services.symptom_protocol import registry, rule_engine, screening, stage_machine
+from src.services.symptom_protocol import metrics as metrics_mod
+from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
+
+logger = logging.getLogger("vmedtriage.symptom_session")
 
 
 class SessionState(str, Enum):
@@ -95,6 +108,31 @@ class Session:
     """Rule engine đã chốt cấp cứu. Khoá QUYẾT ĐỊNH, không khoá DỮ KIỆN: người bệnh vẫn sửa được lời
     khai và bản sửa vẫn vào phiếu bàn giao, nhưng hệ thống không tự hạ mức - việc đó thuộc về điều
     dưỡng (P0-6)."""
+    pending_safety_signals: tuple[str, ...] = ()
+    """Mã tín hiệu L0 ở mức `needs_confirmation` của lượt VỪA RỒI (`text_safety_signals`). Không phải
+    `reason_codes`: đây là dấu hiệu người bệnh có nhắc tới nhưng guard chưa cho phép kết luận. Tồn tại
+    để cụm xác nhận red flag được ưu tiên và để log trả lời được "vì sao câu này không escalate"."""
+    confirmed_retractions: set[str] = field(default_factory=set)
+    """Field đã được hỏi xác nhận trước khi xoá dây chuyền (§5 quy tắc 5). Cùng lý do một-lần với
+    `asked_safety_signal_codes`: hỏi mãi một câu là cách chắc chắn nhất để người bệnh bỏ giữa chừng,
+    và lời đính chính thì vẫn không bao giờ vào được hồ sơ."""
+    asked_safety_signal_codes: set[str] = field(default_factory=set)
+    """Mã đã được hỏi xác nhận bằng câu TĨNH. Mỗi mã chỉ hỏi một lần - nếu không, một phiên gặp lúc
+    model chết sẽ lặp mãi cùng một câu xác nhận."""
+    metrics: metrics_mod.ConversationMetrics = field(default_factory=metrics_mod.ConversationMetrics)
+    """Bộ đếm trải nghiệm + độ phủ (§12). CHỈ đếm - không nhánh nào được đọc nó để đổi hành vi, vì
+    một chỉ số vừa đo vừa điều khiển thì không còn đo được cái gì (§8.8)."""
+    ledger: coverage.CoverageLedger = field(default_factory=coverage.CoverageLedger)
+    """Sổ sách độ phủ (§8.5). Xếp hạng cụm được phép HOÃN một cụm để đi theo mạch người bệnh; sổ này
+    là thứ bảo đảm cụm bị hoãn vẫn được hỏi lại chứ không biến mất."""
+    catch_all_asked: bool = False
+    """Đã chạy bước QUÉT SÓT (§8.6 mục 4) chưa - một câu mở cuối trước khi chốt.
+
+    Đây là chỗ bắt được triệu chứng mà checklist không hỏi tới, và là câu rẻ nhất trong cả phiên xét
+    theo giá trị lâm sàng thu được. Vì thế nó KHÔNG bị bỏ khi hết ngân sách: ngân sách cắt cụm tier
+    O/H, không cắt câu này."""
+    awaiting_catch_all: bool = False
+    """Câu quét sót vừa được phát ra và đang chờ trả lời - lượt tới trích theo schema quét sót."""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     credential: LLMCredential | None = None
 
@@ -117,9 +155,55 @@ class Session:
     def screened_ids_for_current_protocol(self) -> frozenset[str]:
         return self._ids_for_current_protocol(self.screened_cluster_ids)
 
+    def unresolved_ids_for_current_protocol(self) -> frozenset[str]:
+        """Cụm ĐÃ hỏi mà người bệnh không trả lời được - `asked_but_unanswered` của sổ độ phủ.
+
+        Khác `mandatory_remaining`: "không biết" là một kết quả hợp lệ, không phải nợ (§8.5 quy tắc
+        3). Tách hai khái niệm ở đây để không ai hỏi lại lần thứ ba câu vừa được trả lời "không biết"."""
+        return self._ids_for_current_protocol(self.unresolved_cluster_ids)
+
     def _ids_for_current_protocol(self, keys: set[str]) -> frozenset[str]:
         prefix = f"{self.protocol_name}:"
         return frozenset(key[len(prefix):] for key in keys if key.startswith(prefix))
+
+
+CATCH_ALL_QUESTION = (
+    "Trước khi mình chốt lại, còn triệu chứng hay điều gì khác khiến bạn lo không? "
+    "Nếu không còn gì, bạn cứ trả lời \"không\" là được."
+)
+"""Câu QUÉT SÓT tĩnh (§8.6 mục 4). Không qua LLM: nó phải giữ nguyên tính chất "câu mở, không
+presupposition" - một bản diễn đạt lại có thể vô tình gợi ý sẵn triệu chứng, và như vậy thì nó không
+còn bắt được thứ checklist chưa hỏi tới nữa."""
+
+CATCH_ALL_CLUSTER_ID = "CATCH-ALL"
+
+
+def _catch_all_cluster(protocol: SymptomProtocol, stage: str) -> QuestionCluster:
+    """Cụm TỔNG HỢP dựng tại chỗ để đọc câu trả lời quét sót.
+
+    Không khai vào `protocol.clusters`: nó không phải một bước của bảng câu hỏi lâm sàng, và thêm vào
+    đó sẽ khiến `stage_machine` coi nó như một cụm bình thường (đếm ngân sách, xếp hạng, hỏi lại).
+
+    Schema là các field an toàn hay được nói tự nguyện (`safety_signal_fields`) cộng field than phiền
+    chính - đúng những gì một câu trả lời mở có thể chứa. Không đưa cả registry vào: schema càng rộng
+    model càng có xu hướng điền bừa cho đủ."""
+    keys = tuple(
+        key for key in (*protocol.safety_signal_fields, protocol.chief_complaint_field)
+        if key and key in protocol.fields_by_key
+    )
+    return QuestionCluster(CATCH_ALL_CLUSTER_ID, stage, keys, script_hint=CATCH_ALL_QUESTION)
+
+
+_EMPTY_EXTRACTED_VALUES = frozenset({"", "unknown", "none", "null"})
+
+
+def _extracted_anything(extracted: dict[str, object]) -> bool:
+    """Lượt này có thu được dữ kiện XÁC ĐỊNH nào không.
+
+    KHÔNG dùng `bool(extracted)`: kết quả trích xuất luôn trả về đủ mọi field của cụm, field không
+    trích được mang giá trị `"unknown"` - nên dict khác rỗng kể cả khi model trả JSON trống. Đó đúng
+    là trường hợp tầng L0 cần nhận ra."""
+    return any(str(value).strip().casefold() not in _EMPTY_EXTRACTED_VALUES for value in extracted.values())
 
 
 class SessionNotFoundError(ValueError):
@@ -193,12 +277,17 @@ class ProtocolSessionStore:
         if session.pending_probe:
             cluster = screening.probe_cluster(protocol, step.stage, session.pending_probe)
             session.screening_history[step.stage] = (frozenset(g.id for g in session.pending_probe),)
+        # Câu MỞ PHIÊN cố ý KHÔNG gộp (`batching.next_batch` không được gọi ở đây). Đã thử và bỏ:
+        # câu này là câu DUY NHẤT không đi qua bước LLM diễn đạt lại - nó dùng thẳng `script_hint` -
+        # nên gộp ở đây khiến người bệnh đọc được nguyên văn "Mình hỏi nhanh vài ý: (1)...; (2)...".
+        # Đó đúng là cảm giác biểu mẫu mà việc gộp sinh ra để xoá. Từ lượt thứ hai trở đi `run_turn`
+        # có LLM viết lại thành câu liền mạch nên gộp mới có lãi.
         session.current_cluster = cluster
         session.last_question = cluster.script_hint if cluster is not None else ""
         if session.last_question:
             session.conversation.append({"role": "assistant", "content": session.last_question})
 
-        provider = (session.credential.provider if session.credential else None) or "server/fallback"
+        provider = provider_router.describe_selection(session.credential)
         console_log.session_start(session.session_id, label=f"{protocol.name} intake", llm=provider)
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
@@ -213,28 +302,63 @@ class ProtocolSessionStore:
         session.conversation.append({"role": "assistant", "content": session.last_question})
         stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
 
-        provider = (session.credential.provider if session.credential else None) or "server/fallback"
+        provider = provider_router.describe_selection(session.credential)
         console_log.session_start(session.session_id, label="symptom intake", llm=provider)
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
 
-    def submit_message(self, session_id: str, message: str) -> Session:
+    def submit_message(
+        self, session_id: str, message: str, *, on_token: agent.TokenSink | None = None,
+    ) -> Session:
+        """`on_token` != None: phát từng mẩu CÂU HỎI ra ngoài ngay khi model sinh (endpoint SSE).
+
+        Không đổi gì khác trong vòng đời phiên - cùng một lượt, cùng một kết quả, chỉ khác ở chỗ văn
+        bản hiển thị được đẩy dần thay vì đợi trọn. Trích xuất field vẫn chạy trước và vẫn không
+        stream: nó trả JSON."""
         session = self._require(session_id)
         if session.state != SessionState.COLLECTING:
             return session
         cleaned = (message or "").strip()
         if not cleaned:
             raise EmptyMessageError("Nội dung tin nhắn không được để trống.")
-        if session.phase is SessionPhase.OPENING:
-            return self._submit_open_message(session, cleaned)
 
+        # L0 `text_safety_signals` - TRƯỚC mọi lời gọi model, cho cả lượt mở lẫn lượt thường. Đây là
+        # lớp duy nhất còn quan sát được lời người bệnh khi provider chết hoặc JSON trả về hỏng.
+        scan = text_safety_signals.scan_text_safety_signals(cleaned)
+        if scan.short_circuit:
+            return self._escalate_from_text_signal(session, cleaned, scan)
+        session.pending_safety_signals = tuple(signal.code for signal in scan.needs_confirmation)
+
+        is_opening = session.phase is SessionPhase.OPENING
         protocol = self._protocol(session)
-        if session.current_cluster is None:
-            # Không còn cụm nào để hỏi (lẽ ra đã finish) - phòng vệ, không nên xảy ra trong luồng bình thường.
-            return session
+        # Cụm sẽ được dùng cho lượt này, tính TRƯỚC khi lập kế hoạch: controller cần biết phiên có
+        # thật sự đang hỏi cái gì không thì mới quyết được là fail closed hay chạy tiếp.
+        cluster = session.current_cluster
+        if session.awaiting_catch_all:
+            # Trả lời câu quét sót: vẫn là một lượt hỏi-đáp đầy đủ (trích xuất → rule engine → chốt),
+            # chỉ khác ở chỗ cụm đang hỏi là cụm TỔNG HỢP dựng tại chỗ chứ không nằm trong protocol.
+            cluster = _catch_all_cluster(protocol, session.stage)
+
+        # L1 controller - chỗ DUY NHẤT quyết lượt này có gọi model hay không (§9 P2 tiêu chí 1 và 3).
+        plan = controller.build_execution_plan(
+            message=cleaned,
+            cluster=cluster,
+            protocol_name=session.protocol_name,
+            is_opening=is_opening,
+            has_safety_signal=bool(session.pending_safety_signals),
+        )
+        if plan.fail_closed:
+            return self._hand_off(session, cleaned, plan.fail_closed_reason)
+        if not plan.invoke_extractor:
+            return self._answer_without_extraction(session, cleaned, plan, on_token=on_token)
+
+        if is_opening:
+            return self._submit_open_message(session, cleaned, on_token=on_token)
+
+        answering_catch_all = session.awaiting_catch_all
+        session.awaiting_catch_all = False
 
         session.turn_count += 1
-        cluster = session.current_cluster
         stage = session.stage
         console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
         session.conversation.append({"role": "user", "content": cleaned})
@@ -255,6 +379,7 @@ class ProtocolSessionStore:
             retry_count=session.retry_count_by_cluster.get(session.cluster_key(cluster.id), 0),
             conversation=list(session.conversation),
             credential=session.credential,
+            on_token=on_token,
             # Phiên đã ghim protocol thì KHÔNG truyền hàm chọn - caller tuyên bố đây là ca gì, hệ
             # thống không được tự chuyển hướng khỏi tuyên bố đó. (Người bệnh rút lời khai vẫn được
             # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
@@ -263,9 +388,16 @@ class ProtocolSessionStore:
             probe=session.pending_probe,
             screened_ids=session.screened_ids_for_current_protocol(),
             screening_history=session.screening_history,
+            ledger=session.ledger,
+            confirmed_retractions=frozenset(session.confirmed_retractions),
         )
 
         session.answers = result.answers
+        if answering_catch_all:
+            # `catch_all_yield` (§12): bước quét sót có bắt được thứ checklist không hỏi tới không.
+            # Gần 0 trên toàn tập nghĩa là HOẶC checklist đã đủ, HOẶC câu quét sót đang hỏi sai cách -
+            # hai kết luận rất khác nhau, nên con số này chỉ đọc được kèm `catch_all_asked`.
+            session.metrics.record_catch_all_answer(yielded=_extracted_anything(result.extracted))
         # Ghi nhận kết quả cụm TRƯỚC khi đổi `protocol_name`: cụm vừa hỏi thuộc protocol CŨ, ghi nó
         # dưới tên protocol mới sẽ làm cụm cùng mã của protocol mới bị coi là đã hỏi rồi.
         self._record_cluster_outcome(session, cluster, result)
@@ -274,9 +406,24 @@ class ProtocolSessionStore:
                 session.session_id, label=f"đổi protocol -> {result.protocol_name}", llm="rule",
             )
             session.protocol_name = result.protocol_name
+            # Nợ hoãn của protocol cũ KHÔNG chuyển sang protocol mới: mã cụm dùng chung giữa các
+            # protocol nên giữ lại sẽ gán nợ nhầm cụm (cùng lý do `cluster_key` phải kèm protocol).
+            session.ledger.reset()
         session.llm_used_last_turn = result.llm_used
-        if result.agent_message:
-            session.conversation.append({"role": "assistant", "content": result.agent_message})
+        # Tín hiệu L0 mơ hồ + lượt này KHÔNG trích được gì (model hỏng, timeout, JSON không parse
+        # được) = đúng kịch bản tầng L0 sinh ra để chặn: người bệnh vừa nhắc tới một dấu hiệu nguy
+        # hiểm và hệ thống sắp đi tiếp như chưa nghe thấy. Hỏi lại bằng câu TĨNH, giữ nguyên cụm.
+        safety_hold = (
+            "" if result.emergency else self._safety_confirmation(session, _extracted_anything(result.extracted))
+        )
+        # Tín hiệu an toàn đứng TRƯỚC xác nhận đính chính: hai câu tĩnh không được phát cùng lượt, và
+        # giữa "có thể có dấu hiệu nguy hiểm" với "có phải bạn muốn rút lại lời khai" thì thứ tự ưu
+        # tiên không có gì phải cân nhắc.
+        retraction_hold = "" if (result.emergency or safety_hold) else self._retraction_confirmation(session, result)
+        hold = safety_hold or retraction_hold
+        agent_message = hold or result.agent_message
+        if agent_message:
+            session.conversation.append({"role": "assistant", "content": agent_message})
         closed = len(session.closed_cluster_ids)
         console_log.extraction(
             session.session_id, result.extracted,
@@ -307,11 +454,16 @@ class ProtocolSessionStore:
             session.reason_codes = list(result.reason_codes)
             session.triggered_rules = list(result.triggered_rules)
 
-        session.last_question = result.agent_message
+        session.last_question = agent_message
+        if hold:
+            # KHÔNG `_progress`: giữ nguyên cụm hiện tại để lượt sau vẫn trích theo đúng schema đó.
+            return session
         self._progress(session, result)
         return session
 
-    def _submit_open_message(self, session: Session, message: str) -> Session:
+    def _submit_open_message(
+        self, session: Session, message: str, *, on_token: agent.TokenSink | None = None,
+    ) -> Session:
         """Lượt mở: lời kể tự do của người bệnh, và là lượt CHỌN protocol.
 
         Không dùng `_record_cluster_outcome`: chưa có cụm nào được hỏi nên không có cụm nào để đánh
@@ -330,13 +482,19 @@ class ProtocolSessionStore:
             protocol_for=registry.protocol_for,
             conversation=list(session.conversation),
             credential=session.credential,
+            on_token=on_token,
         )
 
         session.answers = result.answers
         session.llm_used_last_turn = result.llm_used
-        session.last_question = result.agent_message
-        if result.agent_message:
-            session.conversation.append({"role": "assistant", "content": result.agent_message})
+        # Lượt mở không có cụm nào để giữ nguyên, nên "giữ nguyên" ở đây chính là ở lại lượt mở -
+        # đúng hành vi `harvested_nothing` đã có, chỉ khác ở chỗ câu hỏi phát ra là câu xác nhận an
+        # toàn thay vì câu mở chung.
+        safety_hold = "" if result.emergency else self._safety_confirmation(session, not result.harvested_nothing)
+        agent_message = safety_hold or result.agent_message
+        session.last_question = agent_message
+        if agent_message:
+            session.conversation.append({"role": "assistant", "content": agent_message})
         console_log.extraction(session.session_id, result.extracted, percent=0, filled=0, total=1)
 
         if result.emergency:
@@ -371,6 +529,141 @@ class ProtocolSessionStore:
         # `_progress` tự ghi `stage_enter` (stage hiện tại là "" nên luôn khác stage đích).
         self._progress(session, result)
         return session
+
+    def _hand_off(self, session: Session, message: str, reason: str) -> Session:
+        """FAIL CLOSED: trạng thái phiên không hợp lệ ⇒ bàn giao điều dưỡng, không gọi model.
+
+        Bản cũ `return session` lặng lẽ: người bệnh gõ tin nhắn và không nhận được gì, phiên treo mà
+        không ai biết. Im lặng là kiểu hỏng tệ nhất trong một hệ y tế - nó trông giống như đang hoạt
+        động bình thường."""
+        session.turn_count += 1
+        console_log.user_message(session.session_id, message, turn=session.turn_count)
+        session.conversation.append({"role": "user", "content": message})
+        session.conversation.append({"role": "assistant", "content": controller.HANDOFF_MESSAGE})
+        session.last_question = controller.HANDOFF_MESSAGE
+        session.current_cluster = None
+        session.pending_probe = ()
+        logger.warning("symptom_session.fail_closed session=%s reason=%s", session.session_id, reason)
+        stage_log.step(
+            session.session_id, turn=session.turn_count, stage=session.stage, cluster_id=None,
+            event="stop", input=None, output={"fail_closed": reason}, stop_reason="INVALID_STATE",
+        )
+        self._finish(session, f"INVALID_STATE:{reason}")
+        session.last_question = controller.HANDOFF_MESSAGE
+        return session
+
+    def _answer_without_extraction(
+        self, session: Session, message: str, plan, *, on_token: agent.TokenSink | None,
+    ) -> Session:
+        """Lượt KHÔNG gọi extractor (§7.4): lời chào thuần không mang dữ kiện lâm sàng nào.
+
+        Vẫn giữ nguyên cụm đang hỏi và vẫn phát ra một câu hỏi - chỉ bỏ đúng lời gọi trích xuất,
+        tiết kiệm ~3.8s và một lời gọi model mỗi lượt như vậy. Tầng L0 đã chạy TRƯỚC controller nên
+        một lời chào có kèm dấu hiệu đỏ không bao giờ đi vào đây."""
+        session.turn_count += 1
+        console_log.user_message(session.session_id, message, turn=session.turn_count)
+        session.conversation.append({"role": "user", "content": message})
+
+        cluster = session.current_cluster
+        if cluster is None:
+            # Lượt mở: chưa có cụm nào, hỏi lại đúng câu mở tĩnh.
+            session.last_question = registry.OPENING_QUESTION
+            session.conversation.append({"role": "assistant", "content": session.last_question})
+            console_log.agent_question(session.session_id, session.last_question, llm_used=False)
+            return session
+
+        protocol = self._protocol(session)
+        response_plan = dialogue.build_response_plan(
+            protocol, cluster,
+            act=plan.forced_act or dialogue.DialogueAct.GREETING,
+            answers=session.answers,
+        )
+        question, llm_used = agent.generate_question(
+            protocol, cluster, answers=session.answers, plan=response_plan,
+            conversation=list(session.conversation), credential=session.credential, on_token=on_token,
+        )
+        session.llm_used_last_turn = llm_used
+        session.last_question = question
+        if question:
+            session.conversation.append({"role": "assistant", "content": question})
+        console_log.agent_question(session.session_id, question, llm_used=llm_used)
+        return session
+
+    def _escalate_from_text_signal(
+        self, session: Session, message: str, scan: text_safety_signals.TextSafetyScan,
+    ) -> Session:
+        """Dấu hiệu đỏ dương tính RÕ trên text thô ⇒ dừng phiên ngay bằng thông điệp tĩnh.
+
+        Đây là ngoại lệ có chủ đích của HITL (`CLAUDE.md` nguyên tắc 4): an toàn tức thì đứng trên
+        việc chờ duyệt. Không lời gọi model nào chạy ở lượt này - không có gì để model làm hỏng.
+
+        Chỉ mã trong `SHORT_CIRCUIT_CODES` đi được đường này; tín hiệu mơ hồ đi đường xác nhận
+        (`_safety_confirmation`) chứ không tự tạo disposition."""
+        session.turn_count += 1
+        console_log.user_message(session.session_id, message, turn=session.turn_count)
+        session.conversation.append({"role": "user", "content": message})
+
+        emergency_message = self._protocol(session).emergency_message
+        session.triage_level = "EMERGENCY"
+        session.reason_codes = list(scan.reason_codes)
+        session.triggered_rules = [f"text_safety_signals:{signal.code}" for signal in scan.short_circuit]
+        session.escalation_lock = True
+        session.state = SessionState.EMERGENCY
+        session.phase = SessionPhase.COLLECTING
+        session.current_cluster = None
+        session.pending_probe = ()
+        session.pending_safety_signals = ()
+        session.last_question = emergency_message
+        session.stop_reason = "RED_FLAG"
+        session.conversation.append({"role": "assistant", "content": emergency_message})
+
+        stage_log.finish(
+            session.session_id, triage_level="EMERGENCY", stop_reason="RED_FLAG", turns=session.turn_count,
+        )
+        console_log.red_flag(session.session_id, scan.short_circuit_labels)
+        console_log.session_end(session.session_id, state="emergency", turns=session.turn_count, percent=100)
+        return session
+
+    def _safety_confirmation(self, session: Session, extracted_something: bool) -> str:
+        """Câu xác nhận TĨNH cho tín hiệu L0 mơ hồ - chỉ dùng khi lượt vừa rồi KHÔNG trích được gì.
+
+        Không thay thế cụm xác nhận red flag của protocol (việc ưu tiên cụm thuộc về xếp hạng ở
+        `stage_machine`); đây là chốt chặn để một dấu hiệu nguy hiểm không bị bỏ qua IM LẶNG khi tầng
+        model hỏng. Mỗi mã chỉ hỏi MỘT lần: model hỏng nhiều lượt liên tiếp không được biến thành
+        vòng lặp hỏi đi hỏi lại cùng một câu."""
+        if extracted_something:
+            return ""
+        pending = [
+            code for code in session.pending_safety_signals
+            if code not in session.asked_safety_signal_codes
+        ]
+        if not pending:
+            return ""
+        session.asked_safety_signal_codes.update(pending)
+        return text_safety_signals.confirmation_question(pending)
+
+    def _retraction_confirmation(self, session: Session, result) -> str:
+        """Câu xác nhận TĨNH cho một đính chính chưa đủ rõ (§5 quy tắc 5).
+
+        Reducer đã giữ hồ sơ ở giá trị CŨ và trả về field bị giữ; việc còn lại là hỏi người bệnh cho
+        rõ. Câu này không qua LLM: nó phải nêu ĐÚNG cái hệ thống đang định xoá, còn một bản diễn đạt
+        lại có thể biến câu xác nhận thành câu gợi ý.
+
+        Hỏi ĐÚNG MỘT LẦN mỗi field. Lượt sau, `confirmed_retractions` cho phép đính chính đi qua dù
+        model vẫn trả về bằng chứng mờ - nếu không, một phiên mà người bệnh diễn đạt kiểu khó trích
+        dẫn sẽ không bao giờ sửa được lời khai."""
+        pending = [key for key in result.pending_retraction if key not in session.confirmed_retractions]
+        if not pending:
+            return ""
+        session.confirmed_retractions.update(pending)
+        protocol = self._protocol(session)
+        labels = [
+            protocol.fields_by_key[key].label for key in pending if key in protocol.fields_by_key
+        ] or list(pending)
+        return (
+            f"Mình muốn xác nhận lại cho chắc: ý bạn là thông tin \"{labels[0]}\" trước đó không còn "
+            "đúng nữa, phải không? Bạn trả lời giúp mình \"đúng\" hoặc \"không\" nhé."
+        )
 
     def _record_cluster_outcome(self, session: Session, cluster: QuestionCluster, result) -> None:
         """Quyết định cụm vừa hỏi đã XONG chưa. Đây là chỗ vá bug C3.
@@ -421,6 +714,34 @@ class ProtocolSessionStore:
         đã được sinh cho đúng cụm đó. Bản cũ duyệt lần hai ở đây, nên khi cụm cuối stage vừa được trả
         lời thì agent trả tin nhắn rỗng còn session lại âm thầm nhảy sang cụm mới - người bệnh không
         được hỏi gì nhưng lượt sau vẫn bị trích theo schema của cụm đó."""
+        # Đếm metric TRƯỚC `ledger.record_turn`: `deferral_depth` cần số nợ TẠI THỜI ĐIỂM cụm được
+        # chọn, mà `record_turn` xoá nợ của cụm vừa được chọn ngay sau đây (§12).
+        if result.next_cluster is not None:
+            session.metrics.record_question(
+                result.next_cluster,
+                recent_fields=result.recent_fields,
+                deferral_count=session.ledger.deferral_count(result.next_cluster.id),
+            )
+        # Ghi sổ TRƯỚC khi cập nhật trạng thái: cụm được chọn về 0 nợ, cụm thua điểm cộng thêm một
+        # lượt chờ. Không có bước này thì xếp hạng chỉ là "hoãn", không phải "hoãn rồi hỏi lại".
+        session.ledger.record_turn(
+            result.next_cluster.id if result.next_cluster is not None else None,
+            result.deferred_cluster_ids,
+        )
+        stage_log.step(
+            session.session_id, turn=session.turn_count, stage=session.stage,
+            cluster_id=result.next_cluster.id if result.next_cluster is not None else None,
+            event="route_decided", input=None,
+            output={
+                "coverage_ledger": session.ledger.snapshot(
+                    self._protocol(session), session.answers,
+                    unresolved=session.unresolved_ids_for_current_protocol(),
+                ),
+                "recent_fields": sorted(result.recent_fields),
+                "dialogue_act": result.dialogue_act,
+                "router_trigger": result.router_trigger,
+            },
+        )
         if result.next_cluster is not None:
             if result.next_stage and result.next_stage != session.stage:
                 stage_log.stage_enter(session.session_id, result.next_stage)
@@ -434,7 +755,29 @@ class ProtocolSessionStore:
             return
 
         session.pending_probe = ()
-        self._finish(session, result.stop_reason or "BUDGET_EXHAUSTED")
+        stop_reason = result.stop_reason or "BUDGET_EXHAUSTED"
+        if self._ask_catch_all(session, stop_reason):
+            return
+        self._finish(session, stop_reason)
+
+    def _ask_catch_all(self, session: Session, stop_reason: str) -> bool:
+        """Bước QUÉT SÓT (§8.6 mục 4): một câu mở cuối trước khi chốt phiếu.
+
+        Checklist chỉ hỏi được thứ nó biết trước; câu này là chỗ duy nhất người bệnh nêu được điều
+        nằm ngoài bộ câu hỏi. Nó KHÔNG bị cắt khi hết ngân sách - đây chính là ý §8.7: tiêu chí dừng
+        là "đủ độ phủ VÀ đã quét sót", còn số đếm chỉ là trần an toàn chống lặp vô hạn.
+
+        Ngoại lệ `RED_FLAG`: đã chốt cấp cứu thì việc cần làm là gọi 115, không phải hỏi thêm."""
+        if stop_reason == "RED_FLAG" or session.catch_all_asked:
+            return False
+        session.catch_all_asked = True
+        session.awaiting_catch_all = True
+        session.metrics.record_catch_all_asked()
+        session.current_cluster = None
+        session.last_question = CATCH_ALL_QUESTION
+        session.conversation.append({"role": "assistant", "content": CATCH_ALL_QUESTION})
+        console_log.agent_question(session.session_id, CATCH_ALL_QUESTION, llm_used=False)
+        return True
 
     def _finish(self, session: Session, stop_reason: str) -> None:
         result = rule_engine.evaluate(self._protocol(session), session.answers)
@@ -445,8 +788,27 @@ class ProtocolSessionStore:
         session.state = SessionState.EMERGENCY if result.triage_level == "EMERGENCY" else SessionState.AWAITING_CONFIRMATION
         session.current_cluster = None
         session.last_question = ""
-        stage_log.finish(session.session_id, triage_level=result.triage_level, stop_reason=stop_reason, turns=session.turn_count)
+        # Số liệu §12 đi kèm phiên vào log: dashboard của P4.4 dựng được bằng cách đọc thư mục log
+        # chứ không cần thêm hạ tầng. Tính SAU khi `stop_reason`/`triage_level` đã chốt - đó là hai
+        # trường quyết định phiên này có nằm trong mẫu số của gate độ phủ hay không.
+        stage_log.finish(
+            session.session_id, triage_level=result.triage_level, stop_reason=stop_reason,
+            turns=session.turn_count,
+            metrics=self.metrics_summary(session.session_id),
+        )
         console_log.summary(session.session_id, "generated", percent=100)
+
+    def metrics_summary(self, session_id: str) -> dict:
+        """Bản đọc được của phiên cho §12. Chỉ ĐỌC - không đổi trạng thái gì.
+
+        Đặt trên store chứ không trên `Session` vì nó cần `protocol` để biết field nào là M0/M1, mà
+        `Session` cố ý không giữ đối tượng protocol (phiên có thể đổi protocol giữa chừng, giữ tham
+        chiếu là mời chấm hồ sơ bằng luật của protocol cũ)."""
+        session = self._require(session_id)
+        return session.metrics.summary(
+            self._protocol(session), session.answers,
+            turns=session.turn_count, stop_reason=session.stop_reason, triage_level=session.triage_level,
+        )
 
     def confirm_summary(self, session_id: str, is_correct: bool) -> Session:
         session = self._require(session_id)

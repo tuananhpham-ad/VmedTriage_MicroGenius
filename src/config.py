@@ -5,6 +5,22 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Danh sách model MIỄN PHÍ trên OpenRouter, thử lần lượt từ trên xuống khi model trước bị
+# 429 (hết quota/rate limit), 402 (hết số dư) hoặc 404 (model bị gỡ). Đây là danh sách duy nhất
+# cần sửa khi OpenRouter đổi/khai tử model free - `provider_router` đọc thẳng từ đây.
+#
+# Ghi đè không cần sửa code: đặt `OPENROUTER_FREE_MODELS` trong `.env` (các tên cách nhau bằng dấu phẩy).
+OPENROUTER_FREE_MODELS: tuple[str, ...] = (
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "poolside/laguna-s-2.1:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "google/gemma-4-26b-a4b-it:free",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -37,12 +53,58 @@ class Settings(BaseSettings):
     gemini_model_name: str = "gemini-3.5-flash"
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model_name: str = "claude-haiku-4-5-20251001"
-    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
-    openrouter_model_name: str = "openai/gpt-4o-mini"
+    openrouter_api_key: str = Field(
+        default="", validation_alias=AliasChoices("OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY")
+    )
+    # Rỗng = xoay vòng trên `OPENROUTER_FREE_MODELS`. Đặt tên model ở đây thì model đó được thử
+    # TRƯỚC, danh sách free vẫn là phương án dự phòng phía sau.
+    openrouter_model_name: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_free_models: str = ",".join(OPENROUTER_FREE_MODELS)
+    # Trần số model OpenRouter được thử trong MỘT lần gọi. Có trần vì mỗi model lỗi tốn một vòng
+    # HTTP: duyệt hết danh sách khi OpenRouter đang sập sẽ treo request hàng chục giây.
+    openrouter_max_model_attempts: int = Field(default=4, ge=1, le=20)
+    # Trần TỔNG cho MỘT lần gọi `provider_router.complete()`, cộng dồn mọi provider × mọi model.
+    # Cần trần riêng vì hai trần kia nhân với nhau: 3 provider × 4 model = 12 vòng HTTP nối tiếp,
+    # đủ để một request của điều dưỡng treo hàng phút khi nhà cung cấp đang sập. Trần thời gian là
+    # cái quan trọng hơn - một model timeout 30s thì đếm số lượt không cứu được gì.
+    llm_max_total_attempts: int = Field(default=6, ge=1, le=50)
+    llm_total_budget_seconds: float = Field(default=45.0, ge=5.0, le=600.0)
     model_name: str = ""
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     supported_model_name: str = "Qwen/Qwen3-8B"
+
+    # Định tuyến model theo VAI TRÒ (`provider_router.RoleProfile`). Rỗng = dùng `llm_provider_order`
+    # chung, tức mặc định KHÔNG đổi hành vi gì. Có giá trị ngay cả khi không bao giờ có SLM: nó tách
+    # được cấu hình model của bước trích xuất khỏi bước diễn đạt câu hỏi - hai việc có yêu cầu chất
+    # lượng rất khác nhau (sai ở trích xuất là sai hồ sơ lâm sàng; sai ở diễn đạt là câu văn khô).
+    role_order_fact_extractor: str = ""
+    role_order_synthesis: str = ""
+    role_order_symptom_group_router: str = ""
+
+    # Công tắc ngắt cho các cơ chế hội thoại thêm vào ở P2-P3 (§9 P4 mục 5). Mặc định BẬT - đây là
+    # đường quay lui, không phải nút bật tính năng.
+    #
+    # Vì sao có: mỗi cơ chế dưới đây đổi hành vi trên đường người bệnh đang đi, và cách sửa duy nhất
+    # trước đây là deploy lại. Bốn công tắc riêng chứ không phải một cờ "flow cũ": một cờ tổng thì
+    # không ai dám bật (nó tắt cả những thứ đang chạy đúng), nên trên thực tế nó không phải đường
+    # quay lui nào cả. Xem `symptom_protocol/flags.py` để biết mỗi công tắc rơi về đâu.
+    #
+    # KHÔNG có công tắc nào cho tầng an toàn: `text_safety_signals`, `common_safety/rules`,
+    # `rule_engine`, `escalation_lock`, `output_guard` và bước quét sót không được phép tắt (§8.1
+    # loại 1). Một công tắc tắt được lớp bảo vệ là một công tắc sẽ bị bật nhầm.
+    agent_ranking_enabled: bool = True
+    """Tắt ⇒ `next_cluster` quay về first-fit thuần thứ tự khai báo (§8.3). Độ phủ KHÔNG đổi: tier
+    field M0/M1 quyết độ phủ, xếp hạng chỉ quyết thứ tự."""
+    agent_synthesis_enabled: bool = True
+    """Tắt ⇒ câu hỏi phát ra nguyên văn `script_hint`, không gọi model diễn đạt. Đây cũng đúng là
+    đường mà `output_guard` rơi về khi model viết sai, nên nhánh này luôn được test sẵn."""
+    agent_retraction_confirmation_enabled: bool = True
+    """Tắt ⇒ đính chính rủi ro được áp NGAY, không hỏi xác nhận (§5 quy tắc 5). Tắt nếu cổng này hỏi
+    lại quá nhiều trong thực tế - đổi lại chấp nhận rủi ro xoá nhầm hồ sơ."""
+    agent_unset_operation_enabled: bool = True
+    """Tắt ⇒ bỏ qua `operation: "unset"` của model (§4.1), hồ sơ chỉ bị xoá qua đường phủ định field
+    cha như trước P2.4. Đây là công tắc cho cơ chế MỚI NHẤT và ít giờ chạy thật nhất."""
 
     # Database
     database_url: str = "sqlite:///./data/app.db"
@@ -63,9 +125,6 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
-
-    # Vector Store
-    chroma_persist_dir: str = "./data/chroma"
 
     # Weaviate Cloud (optional best-effort case persistence; pipeline degrades gracefully if unset)
     weaviate_url: str = ""

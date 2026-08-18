@@ -2,17 +2,23 @@
 
 Đọc `generic_checklist.py` trước để biết hợp đồng (hẹp) của protocol này.
 
-Điểm khác fever quan trọng nhất, và là điểm CỐ Ý:
+Điểm khác fever quan trọng nhất:
 
-    self_care_checklist_satisfied  ->  luôn False
-      => should_stop không bao giờ trả "SUFFICIENT_EVIDENCE"
-      => luôn kết thúc bằng "BUDGET_EXHAUSTED"
-      => fallback_rule chạy  =>  EARLY_VISIT  =>  TriagePriority.URGENT ("Khám sớm")
+    self_care_checklist_satisfied  ->  common_rules.baseline_self_care_satisfied
 
-Nghĩa là **mọi** than phiền ngoài sốt đều vào hàng đợi điều dưỡng ở mức "Khám sớm". Đây là hệ quả có
-ý thức, không phải tác dụng phụ: protocol này chỉ quét được tập dấu hiệu nguy hiểm PHỔ QUÁT, nó không
-có căn cứ lâm sàng nào để nói "đau ngực này an toàn, cứ ở nhà". Không tuyên bố an toàn là điều đúng
-duy nhất làm được. Đổi lại phải theo dõi tải hàng đợi sau khi lên production và chỉnh `BUDGET` nếu cần.
+Bản trước là `never_self_care` (luôn False), nghĩa là **mọi** than phiền ngoài sốt đều rơi vào
+`BUDGET_EXHAUSTED` -> `fallback_rule` -> EARLY_VISIT, kể cả một vết xước tay. Lý do khi đó là đúng
+(protocol này chỉ quét được dấu hiệu nguy hiểm PHỔ QUÁT, không có căn cứ lâm sàng để nói "đau ngực
+này an toàn"), nhưng hệ quả thì không sống được: nó dồn toàn bộ 6/7 nhóm triệu chứng vào hàng đợi
+điều dưỡng ở cùng một mức.
+
+`baseline_self_care_satisfied` giữ nguyên tinh thần thận trọng đó bằng cách khắt khe hơn hẳn
+checklist của fever - đòi mức khó chịu thấp, diễn tiến không xấu đi, KHÔNG có bối cảnh nguy cơ nào,
+và mọi field liên quan phải đã được trả lời (`unknown` không tính là an toàn). Ràng buộc HITL không
+đổi: kết luận vẫn là ĐỀ XUẤT, điều dưỡng vẫn duyệt trước khi tới người bệnh.
+
+**Đây là thay đổi NỘI DUNG lâm sàng, cần Thương/Đức Anh duyệt trước khi lên demo.** Muốn quay lại
+hành vi cũ: đổi `self_care_checklist_satisfied` về một hàm luôn trả `False` - không cần sửa gì khác.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from src.services.checklists.generic_checklist import (
     STAGE_ORDER,
 )
 from src.services.symptom_protocol.common_safety import rules as common_rules
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months, array_has_any, is_true
 from src.services.symptom_protocol.models import QuestionCluster, RuleMatch
@@ -33,7 +40,9 @@ from src.services.symptom_protocol.protocol import SymptomProtocol
 
 PROTOCOL_NAME = "general"
 
-BUDGET_FLOOR_STAGE = "4"
+# Ngân sách bắt đầu có hiệu lực từ stage áp chót. Trước đây là "4" - cũng là stage CUỐI, nên ngân
+# sách không bao giờ cắt được gì trước khi đã đi hết bộ câu hỏi. Cùng lỗi và cùng cách sửa như fever.
+BUDGET_FLOOR_STAGE = "3"
 
 # Ngân sách tính theo CỤM. Hẹp hơn fever vì protocol này không đào sâu nguyên nhân - nó chỉ quét đỏ
 # rồi bàn giao, hỏi dài thêm không đổi được kết luận (vốn luôn là EARLY_VISIT).
@@ -52,6 +61,11 @@ SAFETY_SIGNAL_FIELDS: tuple[str, ...] = common_rules.EMERGENCY_TRI_STATE_FIELDS 
     "chief_complaint",
     "complaint_site",
     "complaint_onset_at",
+    # Bối cảnh nguy cơ nằm ở Stage 4 nhưng là thứ người bệnh hay tự khai ngay tin nhắn đầu - cùng lý
+    # do như `fever_protocol._EARLY_VOLUNTEERED_FIELDS`.
+    "is_pregnant",
+    "chronic_conditions",
+    "immunocompromised",
 )
 
 
@@ -82,16 +96,13 @@ def budget_key(answers: dict[str, object], route: str, known_triage_level: str |
     return route if route in BUDGET else "ROUTE_STANDARD"
 
 
-def never_self_care(_answers: dict[str, object]) -> bool:
-    """Protocol generic KHÔNG BAO GIỜ tự kết luận mức nhẹ nhất - xem docstring module."""
-    return False
-
-
 def _self_care_default_rule(_a: dict[str, object]) -> RuleMatch:
-    """Không có đường nào gọi tới (vì `never_self_care` luôn False) nhưng `SymptomProtocol` bắt buộc
-    khai. Trả EARLY_VISIT chứ không raise: nếu bất biến kia có ngày bị phá, hỏng theo hướng thận trọng
-    vẫn tốt hơn là ném exception giữa một phiên đang hỏi bệnh."""
-    return common_rules.default_early_visit_rule(_a)
+    """Kết luận khi không rule nào khớp VÀ checklist tự chăm sóc phổ quát đã xanh.
+
+    Mã `R-S-02` phân biệt với `R-S-01` của fever: đọc log/phiếu bàn giao phải thấy được ngay kết luận
+    "tự theo dõi" này đến từ checklist PHỔ QUÁT (không có tài liệu lâm sàng cho than phiền cụ thể),
+    chứ không phải từ một checklist chuyên biệt."""
+    return RuleMatch("R-S-02", (), "SELF_CARE", "monitor")
 
 
 def derive_duration(answers: dict[str, object]) -> dict[str, object]:
@@ -151,6 +162,16 @@ RULE_CATALOG: tuple = (
     common_rules.r_g_01,
 )
 
+# Cùng bộ cụm quét đỏ/quét khám sớm với fever, chỉ khác tên stage (xem `common_safety/clusters.py`) -
+# nên dùng lại đúng bộ nhóm sàng lọc đó. Trước đây generic KHÔNG khai nhóm nào, nghĩa là mọi than
+# phiền ngoài sốt phải trả lời tuần tự từng cụm quét đỏ một, đúng thứ mà `screening.py` sinh ra để
+# tránh - và generic lại là protocol phục vụ 6/7 nhóm triệu chứng.
+SCREENING_GROUPS: tuple = (
+    common_screening.emergency_scan_groups(GATE_STAGES[0])
+    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    + common_screening.risk_context_groups("4")
+)
+
 FIELD_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "is_pregnant": ("gestational_weeks", "obstetric_red_flags"),
     "immunocompromised": ("immunocompromise_cause", "known_neutropenia"),
@@ -170,7 +191,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     determine_route=determine_route,
     budget_key=budget_key,
     provisional_emergency_signal=common_rules.has_emergency_signal,
-    self_care_checklist_satisfied=never_self_care,
+    self_care_checklist_satisfied=common_rules.baseline_self_care_satisfied,
     skip_rule=skip_rule,
     rule_catalog=RULE_CATALOG,
     fallback_rule=common_rules.default_early_visit_rule,
@@ -178,6 +199,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     emergency_message=EMERGENCY_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS,
+    screening_groups=SCREENING_GROUPS,
     field_dependencies=FIELD_DEPENDENCIES,
     derive_fields=derive_duration,
     reason_code_labels=REASON_CODE_LABELS,

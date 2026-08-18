@@ -21,6 +21,51 @@ export async function api(path, options = {}) {
   return payload;
 }
 
+/**
+ * Gọi một endpoint SSE và gọi lại `onEvent(tên, dữ liệu)` cho từng sự kiện.
+ *
+ * Dùng `fetch` + `ReadableStream` chứ KHÔNG dùng `EventSource`: `EventSource` không đặt được header
+ * tuỳ ý, mà mọi route ở đây đòi `Authorization: Bearer`. Đổi lại phải tự tách khung SSE - đó là lý
+ * do có hàm này thay vì gọi thẳng trong `patient.js`.
+ */
+export async function apiStream(path, { body, onEvent } = {}) {
+  const headers = new Headers({ Accept: "text/event-stream", "Content-Type": "application/json" });
+  if (state.accessToken) headers.set("Authorization", `Bearer ${state.accessToken}`);
+
+  let response;
+  try {
+    response = await fetch(path, { method: "POST", headers, body });
+  } catch {
+    throw new ApiError("Không thể kết nối tới máy chủ.", 0);
+  }
+  if (!response.ok || !response.body) {
+    if (response.status === 401) clearSession();
+    const payload = await response.json().catch(() => null);
+    throw new ApiError(readError(payload) || "Yêu cầu không thành công.", response.status);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Sự kiện SSE ngăn cách bằng một dòng trống. Phần dư sau lần tách cuối là khung CHƯA đủ - giữ
+    // lại trong buffer, không được parse vội (mẩu tiếng Việt hay bị cắt giữa chừng ký tự).
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const event = /^event:\s*(.+)$/m.exec(frame)?.[1]?.trim();
+      const raw = /^data:\s*([\s\S]*)$/m.exec(frame)?.[1];
+      if (!event || raw === undefined) continue;
+      let data = null;
+      try { data = JSON.parse(raw); } catch { continue; }
+      onEvent?.(event, data);
+    }
+  }
+}
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);

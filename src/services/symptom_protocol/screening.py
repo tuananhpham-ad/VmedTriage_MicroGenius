@@ -45,6 +45,16 @@ MIN_GROUPS_PER_PROBE = 2
 """Dưới 2 nhóm thì hỏi gộp không tiết kiệm được lượt nào, mà lại đánh đổi: câu hỏi dài hơn và phải
 qua đường verdict thay vì hỏi thẳng đúng script chuẩn của cụm."""
 
+MAX_GROUPS_PER_PROBE = 3
+"""Trần TRÊN, đối trọng của `MIN_GROUPS_PER_PROBE`. Cả cơ chế này dựa trên tiền đề "nhóm chỉ được
+đóng khi người bệnh đã THỰC SỰ nhìn thấy danh sách dấu hiệu của nó" - tiền đề đó yếu dần theo độ dài
+câu hỏi. Stage 3A của fever có 5 nhóm: đọc liền 5 dòng dấu hiệu rồi nhận về "không có gì cả" là đóng
+5 nhóm bằng một câu trả lời mà người bệnh nhiều khả năng đã đọc lướt.
+
+Cắt ở 3 KHÔNG làm mất nhóm nào: phần dư rơi vào vòng sàng lọc kế tiếp (`max_screening_rounds`), và
+điều kiện "vòng sau phải là tập con thực sự của vòng trước" trong `next_probe` vẫn giữ nguyên vì tập
+NHÓM CHƯA GIẢI QUYẾT co lại sau mỗi vòng - không phải tập nhóm vừa được hỏi."""
+
 
 @dataclass(frozen=True, slots=True)
 class ScreeningOutcome:
@@ -89,7 +99,7 @@ def _cluster_is_open(
         return False
     if stage_machine.cluster_is_skipped(protocol, stage, cluster, answers):
         return False
-    return stage_machine.cluster_needs_answer(cluster, answers)
+    return stage_machine.cluster_needs_answer(protocol, cluster, answers)
 
 
 def unresolved_groups(
@@ -133,11 +143,16 @@ def next_probe(
        trước, và điều kiện này tự loại lượt sàng lọc.
     2. Ít nhất `MIN_GROUPS_PER_PROBE` nhóm chưa giải quyết - dưới ngưỡng thì hỏi thẳng cụm rẻ hơn.
     3. Chưa hết hạn mức vòng sàng lọc của stage (`history` là các tập nhóm đã sàng lọc ở stage này).
-    4. Vòng sàng lọc thứ hai phải HỎI ÍT HƠN vòng trước (tập nhóm là con THỰC SỰ). Đây là điều đo
-       được khi chạy thử chứ không phải suy đoán: nếu vòng đầu không thu được gì (người bệnh trả lời
-       "em không hiểu ý câu hỏi"), tập nhóm chưa giải quyết y nguyên, và vòng hai sẽ đọc lại NGUYÊN
-       VĂN cùng một danh sách dài - cách nhanh nhất để người bệnh bỏ cuộc. Vòng hai chỉ có nghĩa khi
-       vòng đầu đã đóng bớt được vài nhóm và phần còn dư gộp lại thành một câu ngắn hơn.
+    4. Vòng sau phải ĐỌC LÊN ít nhất một nhóm CHƯA từng đọc. Đây là điều đo được khi chạy thử chứ
+       không phải suy đoán: nếu vòng đầu không thu được gì (người bệnh trả lời "em không hiểu ý câu
+       hỏi"), tập nhóm chưa giải quyết y nguyên, và vòng hai sẽ đọc lại NGUYÊN VĂN cùng một danh sách
+       dài - cách nhanh nhất để người bệnh bỏ cuộc.
+
+    Điều kiện 4 trước đây là "tập nhóm chưa giải quyết phải là con THỰC SỰ của vòng trước". Nó đúng
+    khi một vòng đọc HẾT các nhóm còn lại, nhưng `MAX_GROUPS_PER_PROBE` đã bỏ tiền đề đó: vòng đầu
+    chỉ đọc 3/5 nhóm, nên 2 nhóm còn dư KHÔNG phải tập con của những nhóm đã đọc và vòng hai bị chặn
+    oan - đúng lúc nó cần chạy nhất. Diễn đạt "phải có nhóm chưa đọc" giữ nguyên ý định gốc (không
+    đọc lại đúng danh sách vừa đọc) mà không dựa vào tiền đề đã mất.
     """
     if candidate is None or len(history) >= protocol.max_screening_rounds:
         return ()
@@ -146,9 +161,27 @@ def next_probe(
         return ()
     if not any(candidate.id in group.cluster_ids for group in groups):
         return ()
-    if history and not frozenset(group.id for group in groups) < history[-1]:
+    selected = _select_groups(groups, history)
+    if len(selected) < MIN_GROUPS_PER_PROBE:
         return ()
-    return groups
+    already_read = frozenset().union(*history) if history else frozenset()
+    if all(group.id in already_read for group in selected):
+        return ()
+    return selected
+
+
+def _select_groups(
+    groups: tuple[ScreeningGroup, ...], history: tuple[frozenset[str], ...],
+) -> tuple[ScreeningGroup, ...]:
+    """Chọn tối đa `MAX_GROUPS_PER_PROBE` nhóm cho MỘT câu, nhóm CHƯA đọc lên trước.
+
+    Thứ tự này là thứ làm điều kiện 4 của `next_probe` có ý nghĩa: cắt danh sách mà vẫn lấy từ đầu
+    thì vòng hai đọc lại đúng những dòng vòng một vừa đọc, còn các nhóm chưa ai nghe thì không bao
+    giờ tới lượt."""
+    already_read = frozenset().union(*history) if history else frozenset()
+    fresh = [group for group in groups if group.id not in already_read]
+    reread = [group for group in groups if group.id in already_read]
+    return tuple((fresh + reread)[:MAX_GROUPS_PER_PROBE])
 
 
 def probe_fields(protocol: SymptomProtocol, groups: tuple[ScreeningGroup, ...]) -> tuple[str, ...]:
