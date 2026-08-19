@@ -33,10 +33,20 @@ BATCH_ID_PREFIX = "BATCH-"
 `screening.PROBE_ID_PREFIX`: nó không nằm trong `protocol.clusters` nên `next_cluster` không bao giờ
 tự chọn phải nó."""
 
-MAX_CLUSTERS_PER_BATCH = 3
-"""Trần số cụm gộp trong MỘT tin nhắn. 2-3 là mức người dùng chốt: đủ để hội thoại bớt lắt nhắt,
-chưa tới mức thành một biểu mẫu bắt điền. Trên 3 ý thì người bệnh bắt đầu chỉ trả lời ý cuối - và
-mỗi ý rơi mất là một lượt hỏi lại, tức là gộp nhiều hơn lại hoá chậm hơn."""
+MAX_CLUSTERS_PER_BATCH = 4
+"""Trần số CỤM gộp trong một tin nhắn."""
+
+MAX_FIELDS_PER_BATCH = 7
+"""Trần số Ý (field) gộp trong một tin nhắn - §4.8: 4-7 ý mỗi lượt.
+
+**Vì sao có hai trần chứ không một.** Trần cụm một mình không kiểm soát được thứ người bệnh thật sự
+nhìn thấy: một cụm là 1 ý ("bao nhiêu tuổi") nhưng cũng có thể là 3 ý ("6 giờ qua có đi tiểu không,
+ăn uống được không, có nôn nhiều không"). Ba cụm loại sau là 9 ý trong một tin nhắn - quá trần mà
+bộ đếm cụm không hề biết. Đếm theo field là đếm đúng thứ đắt: mỗi ý rơi mất là một lượt hỏi lại, nên
+gộp quá tay lại hoá chậm hơn.
+
+Trần trên là ràng buộc thật, không phải sự thận trọng: 20 câu một lượt thì người bệnh bỏ sót, trả
+lời không theo thứ tự, và một chữ "không" không biết đang phủ định câu nào."""
 
 
 def is_batch(cluster: QuestionCluster | None) -> bool:
@@ -126,6 +136,7 @@ def next_batch(
     *,
     asked_ids: frozenset[str] = frozenset(),
     max_clusters: int = MAX_CLUSTERS_PER_BATCH,
+    max_fields: int = MAX_FIELDS_PER_BATCH,
 ) -> tuple[QuestionCluster, ...]:
     """Các cụm sẽ được hỏi CHUNG một tin nhắn, `first` luôn đứng đầu. Rỗng = hỏi lẻ như cũ.
 
@@ -140,6 +151,9 @@ def next_batch(
     4. Mọi cụm phải có `script_hint` - không có kịch bản hỏi thì không có gì để ghép vào tin nhắn.
     5. Cụm CHƯA từng nằm trong một gói nào trước đó (`already_batched`) - đọc lại nguyên gói khi
        người bệnh đã bỏ qua nó một lần là vòng lặp, không phải kiên trì.
+    6. Tổng số Ý (field) của cả gói không vượt `max_fields` (§4.8). `first` LUÔN được giữ dù nó một
+       mình đã vượt trần - nó là cụm `stage_machine` đã chọn, và bỏ nó đi nghĩa là lượt này không
+       hỏi gì cả.
     """
     if first is None or max_clusters < 2 or not _is_narrative_stage(protocol, stage):
         return ()
@@ -149,8 +163,9 @@ def next_batch(
         return ()
 
     picked = [first]
+    field_count = len(first.fields)
     for candidate in clusters_for_stage(protocol, stage):
-        if len(picked) >= max_clusters:
+        if len(picked) >= max_clusters or field_count >= max_fields:
             break
         if candidate.id == first.id or candidate.id in asked_ids or candidate.id in heard_before:
             continue
@@ -160,7 +175,12 @@ def next_batch(
             continue
         if not stage_machine.cluster_needs_answer(protocol, candidate, answers):
             continue
+        if field_count + len(candidate.fields) > max_fields:
+            # Bỏ QUA chứ không dừng: cụm sau có thể nhỏ hơn và vẫn lọt trần. Dừng ở đây sẽ làm một
+            # cụm 4 ý chặn mất mọi cụm 1 ý đứng sau nó.
+            continue
         picked.append(candidate)
+        field_count += len(candidate.fields)
 
     return tuple(picked) if len(picked) >= 2 else ()
 
@@ -204,3 +224,53 @@ def batch_cluster(stage: str, clusters: tuple[QuestionCluster, ...]) -> Question
         batch_negation=False,  # gộp ở đây là hỏi thẳng, không phải phủ định hàng loạt
         script_hint=batch_question(clusters),
     )
+
+
+OPTIONAL_TIERS: frozenset[str] = frozenset({"O", "H"})
+"""Tier DUY NHẤT được phép suy `false` từ việc người bệnh bỏ qua một ý trong gói - xem
+`skipped_field_defaults`."""
+
+
+def skipped_field_defaults(
+    protocol: SymptomProtocol,
+    cluster: QuestionCluster,
+    answers: dict[str, object],
+    *,
+    information_gain: bool,
+) -> dict[str, str]:
+    """Ý trong gói mà người bệnh KHÔNG trả lời -> giá trị mặc định, THEO TIER (§4.8).
+
+    Yêu cầu ban đầu là "hỏi một đống câu, người dùng bỏ qua cái nào thì cho cái đấy là False luôn".
+    Phần đó chỉ được thực hiện cho tier O/H, và lý do phải khác cho M0/M1/C là một lỗi im lặng:
+
+    | Tier | Bỏ qua trong gói ⇒ | Vì sao |
+    | --- | --- | --- |
+    | M0/M1, field an toàn | giữ `unknown`, được hỏi lại | Im lặng không phải phủ định. Suy `false` ở đây tạo ra phiếu ghi "người bệnh phủ nhận ngất" trong khi CHƯA AI hỏi họ về ngất - và điều dưỡng đọc phiếu không có cách nào biết sự khác nhau |
+    | C | giữ `unknown`, không hỏi lại | Ghi vào `missing_information` là đủ |
+    | O/H | `false` | Chi phí sai thấp, lợi ích tốc độ thật |
+
+    Đây cũng chính là distinction `NULL ≠ UNKNOWN` mà toàn bộ tầng luật an toàn đang dựa vào
+    (`reducer` §4.2: snapshot đúng ba giá trị).
+
+    `information_gain=False` ⇒ KHÔNG suy gì cả. Người bệnh không trả lời ý nào trong gói thì đó là
+    im lặng toàn phần - có thể họ chưa đọc, chưa hiểu, hoặc đã bỏ cuộc. Chỉ khi họ ĐÃ trả lời một
+    phần của gói thì việc bỏ qua phần còn lại mới đọc được như "những cái kia thì không".
+
+    Chỉ áp cho field TRI-STATE: field enum/số không có giá trị "âm tính" nào để ghi, và bịa một giá
+    trị vào đó là dựng dữ liệu lâm sàng không ai nói (cùng lý do `ScreeningGroup.negative_values`
+    cố ý không khai field mô tả chi tiết).
+    """
+    if not information_gain:
+        return {}
+    safety = frozenset(protocol.safety_signal_fields)
+    defaults: dict[str, str] = {}
+    for key in cluster.fields:
+        spec = protocol.fields_by_key.get(key)
+        if spec is None or key in safety or not spec.tri_state or spec.allowed_values:
+            continue
+        if spec.tier not in OPTIONAL_TIERS:
+            continue
+        if stage_machine.field_is_settled(protocol, key, answers):
+            continue
+        defaults[key] = "false"
+    return defaults

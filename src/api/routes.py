@@ -45,9 +45,10 @@ from src.services.infra.auth import (
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.sessions import symptom_case_bridge, symptom_session
+from src.services.sessions import red_flag_sla, summary_render, symptom_case_bridge, symptom_session
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.case_store import case_store
+from src.services.symptom_protocol import registry
 from src.services.symptom_protocol.session import EmptyMessageError, SessionNotFoundError
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
@@ -216,11 +217,16 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
         raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
 
     session_id = payload.case_id
-    if session_id is None or symptom_session.session_store.get(session_id) is None:
-        # Chưa có phiên (case mới, hoặc phiên đã mất do restart server - store là in-memory): mở
-        # phiên mới rồi đưa luôn tin nhắn đầu tiên vào, không bắt người dùng gõ lại.
+    if session_id is None or symptom_session.session_store.get(session_id, user_id=patient_id) is None:
+        # Chưa có phiên, hoặc phiên không khôi phục được. Từ M1 (§4.9) `store.get` đã tra cả kho bền,
+        # nên nhánh này giờ chỉ còn là case MỚI thật sự - phiên đang dở sống được qua restart.
         session_id = symptom_session.session_store.start_session().session_id
         previous = None
+    # Nửa còn lại của khoá composite `user_id + conversation_id`. Gán ở đây vì store không biết gì về
+    # xác thực, còn route thì không biết gì về vòng đời phiên - chỗ hai thứ gặp nhau là đây.
+    session = symptom_session.session_store.get(session_id, user_id=patient_id)
+    if session is not None:
+        session.user_id = patient_id
     return session_id, previous
 
 
@@ -394,7 +400,58 @@ async def get_case(case_id: str, request: Request) -> TriageCase:
         raise HTTPException(status_code=403, detail="Bạn không có quyền xem case này")
     if request.state.auth.role.value == "patient":
         return _patient_case_view(triage_case)
+    return _mark_opened_by_nurse(triage_case)
+
+
+def _mark_opened_by_nurse(triage_case: TriageCase) -> TriageCase:
+    """Điều dưỡng MỞ ca ⇒ dừng đồng hồ SLA (ADR-007, §4.12).
+
+    Đặt ở đây chứ không ở bước duyệt: SLA an toàn hỏi "đã có người thật nhìn thấy ca này chưa", và
+    câu trả lời đó có ngay lúc mở, không phải lúc bấm duyệt. Ca mở rồi mà chưa duyệt là vấn đề thông
+    lượng - trộn hai thứ vào một chỉ số làm `sla_breach_rate` mất khả năng phát hiện cái thứ hai.
+
+    Chỉ ghi LẦN ĐẦU. Điều dưỡng mở lại ca lần thứ năm không làm đồng hồ chạy lại."""
+    if triage_case.first_opened_at is None and triage_case.queued_at is not None:
+        triage_case.first_opened_at = datetime.now(timezone.utc)
+        case_store.save(triage_case)
     return triage_case
+
+
+@router.get("/cases/{case_id}/summary")
+async def get_case_summary(case_id: str, request: Request) -> dict:
+    """Hai output summary của ADR-006 trong MỘT lời gọi.
+
+    - `isbar` — `HandoffSummary` phẳng map sang 5 khối I/S/B/A/R, cho bảng của điều dưỡng;
+    - `narrative` — `summary_text`, văn xuôi, cho DB/memory;
+    - `field_summary` — bản render TẤT ĐỊNH theo field, là **bản đối chứng** của `narrative`;
+    - `raw_conversation` — toàn văn câu trả lời của người bệnh (§4.3).
+
+    Chỉ nhân viên y tế: đây là hồ sơ nội bộ đầy đủ, gồm cả field an toàn còn `unknown` - thứ mà
+    `_patient_case_view` cố ý che khỏi bệnh nhân cho tới khi có người duyệt."""
+    if request.state.auth.role.value == "patient":
+        raise HTTPException(status_code=403, detail="Chỉ nhân viên y tế xem được phiếu bàn giao đầy đủ.")
+    triage_case = case_store.get(case_id)
+    if not triage_case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if triage_case.summary is None:
+        raise HTTPException(status_code=409, detail="Ca chưa có phiếu tóm tắt.")
+
+    protocol = registry.protocol_for(triage_case.structured_data.symptom_group if triage_case.structured_data else "")
+    answers = dict(triage_case.structured_data.fields) if triage_case.structured_data else {}
+    fields = summary_render.field_summary(protocol, answers)
+    return {
+        "case_id": case_id,
+        "isbar": summary_render.to_isbar(triage_case.summary),
+        "narrative": triage_case.summary.narrative,
+        "field_summary": {
+            "reported": fields.reported,
+            "denied": fields.denied,
+            "unknown_safety": fields.unknown_safety,
+            "text": fields.as_text(),
+        },
+        "raw_conversation": triage_case.summary.raw_conversation,
+        "nurse_field_edits": [_dump(edit) for edit in triage_case.nurse_field_edits],
+    }
 
 
 @router.post("/cases/{case_id}/review", response_model=NurseReviewResponse)
@@ -444,7 +501,26 @@ def _patient_case_view(triage_case: TriageCase) -> TriageCase:
         patient_case.queue_item = None
         if patient_case.status != CaseStatus.COLLECTING_INFORMATION:
             patient_case.patient_visible_response = None
+    _apply_sla_breach(patient_case, triage_case)
     return patient_case
+
+
+def _apply_sla_breach(patient_case: TriageCase, triage_case: TriageCase) -> None:
+    """Quá SLA mà chưa điều dưỡng nào mở ca ⇒ bệnh nhân đọc `SLA_BREACH_MESSAGE` (ADR-007).
+
+    HITL là đường chính; đây là lưới đỡ khi đường chính kẹt. Không có nó thì "chờ điều dưỡng" có thể
+    âm thầm trở thành "chờ vô hạn" khi ca trực quá tải hoặc hệ thống thông báo lỗi.
+
+    Câu này GHI ĐÈ nội dung đang hiển thị, kể cả khi phần redact ở trên vừa xoá nó: đúng lúc ca bị bỏ
+    quên là lúc bệnh nhân cần đọc một thứ gì đó nhất. Nó KHÔNG đổi `status`, `triage_proposal` hay
+    bất cứ quyết định nào - thuần tầng hiển thị."""
+    status = red_flag_sla.evaluate(
+        queued_at=triage_case.queued_at,
+        first_opened_at=triage_case.first_opened_at,
+        is_red_flag=triage_case.status is CaseStatus.ESCALATED,
+    )
+    if status.notify_patient:
+        patient_case.patient_visible_response = red_flag_sla.SLA_BREACH_MESSAGE_TEXT
 
 
 def _dump(value):

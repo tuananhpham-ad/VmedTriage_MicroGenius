@@ -33,6 +33,8 @@ from src.models.schemas import (
     CaseStatus,
     ConversationMessage,
     HITLAction,
+    NurseFieldEdit,
+    NurseFieldEditRequest,
     NurseReviewRequest,
     NurseReviewResponse,
     TriageCase,
@@ -44,6 +46,17 @@ from src.services.stores.case_store import case_store
 # Hành động không chốt mức ưu tiên nên KHÔNG sinh `ApprovalStatusRecord`: hỏi thêm là đưa case về
 # trạng thái đang thu thập, từ chối là dừng hẳn - cả hai đều không phải "đã duyệt kết quả".
 _ACTIONS_THAT_SETTLE_PRIORITY = frozenset({HITLAction.APPROVE, HITLAction.EDIT})
+
+RED_FLAG_PREFIX = "red_flags."
+"""Tiền tố đường dẫn của một red flag trong `NurseFieldEdit.field` (`red_flags.RF-07`)."""
+
+_FALSY_VALUES = (None, False, "", "false", "False", 0, "no", "không")
+"""Giá trị đọc là "hạ cờ này xuống". Rộng có chủ đích: client gửi `false`, `"false"` hay `null` đều
+là cùng một ý định, và bỏ sót một dạng ở đây nghĩa là bỏ qua đúng cái ma sát cố ý của §4.4 mục 3."""
+
+
+def _is_lowering(value: object) -> bool:
+    return any(value is item or value == item for item in _FALSY_VALUES)
 
 
 class HumanReviewService:
@@ -60,6 +73,9 @@ class HumanReviewService:
             raise ValueError("Case not found.")
 
         priority_before = self._current_priority(triage_case)
+        # Sửa trường chạy TRƯỚC hành động: hạ một red flag mà thiếu lý do phải làm hỏng cả lời gọi,
+        # không được để hành động `approve` đi qua rồi mới báo lỗi phần sửa.
+        field_edits = self._apply_field_edits(triage_case, request, nurse_id)
 
         match request.action:
             case HITLAction.APPROVE:
@@ -82,11 +98,95 @@ class HumanReviewService:
 
         case_store.save(triage_case)
         self._record(triage_case, request, nurse_id, priority_before)
+        self._record_field_edits(triage_case, field_edits, nurse_id)
         return NurseReviewResponse(
             case_id=triage_case.case_id,
             status=triage_case.status,
             patient_visible_response=triage_case.patient_visible_response,
         )
+
+    # --- overlay sửa trường của điều dưỡng -----------------------------------------------------
+
+    def _apply_field_edits(
+        self, triage_case: TriageCase, request: NurseReviewRequest, nurse_id: int | None,
+    ) -> list[NurseFieldEdit]:
+        """Ghi bản sửa của điều dưỡng vào lớp OVERLAY - KHÔNG ghi đè bản do hệ thống sinh (§4.4).
+
+        Điều dưỡng là người có thẩm quyền lâm sàng cao nhất trong luồng này, nên họ sửa được MỌI
+        trường của phiếu, red flag bao gồm. Đừng nhầm việc này với `Session.escalation_lock`: khoá
+        đó chặn MODEL tự hạ escalation TRONG phiên và không được nới: nó nằm ở
+        `symptom_protocol/session.py`, và đường duyệt này không hề chạm tới `Session` - nó chỉ đọc
+        `TriageCase` trong `case_store`. Hai khái niệm bị gộp làm một trước đây; tách chúng ra chính
+        là nội dung của §4.4.
+
+        Một ràng buộc CÓ ma sát cố ý: hạ một red flag phải kèm lý do. Đó là loại ma sát duy nhất
+        được giữ trong toàn mục này."""
+        if not request.field_edits:
+            return []
+        actor = str(nurse_id) if nurse_id is not None else "unknown"
+        applied: list[NurseFieldEdit] = []
+        for edit in request.field_edits:
+            if edit.field.startswith(RED_FLAG_PREFIX) and _is_lowering(edit.value) and not edit.reason.strip():
+                raise ValueError(
+                    "Hạ một dấu hiệu nguy hiểm phải kèm lý do - vui lòng ghi rõ căn cứ lâm sàng."
+                )
+            applied.append(
+                NurseFieldEdit(
+                    field=edit.field,
+                    generated_value=self._generated_value(triage_case, edit),
+                    current_value=edit.value,
+                    edited_by=actor,
+                    reason=edit.reason.strip(),
+                    # Đã gửi cảnh báo cho bệnh nhân rồi thì lần sửa này KHÔNG thu hồi được nó.
+                    notice_already_sent=triage_case.emergency_notice_sent,
+                )
+            )
+        triage_case.nurse_field_edits.extend(applied)
+        return applied
+
+    def _generated_value(self, triage_case: TriageCase, edit: NurseFieldEditRequest) -> object | None:
+        """Giá trị GỐC do hệ thống sinh, chốt ở lần sửa đầu tiên của trường đó.
+
+        Sửa lần thứ hai KHÔNG được lấy giá trị điều dưỡng đặt ở lần đầu làm `generated_value` - làm
+        thế thì sau hai lần sửa, phiếu đọc ra như thể AI vốn đã nói điều điều dưỡng vừa viết. Cùng
+        lý do `_current_priority` phải đọc `approval_store` trước."""
+        for existing in triage_case.nurse_field_edits:
+            if existing.field == edit.field:
+                return existing.generated_value
+        return self._read_generated(triage_case, edit.field)
+
+    def _read_generated(self, triage_case: TriageCase, path: str) -> object | None:
+        """Đọc giá trị hệ thống sinh theo đường dẫn của `NurseFieldEdit.field`.
+
+        Chỉ hiểu hai không gian tên đang có ý nghĩa lâm sàng (`red_flags.<mã>`, `summary.<trường>`).
+        Đường dẫn lạ trả `None` chứ không ném lỗi: overlay vẫn phải ghi được bản sửa và vẫn phải ghi
+        audit - mất một `generated_value` còn hơn mất cả bản ghi điều dưỡng vừa tạo."""
+        if path.startswith(RED_FLAG_PREFIX):
+            code = path[len(RED_FLAG_PREFIX):]
+            return any(flag.code == code for flag in triage_case.red_flags)
+        if path.startswith("summary.") and triage_case.summary is not None:
+            return getattr(triage_case.summary, path[len("summary."):], None)
+        return None
+
+    def _record_field_edits(
+        self, triage_case: TriageCase, edits: list[NurseFieldEdit], nurse_id: int | None,
+    ) -> None:
+        """Mỗi trường sửa là MỘT dòng audit riêng, kèm `old_value`/`new_value`.
+
+        Không gộp vào dòng audit của hành động duyệt: câu hỏi cần trả lời được sau sự cố là "ai đã
+        bỏ dấu hiệu nào đi vì lý do gì", mà một dòng ghi cả năm trường thì không trả lời được."""
+        actor = str(nurse_id) if nurse_id is not None else "unknown"
+        for edit in edits:
+            approval_store.log(
+                AuditLogEntry(
+                    case_id=triage_case.case_id,
+                    actor=actor,
+                    action=f"edit_field:{edit.field}",
+                    old_value=str(edit.generated_value),
+                    new_value=str(edit.current_value),
+                    reason=edit.reason or None,
+                )
+            )
 
     # --- dấu vết duyệt -------------------------------------------------------------------------
 

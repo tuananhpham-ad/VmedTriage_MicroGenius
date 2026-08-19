@@ -37,6 +37,8 @@ from src.models.schemas import (
     TriageProposal,
     ValidationResult,
 )
+from src.services.sessions import narrative as narrative_mod
+from src.services.sessions import summary_render
 from src.services.symptom_protocol import registry
 from src.services.symptom_protocol.protocol import SymptomProtocol
 from src.services.symptom_protocol.session import Session, SessionState
@@ -157,9 +159,57 @@ def _triage_proposal(protocol: SymptomProtocol, session: Session) -> TriagePropo
     )
 
 
+# Field NGUỒN của 5 trường ISBAR bổ sung (ADR-006). Đặt ở đây chứ không trong `SymptomProtocol`:
+# đây là dữ liệu HÀNH CHÍNH/TIỀN SỬ dùng chung cho mọi nhóm triệu chứng, không phải nội dung lâm sàng
+# riêng của nhóm nào - chúng đã nằm trong `common_safety/fields.py`.
+_ALLERGY_FIELD = "drug_allergies"
+_COMORBIDITY_FIELD = "chronic_conditions"
+_MEDICATION_FIELD = "current_medications"
+
+# Số tháng để đổi `age_value` + `age_unit` sang một chuỗi đọc được.
+_AGE_UNIT_LABELS = {"day": "ngày tuổi", "month": "tháng tuổi", "year": "tuổi"}
+_SEX_LABELS = {"male": "Nam", "female": "Nữ", "unknown": "Chưa rõ"}
+
+# `stop_reason` nào có nghĩa là "phiên đóng vì người bệnh không khai tiếp", chứ không phải vì đã hỏi
+# đủ (§4.7 + §7.2 mục 4). Ba mã này ra ba phiếu PHÂN BIỆT ĐƯỢC, và cả ba đều là phiếu CHƯA ĐẦY ĐỦ.
+_INCOMPLETE_STOP_REASONS = frozenset(
+    {"USER_CANNOT_CONTINUE", "USER_UNCOOPERATIVE", "BUDGET_EXHAUSTED", "INVALID_STATE", "RED_FLAG"}
+)
+"""`RED_FLAG` NẰM TRONG danh sách này, và đó là sửa lại sau khi chạy thật ngày 2026-08-19.
+
+Ca "bé 2 tháng sốt 38" escalate ngay ở lượt 1 - đúng lâm sàng - nhưng phiếu bàn giao khi đó có hơn
+30 field M0/M1 còn `unknown` mà vẫn ghi `is_complete=True`. Điều dưỡng đọc "phiếu đã đầy đủ" bên
+cạnh một danh sách 30 dòng thiếu thông tin là một mâu thuẫn không ai giải thích được.
+
+Dừng vì chốt đỏ là kết thúc ĐÚNG (escalate ngay quan trọng hơn hỏi nốt checklist, §8.2 mục 1) nhưng
+phiếu thì vẫn CHƯA ĐẦY ĐỦ. Hai chuyện khác nhau: `stop_reason` nói vì sao dừng, `is_complete` nói
+phiếu có đủ dữ kiện chưa. Chính vì thế `aggregate()` loại phiên `RED_FLAG` khỏi mẫu số độ phủ thay
+vì tính chúng là đạt."""
+
+
+def _age_label(answers: dict[str, object]) -> str | None:
+    value = answers.get("age_value")
+    if not _is_filled(value):
+        return None
+    unit = _AGE_UNIT_LABELS.get(str(answers.get("age_unit") or ""), "tuổi")
+    return f"{value} {unit}"
+
+
+def _as_list(value: object) -> list[str]:
+    """Field danh sách của agent về `list[str]`. Nó có thể tới ở ba dạng (list thật, chuỗi phân tách
+    bằng dấu phẩy, hoặc một giá trị đơn) vì `allowed_values` rỗng nghĩa là trường tự do."""
+    if not _is_filled(value):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
 def _summary(protocol: SymptomProtocol, session: Session, answers: dict[str, object]) -> HandoffSummary:
     onset = answers.get(protocol.onset_field) if protocol.onset_field else None
     severity = answers.get(protocol.severity_field) if protocol.severity_field else None
+    allergies = answers.get(_ALLERGY_FIELD)
+    stop_reason = session.stop_reason or ""
     return HandoffSummary(
         chief_complaint=_chief_complaint(protocol, answers),
         onset=str(onset) if _is_filled(onset) else None,
@@ -175,7 +225,52 @@ def _summary(protocol: SymptomProtocol, session: Session, answers: dict[str, obj
         protocol_reason=", ".join(session.triggered_rules),
         detect_source=f"symptom_intake_agent/{protocol.name}",
         grounding_source=f"rule catalog của protocol {protocol.name}",
+        # --- ADR-006: 5 trường ISBAR bổ sung ---------------------------------------------------
+        age=_age_label(answers),
+        sex=_SEX_LABELS.get(str(answers.get("sex") or "")) if _is_filled(answers.get("sex")) else None,
+        # Dị ứng giữ ĐÚNG 3 giá trị của reducer thay vì đổi sang `bool | None`: "chưa ai hỏi" và
+        # "người bệnh nói không dị ứng" là hai dữ kiện khác nhau, và tuyến sau cần phân biệt được.
+        allergies=str(allergies) if _is_filled(allergies) else "unknown",
+        comorbidities=_as_list(answers.get(_COMORBIDITY_FIELD)),
+        current_medications=_as_list(answers.get(_MEDICATION_FIELD)),
+        # --- §4.2: truy nguyên nguồn của mức ưu tiên --------------------------------------------
+        provisional_priority=_PRIORITY_BY_LEVEL.get(session.triage_level or "", None),
+        priority_source="rule_engine" if session.triage_level else "",
+        # --- §4.7 + §7.2 mục 4: ba lý do dừng, ba phiếu phân biệt được --------------------------
+        is_complete=stop_reason not in _INCOMPLETE_STOP_REASONS,
+        stop_reason=stop_reason,
+        approval_status="pending_nurse_review",
+        red_flag_agreement=session.red_flag_agreement.as_dict(),
+        raw_conversation=[
+            turn.get("content", "") for turn in session.conversation if turn.get("role") == "user"
+        ],
     )
+
+
+def _attach_narrative(
+    protocol: SymptomProtocol,
+    session: Session,
+    answers: dict[str, object],
+    summary: HandoffSummary,
+    *,
+    wanted: bool,
+) -> None:
+    """Gắn `summary_text` vào phiếu - CHỈ khi phiên đã đóng (ADR-006).
+
+    Không sinh trong lúc còn đang hỏi, và đó là quyết định về chi phí lẫn về nghĩa: `to_triage_case`
+    chạy lại MỖI LƯỢT, nên sinh ở đây là thêm một lời gọi model cho mọi lượt của mọi phiên - và bản
+    tóm tắt của một hồ sơ mới hỏi được 3 field thì cũng không dùng vào việc gì.
+
+    Bản đã sinh được GIỮ LẠI qua các lần dựng sau (`previous.summary.narrative` đi qua `_summary`
+    không nổi vì phiếu dựng mới mỗi lượt), nên hàm này tự kiểm `wanted` thay vì để caller nhớ."""
+    if not wanted:
+        return
+    fields = summary_render.field_summary(protocol, answers)
+    text, source = narrative_mod.build_narrative(fields, credential=session.credential)
+    summary.narrative = text
+    if source != "llm" and text:
+        # Truy nguyên: phiếu phải nói được nó đang hiển thị bản LLM hay bản tất định.
+        summary.detect_source = f"{summary.detect_source} (narrative fallback: {source})"
 
 
 def to_triage_case(session: Session, *, patient_id: int | None, previous: TriageCase | None = None) -> TriageCase:
@@ -204,6 +299,7 @@ def to_triage_case(session: Session, *, patient_id: int | None, previous: Triage
         follow_up_questions=[session.last_question] if session.last_question else [],
     )
     summary = _summary(protocol, session, answers)
+    _attach_narrative(protocol, session, answers, summary, wanted=not is_collecting)
     proposal = _triage_proposal(protocol, session)
 
     return TriageCase(
@@ -236,7 +332,7 @@ def to_triage_case(session: Session, *, patient_id: int | None, previous: Triage
         patient_visible_response=(
             session.last_question
             if is_collecting
-            else protocol.emergency_message
+            else protocol.patient_red_flag_message
             if status is CaseStatus.ESCALATED
             else None
         ),
@@ -254,4 +350,22 @@ def to_triage_case(session: Session, *, patient_id: int | None, previous: Triage
         # (`fever_onset_at`, `urine_output`...), đọc không hiểu gì.
         summary_ready=not is_collecting,
         summary_fields=_summary_fields(protocol, answers),
+        # Overlay của điều dưỡng nằm ngoài tầm hiểu biết của agent - dựng lại `TriageCase` mỗi lượt
+        # mà không mang nó theo sẽ XOÁ SẠCH bản sửa và cả dấu vết `generated_value` (§4.4). Cùng lý
+        # do với `nurse_feedback`/`reviewed_by_*` ngay bên trên.
+        nurse_field_edits=list(previous.nurse_field_edits) if previous else [],
+        # MỘT CHIỀU: đã hiển thị thông điệp cấp cứu tĩnh cho bệnh nhân thì sự kiện đó không rút lại
+        # được, kể cả khi ca về sau được hạ mức. Nó ghi lại một việc ĐÃ xảy ra, không phải trạng
+        # thái hiện tại - xem `NurseFieldEdit.notice_already_sent`.
+        # Đồng hồ SLA (ADR-007) bắt đầu khi ca vào hàng đợi và chỉ đặt MỘT LẦN: `to_triage_case`
+        # chạy lại mỗi lượt, nên gán lại mốc này sẽ làm đồng hồ mãi mãi về 0.
+        queued_at=(
+            (previous.queued_at if previous else None)
+            or (datetime.now(timezone.utc) if not is_collecting else None)
+        ),
+        first_opened_at=previous.first_opened_at if previous else None,
+        emergency_notice_sent=(
+            (previous.emergency_notice_sent if previous else False)
+            or status is CaseStatus.ESCALATED
+        ),
     )

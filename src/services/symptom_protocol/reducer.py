@@ -54,6 +54,11 @@ SOURCE_EXTRACTOR = "extractor"
 SOURCE_SCREENING = "screening"
 SOURCE_KEYWORD = "keyword"
 SOURCE_DERIVED = "derived"
+SOURCE_BATCH_DEFAULT = "batch_default"
+"""Giá trị `false` SUY RA từ việc người bệnh bỏ qua một ý tier O/H trong lượt hỏi gộp (§4.8).
+
+Có nguồn riêng chứ không dùng chung `SOURCE_EXTRACTOR` vì audit phải phân biệt được "người bệnh nói
+không" với "hệ thống suy ra là không" - đó đúng là câu hỏi đầu tiên khi soát lại một phiếu."""
 
 # Tên bệnh trong đoạn trích dẫn (`DISEASE_NAMES`) = đính chính CÓ RỦI RO HIỂU NHẦM (§5 quy tắc 5).
 # Đây đúng là bug C2: "bé không **sốt xuất huyết**" là phủ định một TÊN BỆNH, không phải phủ định

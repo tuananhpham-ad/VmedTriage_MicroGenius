@@ -33,7 +33,7 @@ from src.services.checklists.generic_checklist import (
 )
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
-from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
+from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months, array_has_any, is_true
 from src.services.symptom_protocol.models import QuestionCluster, RuleMatch
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -196,7 +196,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     rule_catalog=RULE_CATALOG,
     fallback_rule=common_rules.default_early_visit_rule,
     self_care_default_rule=_self_care_default_rule,
-    emergency_message=EMERGENCY_MESSAGE,
+    patient_red_flag_message=SUSPECTED_RED_FLAG_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS,
     screening_groups=SCREENING_GROUPS,

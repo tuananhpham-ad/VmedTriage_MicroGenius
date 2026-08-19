@@ -126,6 +126,65 @@ def check(
     return _record(GuardResult(ok=not violations, violations=violations))
 
 
+VIOLATION_INVENTED_DENIAL = "invented_denial"
+"""Bản văn xuôi nói người bệnh PHỦ NHẬN một field đang là `unknown` - chưa ai hỏi tới.
+
+Đây là lỗi im lặng nguy hiểm nhất của bản tóm tắt và nó ĐÃ xảy ra thật (xem
+`summary_render.narrative_invents_denials`). Tách khỏi `VIOLATION_UNGROUNDED` vì hai lỗi khác nhau:
+"ungrounded" là văn xuôi nói thứ không có trong hồ sơ, còn cái này là văn xuôi nói ĐÚNG field nhưng
+SAI CỰC - và cái thứ hai nguy hiểm hơn hẳn vì nó đọc rất thuyết phục."""
+
+VIOLATION_UNGROUNDED = "ungrounded_narrative"
+"""Bản văn xuôi không được field nào trong hồ sơ đỡ - xem `check_narrative`."""
+
+_NARRATIVE_ADVICE: tuple[str, ...] = (
+    "nên uống", "nên dùng", "nên đi khám", "nên tới", "nên đến", "cần uống", "cần dùng",
+    "khuyên", "chỉ định", "điều trị bằng", "kê", "liều",
+)
+"""Lời khuyên xử trí ở NGÔI THỨ BA - dạng mà một bản tóm tắt viết ra.
+
+Không dùng lại `_TREATMENT_ADVICE` được: danh sách đó viết ở ngôi thứ hai ("bạn nên uống") vì nó
+nhắm CÂU HỎI gửi thẳng cho người bệnh. Bản tóm tắt thì viết "Người bệnh nên uống paracetamol" - cùng
+một vi phạm, không khớp một cụm từ nào. Hai văn cảnh, hai danh sách; gộp lại thì một trong hai luôn
+có lỗ."""
+
+
+def check_narrative(
+    text: str, *, grounded: bool = True, invented_denials: tuple[str, ...] = (),
+) -> GuardResult:
+    """Guard cho VĂN XUÔI tóm tắt (§4.3 chế độ (a)), khác `check` vốn viết cho CÂU HỎI.
+
+    Không dùng lại `check` được, và đó không phải chuyện hình thức: `check` bắt buộc văn bản phải có
+    dấu hỏi (`VIOLATION_NOT_A_QUESTION`) và đếm trần số ý hỏi. Một bản tóm tắt hợp lệ **không có câu
+    hỏi nào** - chạy nó qua `check` thì mọi bản tóm tắt đều bị chặn, và cách "sửa" nhanh nhất là nới
+    `check`, tức là làm hỏng guard của câu hỏi.
+
+    Ba kiểm tra GIỮ NGUYÊN vì chúng không dính gì tới việc văn bản là câu hỏi hay không - và chúng
+    mới là phần an toàn thật: không nêu tên bệnh, không khuyên xử trí, không markdown lạ.
+
+    `grounded` do caller tính bằng `summary_render.narrative_is_grounded` (đối chứng với bản render
+    theo field). Nhận vào chứ không tự tính: guard không được biết gì về protocol/snapshot, nếu
+    không nó thành tầng thứ hai đọc hồ sơ và có cơ hội lệch khỏi tầng thứ nhất."""
+    violations: list[str] = []
+    stripped = (text or "").strip()
+    if not stripped:
+        return _record(GuardResult(ok=False, violations=[VIOLATION_EMPTY]))
+
+    lowered = stripped.casefold()
+    if any(name in lowered for name in DISEASE_NAMES):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if any(phrase in lowered for phrase in (*_TREATMENT_ADVICE, *_NARRATIVE_ADVICE)):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if _UNSAFE_MARKDOWN.search(stripped):
+        violations.append(VIOLATION_UNSAFE_MARKDOWN)
+    if not grounded:
+        violations.append(VIOLATION_UNGROUNDED)
+    if invented_denials:
+        violations.append(VIOLATION_INVENTED_DENIAL)
+
+    return _record(GuardResult(ok=not violations, violations=violations))
+
+
 _MIN_QUESTION_ALLOWANCE = 2
 """§6.5 nói "đúng 1-2 dấu hỏi", nên trần không bao giờ thấp hơn 2 kể cả với plan một ý.
 

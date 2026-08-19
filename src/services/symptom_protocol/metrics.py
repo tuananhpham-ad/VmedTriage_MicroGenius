@@ -121,6 +121,12 @@ class ConversationMetrics:
             "deferral_depth": _mean(self.deferral_depth_samples),
             "catch_all_asked": self.catch_all_asked,
             "catch_all_yielded": self.catch_all_yielded,
+            # §8: phiên kết thúc vì người bệnh không khai tiếp - ba mã, đọc RIÊNG chứ không gộp.
+            # `abandoned` là chỉ số trải nghiệm THẬT NHẤT (§1 bất biến 10), và nó chỉ có nghĩa khi
+            # tách khỏi `NO_MORE_SYMPTOMS`: người bệnh nói "hết rồi" là kết thúc BÌNH THƯỜNG, còn
+            # người bỏ dở giữa chừng mới là ca ta muốn giảm.
+            "abandoned": stop_reason in _ABANDON_STOP_REASONS,
+            "uncooperative_stop": stop_reason == "USER_UNCOOPERATIVE",
         }
 
 
@@ -140,6 +146,15 @@ class ConversationMetrics:
         field là đơn vị duy nhất đúng cho mọi loại cụm - kể cả cụm quét sót dựng tại chỗ."""
         remaining = set(coverage.mandatory_remaining(protocol, answers))
         return sorted(remaining - self.asked_field_keys)
+
+
+_ABANDON_STOP_REASONS = frozenset({"USER_CANNOT_CONTINUE", "USER_UNCOOPERATIVE"})
+"""Mã dừng đọc là "người bệnh bỏ dở".
+
+`NO_MORE_SYMPTOMS` **không** nằm ở đây dù nó cũng đến từ ý định người bệnh: nói "không còn triệu
+chứng nào khác" khi hệ thống cũng không còn cụm bắt buộc nào là một phiên kết thúc ĐÚNG, không phải
+một ca bỏ cuộc. Gộp lại thì `abandonment_rate` tăng mỗi khi hội thoại chạy trơn tru - tức là chỉ số
+sẽ thưởng cho đúng cái nó cần phạt."""
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -191,7 +206,27 @@ def aggregate(summaries: list[dict[str, object]]) -> dict[str, object]:
         "repeat_question_rate": _weighted(summaries, "repeat_question_rate", "questions_asked"),
         "deferral_depth": _mean_of(summaries, "deferral_depth"),
         "catch_all_yield": _catch_all_yield(summaries),
+        # Mẫu số là phiên ĐÃ ĐÓNG: một phiên chưa đóng chưa có cơ hội bị bỏ dở, và tính nó vào sẽ
+        # làm chỉ số phụ thuộc vào trần lượt của harness thay vì vào hành vi người bệnh.
+        "abandonment_rate": _rate_over(closed, "abandoned"),
+        "uncooperative_stop_rate": _rate_over(closed, "uncooperative_stop"),
+        "stop_reasons": _stop_reason_histogram(closed),
     }
+
+
+def _rate_over(summaries: list[dict[str, object]], key: str) -> dict[str, object]:
+    hits = [item for item in summaries if item.get(key)]
+    return {"value": _ratio(len(hits), len(summaries)), "n": len(summaries), "hits": len(hits)}
+
+
+def _stop_reason_histogram(summaries: list[dict[str, object]]) -> dict[str, int]:
+    """Đếm theo TỪNG mã dừng. §7.2 mục 4 đòi ba lý do dừng phải phân biệt được trên phiếu; ở tầng
+    tổng hợp thì "phân biệt được" nghĩa là chúng có ba ô đếm riêng, không phải một ô "đã dừng"."""
+    histogram: dict[str, int] = {}
+    for item in summaries:
+        reason = str(item.get("stop_reason") or "UNKNOWN")
+        histogram[reason] = histogram.get(reason, 0) + 1
+    return dict(sorted(histogram.items()))
 
 
 def _catch_all_yield(summaries: list[dict[str, object]]) -> dict[str, object]:

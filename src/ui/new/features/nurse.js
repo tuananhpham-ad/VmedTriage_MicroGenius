@@ -53,7 +53,7 @@ function paintQueue(root, { navigate, logout }) {
   const message = root.querySelector("#queue-message");
   if (!items.length) { message.hidden = false; message.className = "queue-message"; message.innerHTML = "<strong>Không có ca phù hợp</strong><span>Danh sách sẽ được cập nhật tự động.</span>"; list.replaceChildren(); return; }
   message.hidden = true;
-  list.innerHTML = items.map((item) => `<button class="queue-row ${priorityClass(priority(item))}" type="button" data-case="${item.case_id}" role="listitem"><div><span class="case-code">Ca ${shortCaseId(item.case_id)}</span><strong>${escapeHtml(complaint(item))}</strong></div><span class="priority-badge ${priorityClass(priority(item))}">${priorityLabels[priority(item)] || priority(item)}</span><span class="queue-meta">${statusLabels[item.status] || item.status}<small>Chờ ${waitingLabel(item.created_at)}</small></span></button>`).join("");
+  list.innerHTML = items.map((item) => `<button class="queue-row ${priorityClass(priority(item))}" type="button" data-case="${item.case_id}" role="listitem"><div><span class="case-code">Ca ${shortCaseId(item.case_id)}</span><strong>${escapeHtml(complaint(item))}</strong></div><span class="priority-badge ${priorityClass(priority(item))}">${priorityLabels[priority(item)] || priority(item)}</span><span class="queue-meta">${statusLabels[item.status] || item.status}<small>Chờ ${waitingLabel(item.created_at)}</small>${slaBadge(item)}</span></button>`).join("");
   list.querySelectorAll("[data-case]").forEach((button) => button.addEventListener("click", () => loadCase(button.dataset.case, { navigate, logout })));
 }
 
@@ -70,8 +70,9 @@ export function renderNurseCase(root, { navigate, logout }) {
   const proposal = item.triage_proposal || {};
   const missing = summary.missing_information || validation.missing_fields || structured.missing_fields || [];
   const isDone = completedStatuses.has(item.status);
-  root.innerHTML = `<section class="app-shell nurse-shell"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng nhân viên y tế"><button class="nav-link" type="button" data-back>Hàng đợi ca</button><button class="nav-link is-active" type="button">Duyệt ca</button></nav>${accountMenu()}</header><main class="review-layout"><section class="case-record"><header class="record-header"><div><p class="eyebrow">Phiếu tóm tắt</p><h1>Ca ${shortCaseId(item.case_id)}</h1><p>${formatDate(item.created_at)}</p></div><div><span class="status-badge ${statusClass(item.status)}">${statusLabels[item.status] || item.status}</span><span class="priority-badge ${priorityClass(priority(item))}">${priorityLabels[priority(item)] || priority(item)}</span></div></header>${item.red_flags?.length ? `<div class="red-flag-alert">Ca có dấu hiệu nguy hiểm: ${item.red_flags.map((flag) => escapeHtml(flag.label || flag.code)).join(", ")}</div>` : ""}${graphDecisionBlock(item)}<section class="record-section"><h2>Thông tin lâm sàng đã thu thập</h2><dl class="clinical-grid">${clinicalField("Triệu chứng chính", summary.chief_complaint || symptomGroupLabels[structured.symptom_group] || "Chưa ghi nhận")}${clinicalField("Khởi phát", summary.onset || "Thiếu thông tin")}${clinicalField("Mức độ", summary.severity || "Thiếu thông tin")}${clinicalField("Độ tin cậy", Number.isFinite(structured.confidence) ? `${Math.round(structured.confidence * 100)}%` : "Chưa có")}</dl><div class="detail-group"><h3>Triệu chứng đi kèm</h3><div class="tag-list">${tags(summary.associated_symptoms, "Chưa ghi nhận")}</div></div>${intakeChecklistMarkup(item, missing)}</section><section class="record-section"><h2>Hội thoại</h2><div class="review-conversation">${conversation(item.conversation)}</div></section></section><aside class="review-actions"><p class="eyebrow">Xác nhận của nhân viên y tế</p><h2>Quyết định xử trí</h2><p>Phản hồi chỉ được gửi đến bệnh nhân sau khi bạn xác nhận.</p><form id="review-form" class="review-form"><label>Mức ưu tiên<select name="edited_priority" ${isDone ? "disabled" : ""}>${["Emergency", "Urgent", "Routine", "Self-care"].map((option) => `<option value="${option}" ${option === priority(item) ? "selected" : ""}>${priorityLabels[option]}</option>`).join("")}</select></label><label>Phản hồi gửi bệnh nhân<textarea name="approved_response" rows="7" required ${isDone ? "disabled" : ""}>${escapeHtml(item.patient_visible_response || defaultResponse(priority(item)))}</textarea></label><label>Ghi chú nội bộ <span>(không bắt buộc)</span><textarea name="nurse_notes" rows="3" ${isDone ? "disabled" : ""}></textarea></label><p id="review-error" class="form-error" role="alert">${isDone ? "Ca này đã được xử lý và không thể thay đổi." : ""}</p><div class="review-buttons"><button class="primary-button" type="submit" ${isDone ? "disabled" : ""}>Duyệt và gửi</button><button class="secondary-button" type="button" data-ask ${isDone ? "disabled" : ""}>Yêu cầu bổ sung</button><button class="danger-button" type="button" data-escalate ${isDone ? "disabled" : ""}>Chuyển cấp cứu</button></div></form></aside></main></section>`;
+  root.innerHTML = `<section class="app-shell nurse-shell"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng nhân viên y tế"><button class="nav-link" type="button" data-back>Hàng đợi ca</button><button class="nav-link is-active" type="button">Duyệt ca</button></nav>${accountMenu()}</header><main class="review-layout"><section class="case-record"><header class="record-header"><div><p class="eyebrow">Phiếu tóm tắt</p><h1>Ca ${shortCaseId(item.case_id)}</h1><p>${formatDate(item.created_at)}</p></div><div><span class="status-badge ${statusClass(item.status)}">${statusLabels[item.status] || item.status}</span><span class="priority-badge ${priorityClass(priority(item))}">${priorityLabels[priority(item)] || priority(item)}</span></div></header>${redFlagEditor(item, isDone)}${graphDecisionBlock(item)}<section class="record-section"><h2>Thông tin lâm sàng đã thu thập</h2><dl class="clinical-grid">${editableField("summary.chief_complaint", "Triệu chứng chính", summary.chief_complaint || symptomGroupLabels[structured.symptom_group] || "", isDone)}${editableField("summary.onset", "Khởi phát", summary.onset || "", isDone)}${editableField("summary.severity", "Mức độ", summary.severity ?? "", isDone)}${clinicalField("Độ tin cậy", Number.isFinite(structured.confidence) ? `${Math.round(structured.confidence * 100)}%` : "Chưa có")}</dl><div class="detail-group"><h3>Triệu chứng đi kèm</h3><div class="tag-list">${tags(summary.associated_symptoms, "Chưa ghi nhận")}</div></div>${intakeChecklistMarkup(item, missing)}</section><section class="record-section"><h2>Hội thoại</h2><div class="review-conversation">${conversation(item.conversation)}</div></section></section><aside class="review-actions"><p class="eyebrow">Xác nhận của nhân viên y tế</p><h2>Quyết định xử trí</h2><p>Phản hồi chỉ được gửi đến bệnh nhân sau khi bạn xác nhận.</p><form id="review-form" class="review-form"><label>Mức ưu tiên<select name="edited_priority" ${isDone ? "disabled" : ""}>${["Emergency", "Urgent", "Routine", "Self-care"].map((option) => `<option value="${option}" ${option === priority(item) ? "selected" : ""}>${priorityLabels[option]}</option>`).join("")}</select></label><label>Phản hồi gửi bệnh nhân<textarea name="approved_response" rows="7" required ${isDone ? "disabled" : ""}>${escapeHtml(item.patient_visible_response || defaultResponse(priority(item)))}</textarea></label><label>Ghi chú nội bộ <span>(không bắt buộc)</span><textarea name="nurse_notes" rows="3" ${isDone ? "disabled" : ""}></textarea></label><p id="review-error" class="form-error" role="alert">${isDone ? "Ca này đã được xử lý và không thể thay đổi." : ""}</p><div class="review-buttons"><button class="primary-button" type="submit" ${isDone ? "disabled" : ""}>Duyệt và gửi</button><button class="secondary-button" type="button" data-ask ${isDone ? "disabled" : ""}>Yêu cầu bổ sung</button><button class="danger-button" type="button" data-escalate ${isDone ? "disabled" : ""}>Chuyển cấp cứu</button></div></form></aside></main></section>`;
   root.querySelector("[data-back]").addEventListener("click", () => navigate("nurse-queue"));
+  bindRedFlagEditor(root);
   bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseCase(root, { navigate, logout }) });
   root.querySelector("#review-form").addEventListener("submit", (event) => review(event, "approve", { navigate, logout }));
   root.querySelector("[data-ask]").addEventListener("click", () => review(root.querySelector("#review-form"), "ask_more", { navigate, logout }));
@@ -90,7 +91,9 @@ async function review(eventOrForm, requested, context) {
   let editedPriority = values.get("edited_priority");
   if (requested === "approve" && editedPriority !== priority(item)) action = "edit";
   if (requested === "escalate") { action = "edit"; editedPriority = "Emergency"; }
-  const payload = { action, nurse_notes: String(values.get("nurse_notes") || "").trim() || null };
+  const edits = collectFieldEdits(document.querySelector("#app"), item);
+  if (edits.error) { error.textContent = edits.error; return; }
+  const payload = { action, nurse_notes: String(values.get("nurse_notes") || "").trim() || null, field_edits: edits.list };
   if (action === "ask_more") payload.ask_more_question = response;
   else payload.approved_response = response;
   if (action === "edit") payload.edited_priority = editedPriority;
@@ -141,4 +144,96 @@ function compareCases(left, right) { const ranks = { Emergency: 0, Urgent: 1, "M
 function clinicalField(label, value) { return `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`; }
 function tags(values = [], empty = "") { return values.length ? values.map((value) => `<span>${escapeHtml(String(value).replaceAll("_", " "))}</span>`).join("") : `<span class="tag-empty">${empty}</span>`; }
 function conversation(items = []) { return items.length ? items.map((item) => `<div class="review-message is-${escapeHtml(item.role)}"><strong>${item.role === "patient" ? "Bệnh nhân" : item.role === "nurse" ? "Nhân viên y tế" : "Hệ thống"}</strong><span>${escapeHtml(item.content)}</span></div>`).join("") : "<p class=\"muted-copy\">Chưa có lịch sử trao đổi.</p>"; }
-function defaultResponse(priorityValue) { if (priorityValue === "Emergency") return "Nhân viên y tế đã xem thông tin. Hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay nếu triệu chứng đang diễn ra."; if (priorityValue === "Urgent") return "Nhân viên y tế khuyến nghị bạn được khám sớm. Hãy gọi 115 nếu triệu chứng nặng lên."; return "Nhân viên y tế đã xem thông tin bạn cung cấp. Hãy tiếp tục theo dõi và liên hệ cơ sở y tế nếu triệu chứng nặng hơn."; }
+// ADR-007: `EMERGENCY_MESSAGE` là câu ĐIỀU DƯỠNG gửi đi sau khi duyệt, không phải câu hệ thống tự
+// nói trong phiên. Nguyên văn giữ đúng như `common_safety/emergency_message.py` - hai bản lệch nhau
+// nghĩa là bệnh nhân đọc hai câu khác nhau tuỳ đường đi, mà đây là câu quyết định gọi 115 hay không.
+function defaultResponse(priorityValue) { if (priorityValue === "Emergency") return "Đây là tình huống cần được cấp cứu ngay bây giờ — vui lòng gọi 115 hoặc đến ngay cơ sở y tế/khoa cấp cứu gần nhất, không chờ thêm. Thông tin đã được chuyển cho điều dưỡng ưu tiên hỗ trợ."; if (priorityValue === "Urgent") return "Nhân viên y tế khuyến nghị bạn được khám sớm. Hãy gọi 115 nếu triệu chứng nặng lên."; return "Nhân viên y tế đã xem thông tin bạn cung cấp. Hãy tiếp tục theo dõi và liên hệ cơ sở y tế nếu triệu chứng nặng hơn."; }
+
+
+// --- điều dưỡng sửa trường của phiếu (§4.4 `_guidance/what_to_do_next.md`) -----------------------
+//
+// Trước đây red flag là một banner ĐỌC-CHỈ và form duyệt chỉ có ba ô (mức ưu tiên, phản hồi, ghi
+// chú) - tức là người có thẩm quyền lâm sàng cao nhất trong luồng lại là người duy nhất không sửa
+// được phiếu. Đó là làm ngược chính mô hình HITL của dự án.
+//
+// Hai điều KHÔNG được nới cùng lúc, và chúng không phải một:
+//  - `escalation_lock` (agent, trong phiên) chặn MODEL tự hạ escalation - giữ nguyên, không có UI nào ở đây chạm tới nó;
+//  - quyền của điều dưỡng ở bước duyệt - chính là thứ màn hình này mở ra.
+//
+// Bản gốc do hệ thống sinh KHÔNG bị ghi đè: server ghi mọi thay đổi vào lớp overlay
+// (`nurse_field_edits`) kèm `generated_value`. UI chỉ gửi giá trị mới + lý do.
+
+function redFlagEditor(item, isDone) {
+  const flags = item.red_flags || [];
+  const notice = item.emergency_notice_sent
+    ? `<p class="red-flag-notice">Thông điệp cấp cứu ĐÃ hiển thị cho bệnh nhân. Hạ cờ bây giờ chỉ đổi phiếu và luồng xử trí - không thu hồi được nội dung bệnh nhân đã đọc.</p>`
+    : "";
+  if (!flags.length) return "";
+  const rows = flags.map((flag) => {
+    const code = flag.code || "";
+    const lowered = isLowered(item, code);
+    return `<div class="red-flag-row" data-flag="${escapeHtml(code)}"><label><input type="checkbox" data-flag-active ${lowered ? "" : "checked"} ${isDone ? "disabled" : ""} /> ${escapeHtml(flag.label || code)}</label><input class="red-flag-reason" data-flag-reason placeholder="Lý do hạ dấu hiệu này (bắt buộc)" ${lowered ? "" : "hidden"} ${isDone ? "disabled" : ""} /></div>`;
+  }).join("");
+  return `<div class="red-flag-alert"><strong>Ca có dấu hiệu nguy hiểm</strong>${notice}${rows}</div>`;
+}
+
+// Trạng thái HIỆN TẠI của một cờ = bản overlay MỚI NHẤT của đúng trường đó, không phải bản đầu tiên.
+function isLowered(item, code) {
+  const edits = (item.nurse_field_edits || []).filter((edit) => edit.field === `red_flags.${code}`);
+  if (!edits.length) return false;
+  const last = edits[edits.length - 1];
+  return last.current_value === false || last.current_value === "false" || last.current_value === null;
+}
+
+function bindRedFlagEditor(root) {
+  root.querySelectorAll("[data-flag]").forEach((row) => {
+    const active = row.querySelector("[data-flag-active]");
+    const reason = row.querySelector("[data-flag-reason]");
+    if (!active || !reason) return;
+    active.addEventListener("change", () => { reason.hidden = active.checked; if (active.checked) reason.value = ""; });
+  });
+}
+
+function editableField(path, label, value, isDone) {
+  return `<div><dt>${label}</dt><dd><input class="clinical-input" data-edit-field="${path}" data-original="${escapeHtml(String(value))}" value="${escapeHtml(String(value))}" ${isDone ? "disabled" : ""} /></dd></div>`;
+}
+
+/** Chỉ gửi trường THỰC SỰ đổi. Gửi cả những ô điều dưỡng không chạm tới sẽ tạo ra một overlay ghi
+ *  "điều dưỡng đã xác nhận lại giá trị này" cho mọi lần duyệt - dấu vết audit mất hết ý nghĩa. */
+function collectFieldEdits(root, item) {
+  const list = [];
+  root.querySelectorAll("[data-edit-field]").forEach((input) => {
+    if (input.value === input.dataset.original) return;
+    list.push({ field: input.dataset.editField, value: input.value, reason: "" });
+  });
+  for (const row of root.querySelectorAll("[data-flag]")) {
+    const code = row.dataset.flag;
+    const active = row.querySelector("[data-flag-active]");
+    const reason = row.querySelector("[data-flag-reason]");
+    const lowered = !active.checked;
+    if (lowered === isLowered(item, code)) continue;
+    if (lowered && !reason.value.trim()) {
+      return { list: [], error: "Hạ một dấu hiệu nguy hiểm phải kèm lý do." };
+    }
+    list.push({ field: `red_flags.${code}`, value: !lowered, reason: reason.value.trim() });
+  }
+  return { list, error: "" };
+}
+
+
+// --- đồng hồ SLA cho ca nghi ngờ red-flag (ADR-007, §4.12) --------------------------------------
+//
+// Ngưỡng phải khớp `src/services/sessions/red_flag_sla.py`. Hai bản lệch nhau thì điều dưỡng thấy
+// "còn 40 giây" trong khi server đã gửi `SLA_BREACH_MESSAGE` cho bệnh nhân - tức là UI đang nói dối
+// đúng lúc nó cần nói thật nhất.
+const SLA_CLINICAL_SECONDS = 300;
+const SLA_WARNING_SECONDS = 180;
+
+/** Cảnh báo NỘI BỘ, chỉ hiện cho điều dưỡng. Đồng hồ dừng khi ca đã được mở lần đầu. */
+function slaBadge(item) {
+  if (!item.queued_at || item.first_opened_at) return "";
+  const waited = (Date.now() - new Date(item.queued_at).getTime()) / 1000;
+  if (waited >= SLA_CLINICAL_SECONDS) return `<small class="sla-badge is-breached">Quá hạn phản hồi</small>`;
+  if (waited >= SLA_WARNING_SECONDS) return `<small class="sla-badge is-warning">Sắp quá hạn · còn ${Math.max(0, Math.round((SLA_CLINICAL_SECONDS - waited) / 60 * 10) / 10)} phút</small>`;
+  return "";
+}

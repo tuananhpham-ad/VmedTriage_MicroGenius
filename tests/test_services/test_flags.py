@@ -213,7 +213,13 @@ def test_ranking_off_does_not_touch_the_definition_of_coverage(switch) -> None:
 
 def test_no_switch_can_turn_off_a_safety_layer() -> None:
     """§8.1 loại 1. Danh sách này là hợp đồng: thêm một công tắc cho tầng an toàn sẽ làm bài này đỏ,
-    và đó là lúc phải dừng lại chứ không phải sửa test."""
+    và đó là lúc phải dừng lại chứ không phải sửa test.
+
+    `model_red_flag_branch_enabled` được thêm 2026-08-19 và **có** động tới red flag, nên nó phải
+    trả lời được câu hỏi của bài này. Nó hợp lệ vì nhánh model không phải một lớp BẢO VỆ: tắt nó thì
+    L0 + rule engine vẫn chạy đủ và vẫn là thứ quyết định escalate; thứ mất đi là số liệu đối chiếu,
+    tức là mất một cái THƯỚC chứ không phải một cái lưới. Bài ngay bên dưới chứng minh điều đó thay
+    vì bắt người đọc tin lời."""
     public = {name for name in dir(flags) if not name.startswith("_")}
     switches = {name for name in public if name.endswith("_enabled")}
     assert switches == {
@@ -221,7 +227,66 @@ def test_no_switch_can_turn_off_a_safety_layer() -> None:
         "synthesis_enabled",
         "retraction_confirmation_enabled",
         "unset_operation_enabled",
+        "model_red_flag_branch_enabled",
+        # Shadow mode (§4.11 bước 1): model được hỏi, câu trả lời được đối chiếu rồi VỨT ĐI. Bật hay
+        # tắt, hệ thống chạy y hệt - bài `test_shadow_mode_changes_no_behaviour` chứng minh điều đó.
+        "llm_controller_shadow_enabled",
     }
+
+
+def test_turning_off_the_model_red_flag_branch_changes_no_escalation(switch) -> None:
+    """Điều kiện để `model_red_flag_branch_enabled` được phép tồn tại (§4.1 ràng buộc 2).
+
+    Nhánh model chỉ được THÊM phát hiện, không được TRỪ - nên tập mã có hiệu lực phải LUÔN là siêu
+    tập của tập tất định, dù model nói gì và dù công tắc ở trạng thái nào. `merge_findings` không có
+    tham số nào cho phép trừ; bài này canh việc đó không bị thêm vào sau lưng."""
+    from src.services.symptom_protocol import red_flag_branches
+
+    deterministic = ("RF-07", "RF-08")
+    # Model KHẲNG ĐỊNH ngược lại (không thấy gì) - vẫn không được tắt mã nào.
+    codes, agreement = red_flag_branches.merge_findings(
+        deterministic, (), model_status=red_flag_branches.BRANCH_OK,
+    )
+    assert set(deterministic).issubset(set(codes))
+    assert agreement.rule_only == ["RF-07", "RF-08"]
+
+    # Nhánh model chết - hai nhánh cũ vẫn nguyên vẹn, và trạng thái được ghi lại.
+    codes, agreement = red_flag_branches.merge_findings(
+        deterministic, (), model_status=red_flag_branches.BRANCH_FAILED,
+    )
+    assert set(deterministic).issubset(set(codes))
+    assert agreement.model_branch_status == red_flag_branches.BRANCH_FAILED
+
+    switch("agent_model_red_flag_branch_enabled", False)
+    assert flags.model_red_flag_branch_enabled() is False
+
+
+def test_shadow_mode_changes_no_behaviour(switch) -> None:
+    """Điều kiện để `llm_controller_shadow_enabled` được phép tồn tại (§4.11 bước 1).
+
+    Kiểm bằng KIẾN TRÚC: `ControllerProposal` không được đi tới bất kỳ đâu ngoài `ShadowStats`. Nếu
+    một hôm ai đó nối `proposal.next_action` vào `ExecutionPlan` thì shadow mode không còn là shadow,
+    và bài này phải đỏ trước khi điều đó lên production."""
+    import ast
+    import inspect
+
+    from src.services.symptom_protocol import controller, controller_shadow
+
+    # Controller TẤT ĐỊNH không được biết bản shadow tồn tại - đó là chiều phụ thuộc một chiều giữ
+    # cho đường fallback đúng bằng hệ thống hiện tại.
+    controller_tree = ast.parse(inspect.getsource(controller))
+    imported: set[str] = set()
+    for node in ast.walk(controller_tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert not any("controller_shadow" in name for name in imported)
+
+    # `stop` KHÔNG được là một `next_action` hợp lệ (§4.11 ràng buộc 2): một model 4B không được là
+    # thứ kết thúc phiên khám.
+    assert "stop" not in controller_shadow.ACTIONS
+
+    switch("agent_llm_controller_shadow_enabled", False)
+    assert flags.llm_controller_shadow_enabled() is False
 
 
 def test_the_reducer_still_erases_dependents_with_every_switch_off(switch) -> None:

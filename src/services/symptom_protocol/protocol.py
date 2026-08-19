@@ -84,7 +84,13 @@ class SymptomProtocol:
     """Rule chạy khi KHÔNG rule nào khớp VÀ `self_care_checklist_satisfied` True - fever dùng để trả
     `R-S-01`/`SELF_CARE`. Nhận `answers` để giữ chữ ký thống nhất với `fallback_rule`, thường bỏ qua."""
 
-    emergency_message: str
+    patient_red_flag_message: str
+    """Câu TĨNH bệnh nhân đọc khi phiên chạm chốt đỏ. Theo ADR-007 đây là câu NGHI NGỜ
+    (`SUSPECTED_RED_FLAG_MESSAGE`), không phải câu khẳng định cấp cứu.
+
+    Tên trường cũ là `emergency_message` và nó đã trở thành một lời nói dối sau ADR-007: nội dung
+    không còn khẳng định cấp cứu, còn `EMERGENCY_MESSAGE` thì vẫn tồn tại nhưng thuộc về ĐIỀU DƯỠNG
+    ở bước duyệt. Hai thứ khác người nói, khác thời điểm, nên chúng phải khác tên."""
     """Thông điệp cấp cứu TĨNH, không qua LLM (đúng P0-2 - không được để LLM tự sinh văn bản báo cấp
     cứu, rủi ro lỡ chẩn đoán/diễn đạt sai)."""
 

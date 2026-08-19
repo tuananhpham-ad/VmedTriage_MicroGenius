@@ -79,3 +79,42 @@ class AuditLogRow(Base):
     new_value: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class ConversationRow(Base):
+    """Phiên hỏi-đáp đang dở, persist sau MỖI lượt (§4.9 M1).
+
+    **Vì sao đây là điều kiện tiên quyết của M2/M3, không phải một tối ưu.** `ARCHITECTURE.md` ghi
+    `session_store` mất khi restart: phiên đang dở còn chưa sống nổi qua một lần deploy, mà kế hoạch
+    đã bàn tới ký ức xuyên phiên. Bàn về "lấy 3 phiên gần nhất để hỏi thăm" khi phiên hiện tại còn
+    biến mất giữa chừng là làm ngược thứ tự.
+
+    **Khoá composite `user_id + conversation_id`** đúng như yêu cầu - mỗi hội thoại là một collection
+    độc lập, và mọi đường đọc buộc phải đi kèm `user_id` (`CLAUDE.md` nguyên tắc 5: chỉ nhân viên y tế
+    được gán ca hoặc chính chủ mới truy cập được dữ liệu triệu chứng).
+
+    ⚠️ **`conversation_id` là UUID, KHÔNG phải timestamp.** Hai phiên mở cùng một giây sẽ đụng khoá
+    nhau, và một timestamp nằm trong khoá là metadata rò ra ngoài cho bất kỳ ai đọc URL. `created_at`
+    là một cột riêng.
+
+    **Credential KHÔNG bao giờ được persist.** `payload` là `Session` đã lược bỏ khoá API - phiên
+    khôi phục lại dùng credential mặc định của protocol. Ghi key vào DB để tiện khôi phục là đổi một
+    bất tiện lấy một sự cố bảo mật.
+    """
+
+    __tablename__ = "conversations"
+
+    conversation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    """Phiên khách (chưa đăng nhập) dùng `0`. Không nullable vì nó là một nửa của khoá chính - và một
+    khoá chính nullable là khoá không dùng được."""
+    protocol_name: Mapped[str] = mapped_column(String(64), default="")
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Tách phẳng để truy được "phiên nào còn dở" mà không phải nạp và parse cả payload."""
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    payload: Mapped[dict] = mapped_column(JSON)
+    """`Session` đã serialize (`conversation_store.dump_session`). Cột JSON vì cùng lý do với
+    `TriageCaseRow.payload`: hình dạng `Session` còn đang đổi theo sprint."""
