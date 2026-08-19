@@ -35,6 +35,7 @@ ROUTE_POLICIES = (
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/patient/history/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/summary/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
 )

@@ -1,8 +1,8 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
-import { renderAccess, renderAuth, renderPasswordReset, renderVerification } from "./features/auth.js?v=design-20260819b";
-import { renderDisclaimer, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260819b";
-import { renderNurseCase, renderNurseQueue, stopQueuePolling } from "./features/nurse.js?v=design-20260819b";
+import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260819af";
+import { renderDisclaimer, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260819af";
+import { renderNurseCase, renderNurseQueue, stopQueuePolling } from "./features/nurse.js?v=design-20260819af";
 
 const app = document.querySelector("#app");
 
@@ -11,6 +11,7 @@ export function navigate(view, options = {}) {
   stopCasePolling();
   state.view = view;
   if (view === "access") renderAccess(app, { navigate, logout });
+  if (view === "role-select") renderRoleSelect(app, { navigate });
   if (view === "auth") renderAuth(app, { navigate, role: options.role || state.role || "patient", onAuthenticated });
   if (view === "verify") renderVerification(app, { navigate, email: options.email || state.pendingVerificationEmail });
   if (view === "reset") renderPasswordReset(app, { navigate, token: options.token || new URLSearchParams(location.search).get("reset_token") });

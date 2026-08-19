@@ -15,11 +15,11 @@ Patient screens should feel closer to density 3. Nurse screens may reach density
 ## Foundation
 
 - Stack: native HTML, CSS, and JavaScript served by the existing FastAPI app.
-- Theme: semantic CSS variables with light and dark values selected from the user's system preference.
-- Accent: one restrained teal accent. Red is reserved for emergency and destructive meaning. Amber is reserved for missing information or early review.
-- Shape rule: panels use 14px radius, controls use 10px radius, status badges may use a full pill.
+- Theme: a single light, clinical theme using semantic CSS variables. Do not invert individual sections into dark mode.
+- Accent: medical blue `#1A5EA8`. Red is reserved for emergency and destructive meaning. Amber is reserved for missing information or early review. AI-confidence uses its own blue/grey/brown scale and must never reuse urgency colours.
+- Shape rule: panels use 12-16px radius, controls use 9-10px radius, status badges may use a full pill.
 - Motion: hover, press, and state feedback only. No decorative or perpetual motion.
-- Type: system sans-serif for fast rendering and reliable Vietnamese glyph coverage.
+- Type: IBM Plex Sans (400/500/600/700), with tabular figures for timestamps, case IDs, and other numerical values.
 
 ## Roles and information boundaries
 

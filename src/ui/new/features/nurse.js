@@ -48,8 +48,8 @@ export function renderNurseQueue(root, { navigate, logout }) {
           <div class="filter-card">
             <span class="section-label">Bộ lọc</span>
             <div class="filter-list">
-              <button class="filter-button is-active" type="button" data-filter="pending"><span>Đang chờ duyệt</span><b id="pending-count">0</b></button>
-              <button class="filter-button" type="button" data-filter="all"><span>Tất cả</span><b id="all-count">0</b></button>
+              <button class="filter-button" type="button" data-filter="pending"><span>Ca cần xử lý</span><b id="pending-count">0</b></button>
+              <button class="filter-button is-active" type="button" data-filter="all"><span>Tất cả</span><b id="all-count">0</b></button>
               <button class="filter-button" type="button" data-filter="Emergency"><span><span class="priority-dot is-emergency"></span>Cấp cứu</span><b id="emergency-count">0</b></button>
               <button class="filter-button" type="button" data-filter="Urgent"><span><span class="priority-dot is-urgent"></span>Khám sớm</span><b id="urgent-count">0</b></button>
               <button class="filter-button" type="button" data-filter="Self-care"><span><span class="priority-dot is-self-care"></span>Tự theo dõi</span><b id="selfcare-count">0</b></button>
@@ -66,8 +66,8 @@ export function renderNurseQueue(root, { navigate, logout }) {
         <section>
           <div class="queue-head">
             <div>
-              <h1>Ca chờ duyệt</h1>
-              <p>Sắp xếp: Cấp cứu trước, sau đó theo thời gian chờ</p>
+              <h1>Tất cả ca</h1>
+              <p>Ca có red flag luôn được hiển thị trước để nhân viên y tế nắm tình huống.</p>
             </div>
             <span class="polling-chip">${icon("retry", 15)}<span id="queue-updated">Làm mới (polling tự động)</span></span>
           </div>
@@ -88,7 +88,7 @@ export function renderNurseQueue(root, { navigate, logout }) {
       paintQueue(root, { navigate, logout });
     }),
   );
-  root.dataset.filter = "pending";
+  root.dataset.filter = "all";
   refreshQueue(root, { navigate, logout });
   polling = window.setInterval(() => refreshQueue(root, { navigate, logout, silent: true }), 15000);
 }
@@ -115,8 +115,8 @@ function paintQueue(root, { navigate, logout }) {
   const query = root.querySelector("#queue-search").value.trim().toLocaleLowerCase("vi-VN");
   const counts = { pending: 0, Emergency: 0, Urgent: 0, "Self-care": 0, done: 0 };
   for (const item of state.queue) {
-    if (pendingStatuses.has(item.status)) counts.pending += 1;
-    if (completedStatuses.has(item.status)) counts.done += 1;
+    if (needsNurseAttention(item)) counts.pending += 1;
+    if (completedStatuses.has(item.status) && item.status !== "escalated") counts.done += 1;
     const level = priority(item);
     if (level in counts) counts[level] += 1;
   }
@@ -129,10 +129,10 @@ function paintQueue(root, { navigate, logout }) {
 
   const items = state.queue
     .filter((item) => {
-      if (filter === "pending" && !pendingStatuses.has(item.status)) return false;
+      if (filter === "pending" && !needsNurseAttention(item)) return false;
       if (filter !== "pending" && filter !== "all" && priority(item) !== filter) return false;
       if (!query) return true;
-      return [item.case_id, complaint(item), priorityLabels[priority(item)], statusLabels[item.status]].join(" ").toLocaleLowerCase("vi-VN").includes(query);
+      return [item.case_id, complaint(item), priorityLabels[priority(item)], statusLabels[item.status], item.red_flags?.length ? "red flag" : ""].join(" ").toLocaleLowerCase("vi-VN").includes(query);
     })
     .sort(compareCases);
 
@@ -148,13 +148,15 @@ function paintQueue(root, { navigate, logout }) {
 
 function queueRow(item) {
   const level = priority(item);
-  const emergency = level === "Emergency";
+  const hasRedFlag = item.status === "escalated" || Boolean(item.red_flags?.length);
+  const emergency = level === "Emergency" || hasRedFlag;
   return `<button class="queue-row ${emergency ? "is-emergency" : ""}" type="button" data-case="${item.case_id}">
     ${priorityDot(level)}
     <span class="case-code">${shortCaseId(item.case_id)}</span>
     <span class="group">${escapeHtml(complaint(item))}</span>
     <span class="signal">
-      <span class="priority-badge ${priorityClass(level)}">${emergency ? icon("warning", 13) : ""}${priorityLabels[level] || level}</span>
+      <span class="priority-badge ${priorityClass(emergency ? "Emergency" : level)}">${emergency ? icon("warning", 13) : ""}${priorityLabels[emergency ? "Emergency" : level] || level}</span>
+      ${hasRedFlag ? `<span class="redflag-queue-tag">Red flag</span>` : ""}
       ${confidenceMarkup(item.triage_proposal?.confidence)}
     </span>
     <span class="wait">${waitingLabel(item.created_at)}${slaBadge(item)}</span>
@@ -421,6 +423,8 @@ function provenanceRow(label, value) {
   if (!value) return "";
   return `<div class="provenance"><span class="label">${label}</span><span class="value">${escapeHtml(value)}</span></div>`;
 }
+
+function needsNurseAttention(item) { return pendingStatuses.has(item.status) || item.status === "escalated"; }
 
 function priority(item) { return item.triage_proposal?.priority || "Manual review"; }
 
