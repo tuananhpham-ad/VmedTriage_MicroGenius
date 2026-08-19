@@ -6,6 +6,7 @@ export const state = {
   caseId: sessionStorage.getItem("vmed_active_case_id"),
   currentPatientCase: null,
   patientMessages: [],
+  viewingPatientHistory: false,
   patientBusy: false,
   // Bệnh nhân đã bấm xác nhận phiếu tóm tắt cuối phiên (Stage 6) chưa - chỉ để ẩn thẻ phiếu sau khi
   // bấm, trạng thái thật nằm ở phiên agent phía server.
@@ -64,6 +65,7 @@ export function clearSession() {
   state.caseId = null;
   state.currentPatientCase = null;
   state.patientMessages = [];
+  state.viewingPatientHistory = false;
   state.summaryConfirmed = false;
   state.selectedNurseCase = null;
   state.redFlagShownCaseId = null;
