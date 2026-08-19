@@ -178,12 +178,38 @@ ROLE_SYMPTOM_GROUP_ROUTER = "symptom_group_router"
 """Gợi ý nhóm triệu chứng khi luật chưa quyết được. Fallback: `registry.select_protocol` thuần rule.
 Chưa có caller - vai trò được khai trước để P2 không phải sửa lại hạ tầng định tuyến."""
 
-ROLES: tuple[str, ...] = (ROLE_FACT_EXTRACTOR, ROLE_SYNTHESIS, ROLE_SYMPTOM_GROUP_ROUTER)
+ROLE_CLAIM_SPLITTER = "claim_splitter"
+"""Tách lập luận của quyết định thành mệnh đề lâm sàng tổng quát (`source_support` bước 1). Sai ở đây
+KHÔNG bị lớp guard nào phía sau bắt được - mọi guard còn lại chỉ kiểm claim ↔ nguồn - nên nó được
+chặn bằng Guard 0a/0b bằng code trong `source_support/claims.py`. Fallback: bỏ hẳn phần trích nguồn
+của ca đó (`source_support` là best-effort, không nằm trên đường an toàn)."""
+
+ROLE_SOURCE_VERDICT = "source_verdict"
+"""Chấm một mệnh đề trên các đoạn trích, CHẠY BLIND (không biết có quyết định triage nào tồn tại).
+Đây là guard ngữ nghĩa DUY NHẤT của thiết kế post-hoc, nên là chỗ KHÔNG được hạ chất lượng để tiết
+kiệm: model yếu gặp đoạn cùng chủ đề là gật `supports`."""
+
+ROLE_SOURCE_EXPLAIN = "source_explain"
+"""Viết đoạn diễn giải tiếng Việt kèm marker trích dẫn (`source_support` bước 7). Mặt nguy hiểm nhất
+của cả tầng - văn xuôi trôi chảy kèm link NHS đọc rất có thẩm quyền kể cả khi nhãn sai - nhưng đầu ra
+của nó bị guard 5 kiểm bằng so chuỗi, không bằng prompt."""
+
+ROLES: tuple[str, ...] = (
+    ROLE_FACT_EXTRACTOR,
+    ROLE_SYNTHESIS,
+    ROLE_SYMPTOM_GROUP_ROUTER,
+    ROLE_CLAIM_SPLITTER,
+    ROLE_SOURCE_VERDICT,
+    ROLE_SOURCE_EXPLAIN,
+)
 
 _ROLE_ORDER_ATTRS: dict[str, str] = {
     ROLE_FACT_EXTRACTOR: "role_order_fact_extractor",
     ROLE_SYNTHESIS: "role_order_synthesis",
     ROLE_SYMPTOM_GROUP_ROUTER: "role_order_symptom_group_router",
+    ROLE_CLAIM_SPLITTER: "role_order_claim_splitter",
+    ROLE_SOURCE_VERDICT: "role_order_source_verdict",
+    ROLE_SOURCE_EXPLAIN: "role_order_source_explain",
 }
 
 

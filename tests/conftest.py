@@ -10,6 +10,23 @@ from src.main import app
 from src.services.infra.account_mailer import account_mailer
 
 
+@pytest.fixture(autouse=True)
+def _source_support_off_by_default():
+    """Không một bài test nào được gọi API thật của tầng trích nguồn (part 3).
+
+    `.env` của người phát triển có SOURCE_SUPPORT_ENABLED=true, và `Settings` đọc file đó, nên nếu
+    không chặn ở đây thì mọi bài test chạm vào `decide_for_case` sẽ lặng lẽ gọi Gemini + OpenAI thật -
+    đã xảy ra một lần (2026-08-19) và chỉ lộ ra nhờ dòng log guard_0c giữa output pytest.
+
+    Bài nào cần bật thì tự `monkeypatch.setattr(get_settings(), "source_support_enabled", True)` và
+    vá luôn `pipeline.run` - tức phải nói rõ ý định, không bật nhầm được."""
+    settings = get_settings()
+    previous = settings.source_support_enabled
+    settings.source_support_enabled = False
+    yield
+    settings.source_support_enabled = previous
+
+
 @pytest_asyncio.fixture
 async def client(tmp_path):
     """Async HTTP client for testing API endpoints."""

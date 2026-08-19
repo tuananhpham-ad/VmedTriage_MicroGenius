@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     role_order_fact_extractor: str = ""
     role_order_synthesis: str = ""
     role_order_symptom_group_router: str = ""
+    # `source_support` (part 3) - mỗi bước định tuyến RIÊNG: bước nào trượt cổng lọc chất lượng thì
+    # chỉ bước đó quay về OpenAI, các bước còn lại vẫn chạy provider rẻ. Bỏ trống = kế thừa thứ tự
+    # toàn cục, tức cài đặt này không tự nó đổi hành vi gì.
+    role_order_claim_splitter: str = ""
+    role_order_source_verdict: str = ""
+    role_order_source_explain: str = ""
 
     # Công tắc ngắt cho các cơ chế hội thoại thêm vào ở P2-P3 (§9 P4 mục 5). Mặc định BẬT - đây là
     # đường quay lui, không phải nút bật tính năng.
@@ -153,6 +159,56 @@ class Settings(BaseSettings):
     graph_triage_artifact_root: str = ""
     """Thư mục chứa `logreg_full/` và `bert_full/`. Bỏ trống thì dùng `<repo>/runs`."""
     graph_triage_max_length: int = Field(default=256, ge=1, le=512)
+
+    # Trích nguồn y văn cho nhãn đã chốt (src/source_support/, "part 3"). Mặc định TẮT: nó chạy sau
+    # agent quyết định nên chỉ có nghĩa khi ENABLE_GRAPH_TRIAGE_AGENT đã bật, và nó gửi source_span
+    # (trích nguyên văn báo cáo bệnh nhân) sang provider LLM - xem cổng chặn PHI trong README của gói.
+    # Tầng này KHÔNG BAO GIỜ đổi triage_label; đường duy nhất nó tác động tới ca là bật thêm cờ
+    # requires_human_review.
+    source_support_enabled: bool = False
+    source_support_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    """Ngưỡng cosine để coi index đã phủ được một claim. ĐÃ HIỆU CHỈNH BẰNG ĐO THẬT (2026-08-19, 11
+    claim trên corpus 39 tài liệu / 841 chunk):
+
+        claim TRONG phạm vi corpus, thấp nhất : 0.591
+        claim NGOÀI phạm vi, cao nhất         : 0.497
+        khoảng tách                           : 0.094
+
+    Giá trị cũ 0.45 nằm DƯỚI nhóm ngoài phạm vi, nên nó nhận nhầm: claim "ngộ độc paracetamol cần
+    nhập viện" khớp trang *Fever in under 5s* ở 0.491 và được coi là ĐÃ PHỦ - hệ thống không đi
+    search, và đưa cho bước chấm một tài liệu chẳng liên quan. 0.55 nằm giữa khoảng tách.
+
+    Đây cũng là núm vặn CHI PHÍ: nâng ngưỡng thì nhiều lần search hơn (chỗ tốn tiền duy nhất), đổi
+    lại claim ngoài phạm vi được đi tìm nguồn thật thay vì gán bừa. Đo lại khi corpus đổi."""
+    source_support_max_claims: int = Field(default=3, ge=1, le=5)
+    """Mỗi claim tốn một lời gọi ở bước chấm verdict, nên đây vừa là trần chi phí vừa là trần quota."""
+    source_support_index_only: bool = False
+    """Bỏ hẳn bước search + nạp trang. Cần cho các lượt đo hit-rate lặp lại và cho môi trường không có
+    TAVILY_API_KEY."""
+    source_support_allowlist: str = (
+        "who.int,moh.gov.vn,kcb.vn,nhs.uk,nice.org.uk,cdc.gov,ncbi.nlm.nih.gov,"
+        "cochranelibrary.com,msdmanuals.com,aafp.org,acep.org"
+    )
+    """Danh sách domain y khoa được phép trích. Guard 1 kiểm theo NHÃN TÊN MIỀN, không phải theo chuỗi
+    con, nên `nhs.uk.evil.com` không lọt."""
+    source_support_search_provider: Literal["gemini", "tavily", "none"] = "gemini"
+    """Backend cho bước 3 (tìm URL khi index không phủ được claim).
+
+    `gemini` = Grounding with Google Search, dùng key Gemini sẵn có, KHÔNG tốn tiền riêng nhưng mỗi
+    lần search là +1 call Gemini (trần một ca đi từ 10 lên 13).
+
+    ĐÃ ĐO 2026-08-19 - GROUNDING KHÔNG DÙNG ĐƯỢC VỚI KEY FREE TIER HIỆN TẠI: cùng một key, cùng một
+    model, call thường trả OK còn call kèm `google_search` trả 429 RESOURCE_EXHAUSTED. Tức grounding
+    có hạn mức RIÊNG, tách khỏi hạn mức sinh văn bản thường. Ba bước chính của part 3 (tách claim,
+    chấm verdict, diễn giải) vẫn chạy bình thường vì chúng là call thường.
+
+    Hệ quả: đặt `gemini` lúc này thì mỗi lần index miss sẽ đốt một lời gọi hỏng rồi trả về rỗng -
+    hành vi an toàn (bước 6 chấm `unsupported`, đoạn văn nói không có tài liệu) nhưng vô ích. Muốn
+    nhánh search chạy thật thì cần key Tavily, hoặc nâng Gemini lên tier trả phí.
+    `tavily` = HTTP search API, ~$0,008/lần nhưng KHÔNG đụng quota LLM - hợp lý hơn khi chạy hàng loạt,
+    vì với free tier thì RPD mới là giới hạn ràng buộc chứ không phải tiền.
+    `none`   = tắt hẳn, tương đương `source_support_index_only`."""
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
 
     # MCP external tools
     mcp_call_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
