@@ -32,6 +32,8 @@ from src.config import get_settings
 from src.graph_triage.summary_text import build_summary_text
 from src.models.schemas import TriageCase
 from src.paths import RUNS_DIR
+from src.source_support import pipeline as source_support
+from src.source_support.schemas import SourceSupport
 
 logger = logging.getLogger("vmedtriage.graph_triage")
 
@@ -142,15 +144,53 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
             logger.debug("graph_triage.evidence case_id=%s [%s] %s <- %r",
                          triage_case.case_id, item["status"], item["concept"], item["source_span"])
         logger.debug("graph_triage.summary_text case_id=%s\n%s", triage_case.case_id, summary_text)
+    # Part 3 phải chạy TRƯỚC chỗ thu hẹp bên dưới: `decision` ở đây còn `evidence` và
+    # `risk_modifiers`, mà bước tách claim lẫn Guard 0b đều cần chúng - sau khi thu hẹp thì không lấy
+    # lại được nữa. Best-effort đúng ràng buộc 3: phần trích nguồn hỏng thì ca vẫn vào hàng đợi điều
+    # dưỡng như thường.
+    support = _source_support_for(triage_case, decision)
+
     # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
     # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
-    return {
+    payload = {
         "triage_label": decision["triage_label"],
         "decision_summary": decision["decision_summary"],
-        "requires_human_review": decision["requires_human_review"],
+        # Cờ GỘP: part 3 chỉ được BẬT THÊM, không bao giờ hạ cờ mà agent quyết định đã dựng lên.
+        "requires_human_review": source_support.merge_human_review(decision["requires_human_review"], support),
         "disclaimer": decision["disclaimer"],
         "model": result["tool_audit"]["model"],
     }
+    if support is not None:
+        # CHỈ phần hiển thị, đúng tinh thần mục A5 ("chỉ giữ kết luận cuối"). `claims[]` mang
+        # `grounded_in` và toàn bộ đường truy vết retrieval - hữu ích để audit nhưng cùng loại với
+        # evidence graph, vốn đã có quyết định là không đưa ra UI. Nó đã nằm trong log ở mức INFO.
+        # `cost` cũng vậy: đó là số liệu vận hành, không phải nội dung điều dưỡng cần đọc.
+        payload["source_support"] = {
+            "explanation_vi": support.explanation_vi,
+            "explanation_citations": [c.model_dump(mode="json") for c in support.explanation_citations],
+            "summary": support.summary.model_dump(mode="json"),
+            "method": support.method.model_dump(mode="json"),
+        }
+    return payload
+
+
+def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSupport | None:
+    """Trích nguồn y văn cho nhãn vừa chốt. `None` = tắt, hoặc hỏng (và đã ghi log).
+
+    KHÔNG BAO GIỜ raise và KHÔNG BAO GIỜ đổi `triage_label`: người gọi nằm trên đường phản hồi của
+    bệnh nhân, và mức ưu tiên có hiệu lực vẫn do rule engine quyết (ràng buộc 4 của module này)."""
+    if not get_settings().source_support_enabled:
+        return None
+    try:
+        from src.source_support import pipeline as source_support_pipeline
+
+        return source_support_pipeline.run(decision, triage_label=decision["triage_label"])
+    except Exception as error:
+        logger.warning(
+            "graph_triage.source_support_failed case_id=%s error=%s: %s",
+            triage_case.case_id, type(error).__name__, error,
+        )
+        return None
 
 
 def reset_agent_cache() -> None:

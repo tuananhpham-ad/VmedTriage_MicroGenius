@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.graph_triage import service
 from src.models.schemas import HandoffSummary, SummaryField, TriageCase
 
@@ -38,8 +38,14 @@ def _ready_case() -> TriageCase:
     )
 
 
-def test_disabled_by_default():
-    assert get_settings().enable_graph_triage_agent is False
+def test_disabled_by_default(monkeypatch):
+    """Mặc định của MÃ NGUỒN phải là tắt.
+
+    Kiểm trên `Settings.model_fields` chứ không trên `get_settings()`: `get_settings()` đọc `.env`
+    của máy đang chạy, nên khi lập trình viên bật cờ để thử tay thì test sẽ đỏ oan.
+    """
+    assert Settings.model_fields["enable_graph_triage_agent"].default is False
+    monkeypatch.setattr(get_settings(), "enable_graph_triage_agent", False)
     assert service.decide_for_case(_ready_case()) is None
 
 
@@ -120,3 +126,92 @@ def test_only_the_final_llm_conclusion_is_kept(feature_on, monkeypatch):
     assert result["model"] == "gpt-4o-mini"
     assert "probabilities" not in str(result)
     assert "source_span" not in str(result)
+
+
+def test_source_support_adds_only_display_fields(feature_on, monkeypatch):
+    """Part 3 bật thì payload có thêm ĐÚNG phần hiển thị - không có `claims[]`, không có `cost`.
+
+    Cùng lý do mục A5 giữ evidence graph khỏi UI: `claims[]` mang `grounded_in` và toàn bộ đường truy
+    vết retrieval. Hữu ích để audit, và nó đã nằm trong log ở mức INFO - nhưng không phải thứ điều
+    dưỡng cần đọc trên màn hình."""
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import (
+        Citation,
+        Claim,
+        ClaimResult,
+        Retrieval,
+        SourceSupport,
+        SupportSummary,
+    )
+
+    support = SourceSupport(
+        explanation_vi="Tình trạng hiện tại của người bệnh: KHÁM SỚM",
+        explanation_citations=[Citation(marker="[1]", url="https://www.nhs.uk/conditions/fever-in-children/",
+                                        publisher="nhs.uk", title="Fever", quote="Trust your instincts.")],
+        claims=[ClaimResult(
+            claim=Claim(claim_en="x", claim_vi="x", claim_kind="red_flag",
+                        grounded_in="Sốt cao nhưng chưa có dấu hiệu nguy hiểm."),
+            verdict="supports",
+            retrieval=Retrieval(from_index=True, searched_web=False, best_score=0.6),
+        )],
+        summary=SupportSummary(claims_examined=1, claims_with_support=1, requires_human_review=False),
+    )
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(source_support_pipeline, "run", lambda *a, **k: support)
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent())
+
+    result = service.decide_for_case(_ready_case())
+
+    assert set(result) == {
+        "triage_label", "decision_summary", "requires_human_review", "disclaimer", "model", "source_support",
+    }
+    assert set(result["source_support"]) == {"explanation_vi", "explanation_citations", "summary", "method"}
+    assert "claims" not in result["source_support"]
+    assert "grounded_in" not in str(result)
+    assert result["source_support"]["method"]["can_change_label"] is False
+
+
+def test_source_support_can_only_raise_the_review_flag(feature_on, monkeypatch):
+    """Đường DUY NHẤT part 3 tác động tới ca. Đảo chiều phép OR ở chỗ nối là cách một ca cần người
+    xem lặng lẽ trôi qua - loại lỗi một dòng, không ai đọc ra, không bao giờ báo lỗi."""
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import SourceSupport, SupportSummary
+
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent(requires_human_review=False))
+    monkeypatch.setattr(
+        source_support_pipeline, "run",
+        lambda *a, **k: SourceSupport(summary=SupportSummary(requires_human_review=True)),
+    )
+    assert service.decide_for_case(_ready_case())["requires_human_review"] is True
+
+    # Và không bao giờ HẠ cờ mà part 2 đã dựng lên.
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent(requires_human_review=True))
+    monkeypatch.setattr(
+        source_support_pipeline, "run",
+        lambda *a, **k: SourceSupport(summary=SupportSummary(requires_human_review=False)),
+    )
+    assert service.decide_for_case(_ready_case())["requires_human_review"] is True
+
+
+def _decision_agent(*, requires_human_review: bool = True):
+    class _Agent:
+        def decide(self, text: str):
+            return {
+                "model_analysis": {
+                    "models": {"logreg": {"predicted_label": "kham_som", "probabilities": {"cap_cuu": 0.91},
+                                          "run_metrics": {}}},
+                    "model_disagreement": False,
+                    "evidence_graph": {"evidence": [{"source_span": "sốt 39.5"}]},
+                },
+                "llm_decision": {
+                    "triage_label": "kham_som",
+                    "decision_summary": "Sốt cao nhưng chưa có dấu hiệu nguy hiểm.",
+                    "model_agreement_summary": "Hai model đồng thuận.",
+                    "uncertainty_summary": "Scope đánh giá khác nhau.",
+                    "requires_human_review": requires_human_review,
+                    "disclaimer": "Không thay thế đánh giá của nhân viên y tế.",
+                },
+                "tool_audit": {"model": "gpt-4o-mini", "called_tools": [], "required_tools": []},
+            }
+    return _Agent()
