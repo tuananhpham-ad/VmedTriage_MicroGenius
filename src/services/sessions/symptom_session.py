@@ -16,6 +16,13 @@ protocol của mình bằng `start_session(protocol_name=...)` - xem `fever_sess
 
 from __future__ import annotations
 
+from src.services.stores.conversation_store import conversation_store
 from src.services.symptom_protocol.session import ProtocolSessionStore
 
-session_store = ProtocolSessionStore(default_protocol=None)
+session_store = ProtocolSessionStore(default_protocol=None, persist=conversation_store)
+"""`persist` bật Memory M1 (§4.9): phiên đang dở được ghi lại sau mỗi lượt và khôi phục được sau
+restart. Trước đây `session_store` mất sạch cùng tiến trình - `/chat` có sẵn nhánh "phiên đã mất thì
+mở phiên mới", nhưng với người bệnh thì đó là phải kể lại từ đầu.
+
+Chỉ instance PRODUCTION được nối kho bền. Test dựng `ProtocolSessionStore` trực tiếp vẫn chạy thuần
+in-memory - đó là lý do `persist` là tham số chứ không phải một import cứng trong store."""

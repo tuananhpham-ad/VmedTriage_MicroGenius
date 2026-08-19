@@ -66,8 +66,8 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-# _guidance/*
+_guidance/*
 /notebooks/
-# /runs/
+/runs/
 .eval_run/
 eval/

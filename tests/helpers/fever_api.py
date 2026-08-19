@@ -21,9 +21,9 @@ from __future__ import annotations
 from src.services.checklists.fever_checklist import QuestionCluster, Stage, clusters_for_stage
 from src.services.engines.fever_protocol import (
     BUDGET,
-    EMERGENCY_MESSAGE,
     FEVER_PROTOCOL,
     STAGE_ORDER,
+    SUSPECTED_RED_FLAG_MESSAGE,
     Route,
     determine_route,
     has_provisional_emergency_signal,
@@ -40,7 +40,7 @@ from src.services.symptom_protocol.stage_machine import StopReason
 
 __all__ = [
     "BUDGET",
-    "EMERGENCY_MESSAGE",
+    "SUSPECTED_RED_FLAG_MESSAGE",
     "FEVER_PROTOCOL",
     "Route",
     "RuleEngineResult",

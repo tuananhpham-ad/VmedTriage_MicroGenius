@@ -71,7 +71,7 @@ def _demo_protocol() -> SymptomProtocol:
         rule_catalog=(),
         fallback_rule=lambda _a: None,
         self_care_default_rule=lambda _a: None,
-        emergency_message="EMERGENCY",
+        patient_red_flag_message="EMERGENCY",
         safety_signal_fields=(),
         opportunistic_keywords=(),
     )

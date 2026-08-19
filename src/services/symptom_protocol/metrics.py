@@ -37,7 +37,20 @@ class ConversationMetrics:
     user_led_questions: int = 0
     """Câu hỏi thuộc cụm mà người bệnh VỪA tự nhắc tới ở lượt trước (§8.4)."""
     repeated_questions: int = 0
-    """Câu hỏi cho một cụm ĐÃ được hỏi trước đó trong phiên."""
+    """Câu hỏi cho một cụm đã hỏi trước đó VÀ đã đi qua cụm khác ở giữa - tức QUAY VÒNG thật.
+
+    Phải gần 0. Khác 0 nghĩa là một cụm đã đóng được chọn lại, đúng lớp bug C3."""
+    retried_questions: int = 0
+    """Hỏi LẠI NGAY cùng một cụm vì lượt trước không thu được gì - **đúng thiết kế**
+    (`MAX_RETRIES_PER_CLUSTER`), không phải lỗi.
+
+    Tách khỏi `repeated_questions` sau khi đọc log ngày 2026-08-19: `repeat_question_rate` đo ra 0.32
+    (ca tệ nhất 0.50) và trông như hệ thống đang quay vòng, nhưng đọc chuỗi cụm thì thấy mẫu
+    `G1-02 -> G1-02 -> G1-02` - đúng 3 lần, tức 1 lần hỏi + 2 lần retry theo hằng số. Gộp hai khái
+    niệm vào một con số làm chỉ số vừa báo động giả vừa che mất ca quay vòng thật.
+
+    Đọc chỉ số này như "câu hỏi nào người bệnh không trả lời được" - cao nghĩa là câu hỏi khó hiểu
+    hoặc extractor không khớp, chứ không phải state machine sai."""
     asked_cluster_ids: list[str] = field(default_factory=list)
     """Lịch sử cụm đã hỏi, theo thứ tự. Giữ danh sách chứ không giữ set: `repeated_questions` cần
     biết một cụm quay lại LẦN THỨ MẤY, và thứ tự là thứ duy nhất trả lời được "vì sao agent hỏi câu
@@ -67,7 +80,11 @@ class ConversationMetrics:
         self.questions_asked += 1
         if recent_fields & frozenset(cluster.fields):
             self.user_led_questions += 1
-        if cluster.id in self.asked_cluster_ids:
+        if self.asked_cluster_ids and cluster.id == self.asked_cluster_ids[-1]:
+            # Cụm NGAY TRƯỚC cũng là cụm này -> hỏi lại vì chưa thu được gì (đúng thiết kế).
+            self.retried_questions += 1
+        elif cluster.id in self.asked_cluster_ids:
+            # Đã đi qua cụm khác rồi mới quay lại -> QUAY VÒNG. Đây mới là thứ phải gần 0.
             self.repeated_questions += 1
         self.asked_cluster_ids.append(cluster.id)
         self.asked_field_keys.update(cluster.fields)
@@ -118,9 +135,16 @@ class ConversationMetrics:
             "questions_asked": self.questions_asked,
             "user_led_ratio": _ratio(self.user_led_questions, self.questions_asked),
             "repeat_question_rate": _ratio(self.repeated_questions, self.questions_asked),
+            "retry_rate": _ratio(self.retried_questions, self.questions_asked),
             "deferral_depth": _mean(self.deferral_depth_samples),
             "catch_all_asked": self.catch_all_asked,
             "catch_all_yielded": self.catch_all_yielded,
+            # §8: phiên kết thúc vì người bệnh không khai tiếp - ba mã, đọc RIÊNG chứ không gộp.
+            # `abandoned` là chỉ số trải nghiệm THẬT NHẤT (§1 bất biến 10), và nó chỉ có nghĩa khi
+            # tách khỏi `NO_MORE_SYMPTOMS`: người bệnh nói "hết rồi" là kết thúc BÌNH THƯỜNG, còn
+            # người bỏ dở giữa chừng mới là ca ta muốn giảm.
+            "abandoned": stop_reason in _ABANDON_STOP_REASONS,
+            "uncooperative_stop": stop_reason == "USER_UNCOOPERATIVE",
         }
 
 
@@ -139,7 +163,21 @@ class ConversationMetrics:
         Cả hai đều mang **hợp field** của các cụm bên trong (`batching`/`screening.probe_fields`), nên
         field là đơn vị duy nhất đúng cho mọi loại cụm - kể cả cụm quét sót dựng tại chỗ."""
         remaining = set(coverage.mandatory_remaining(protocol, answers))
-        return sorted(remaining - self.asked_field_keys)
+        # Field DẪN XUẤT không bao giờ nằm trong schema của một câu hỏi - đó là đúng thiết kế, không
+        # phải bỏ sót. Không trừ chúng ra thì `mandatory_unasked` khác 0 ở MỌI phiên của protocol có
+        # field dẫn xuất, và một chỉ số không bao giờ về 0 thì không ai còn đọc nó nữa (đo được
+        # 2026-08-19: `complaint_duration_days` của generic bị đếm là bỏ sót dù field nguồn
+        # `complaint_onset_at` đã được hỏi ở G1-01).
+        return sorted(remaining - self.asked_field_keys - set(protocol.derived_field_keys))
+
+
+_ABANDON_STOP_REASONS = frozenset({"USER_CANNOT_CONTINUE", "USER_UNCOOPERATIVE"})
+"""Mã dừng đọc là "người bệnh bỏ dở".
+
+`NO_MORE_SYMPTOMS` **không** nằm ở đây dù nó cũng đến từ ý định người bệnh: nói "không còn triệu
+chứng nào khác" khi hệ thống cũng không còn cụm bắt buộc nào là một phiên kết thúc ĐÚNG, không phải
+một ca bỏ cuộc. Gộp lại thì `abandonment_rate` tăng mỗi khi hội thoại chạy trơn tru - tức là chỉ số
+sẽ thưởng cho đúng cái nó cần phạt."""
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -189,9 +227,67 @@ def aggregate(summaries: list[dict[str, object]]) -> dict[str, object]:
         "turns_median_normal_close": _median([_as_float(item.get("turns")) for item in normal]),
         "user_led_ratio": _weighted(summaries, "user_led_ratio", "questions_asked"),
         "repeat_question_rate": _weighted(summaries, "repeat_question_rate", "questions_asked"),
+        "retry_rate": _weighted(summaries, "retry_rate", "questions_asked"),
         "deferral_depth": _mean_of(summaries, "deferral_depth"),
         "catch_all_yield": _catch_all_yield(summaries),
+        # Mẫu số là phiên ĐÃ ĐÓNG: một phiên chưa đóng chưa có cơ hội bị bỏ dở, và tính nó vào sẽ
+        # làm chỉ số phụ thuộc vào trần lượt của harness thay vì vào hành vi người bệnh.
+        "abandonment_rate": _rate_over(closed, "abandoned"),
+        "uncooperative_stop_rate": _rate_over(closed, "uncooperative_stop"),
+        "stop_reasons": _stop_reason_histogram(closed),
+        "red_flag_agreement": _red_flag_agreement(summaries),
     }
+
+
+def _red_flag_agreement(summaries: list[dict[str, object]]) -> dict[str, object]:
+    """Gộp bản đối chiếu ba nhánh red-flag của mọi phiên (§4.1).
+
+    `model_only` là **output có giá trị nhất của cả cơ chế** - danh sách ứng viên để bổ sung vào
+    rule, tức là câu trả lời cho "rule của chúng ta có bỏ sót gì không" mà baseline `emergency
+    recall 48.9%` đang đặt ra mà chưa có cách trả lời. Vì thế nó được liệt kê ĐÍCH DANH kèm số lần
+    xuất hiện, không gộp thành một con số.
+
+    Mẫu số LOẠI phiên có `model_branch_status == "failed"`: một provider chết cả ngày sẽ trông y hệt
+    một ngày không ca nào có red flag, và gộp hai thứ đó lại làm `agreement_rate` mất hết ý nghĩa.
+    Số phiên lỗi vẫn được đếm và báo riêng - loại khỏi mẫu số không phải là giấu đi."""
+    blocks = [
+        item["red_flag_agreement"] for item in summaries
+        if isinstance(item.get("red_flag_agreement"), dict)
+    ]
+    scored = [b for b in blocks if b.get("model_branch_status") == "ok"]
+    failed = sum(1 for b in blocks if b.get("model_branch_status") == "failed")
+    rule_only: dict[str, int] = {}
+    model_only: dict[str, int] = {}
+    both = 0
+    for block in scored:
+        for code in block.get("rule_only") or []:
+            rule_only[code] = rule_only.get(code, 0) + 1
+        for code in block.get("model_only") or []:
+            model_only[code] = model_only.get(code, 0) + 1
+        both += len(block.get("both") or [])
+    total = sum(rule_only.values()) + sum(model_only.values()) + both
+    return {
+        "value": None if total == 0 else round(both / total, 4),
+        "n": len(scored),
+        "model_branch_failed_sessions": failed,
+        "model_only": dict(sorted(model_only.items(), key=lambda kv: -kv[1])),
+        "rule_only": dict(sorted(rule_only.items(), key=lambda kv: -kv[1])),
+    }
+
+
+def _rate_over(summaries: list[dict[str, object]], key: str) -> dict[str, object]:
+    hits = [item for item in summaries if item.get(key)]
+    return {"value": _ratio(len(hits), len(summaries)), "n": len(summaries), "hits": len(hits)}
+
+
+def _stop_reason_histogram(summaries: list[dict[str, object]]) -> dict[str, int]:
+    """Đếm theo TỪNG mã dừng. §7.2 mục 4 đòi ba lý do dừng phải phân biệt được trên phiếu; ở tầng
+    tổng hợp thì "phân biệt được" nghĩa là chúng có ba ô đếm riêng, không phải một ô "đã dừng"."""
+    histogram: dict[str, int] = {}
+    for item in summaries:
+        reason = str(item.get("stop_reason") or "UNKNOWN")
+        histogram[reason] = histogram.get(reason, 0) + 1
+    return dict(sorted(histogram.items()))
 
 
 def _catch_all_yield(summaries: list[dict[str, object]]) -> dict[str, object]:

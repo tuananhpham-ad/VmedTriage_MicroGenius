@@ -111,6 +111,25 @@ class Settings(BaseSettings):
     agent_unset_operation_enabled: bool = True
     """Tắt ⇒ bỏ qua `operation: "unset"` của model (§4.1), hồ sơ chỉ bị xoá qua đường phủ định field
     cha như trước P2.4. Đây là công tắc cho cơ chế MỚI NHẤT và ít giờ chạy thật nhất."""
+    agent_llm_controller_shadow_enabled: bool = False
+    """Controller bằng model, **bước 1 shadow mode** (§4.11 mục 13b). Mặc định TẮT.
+
+    Shadow mode nghĩa là model được hỏi và câu trả lời được ĐỐI CHIẾU, nhưng không dòng nào của nó
+    tác động tới hành vi - bật hay tắt, hệ thống chạy y hệt. Đây là công tắc `AGENT_LLM_CONTROLLER_
+    ENABLED` mà §4.11 ràng buộc 5 yêu cầu, và nó hợp lệ vì controller không phải tầng an toàn theo
+    định nghĩa mới: nó chỉ chọn trong tập hành động code đã tính trước.
+
+    Toàn bộ test tất định phải xanh khi tắt cờ (§4.11 ràng buộc 6) - test không bao giờ được phụ
+    thuộc vào một endpoint GPU."""
+    agent_model_red_flag_branch_enabled: bool = False
+    """Nhánh red-flag bằng model (§4.1). **Mặc định TẮT** - nó thêm một lời gọi model mỗi lượt, và
+    giá trị của nó là ĐO chứ không phải bảo vệ.
+
+    Đây KHÔNG phải công tắc cho tầng an toàn: bật hay tắt, hai nhánh tất định (L0 + rule engine) vẫn
+    chạy nguyên vẹn và vẫn là thứ quyết định escalate. Nhánh model chỉ **thêm** phát hiện và sinh
+    `red_flag_agreement`; nó không có đường nào TRỪ đi một mã mà rule đã bật (xem
+    `red_flag_branches.merge_findings`). Vì vậy công tắc này không vi phạm quy tắc "không có công
+    tắc cho tầng an toàn" ở trên."""
 
     # Database
     database_url: str = "sqlite:///./data/app.db"

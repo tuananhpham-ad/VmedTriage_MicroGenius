@@ -78,7 +78,7 @@ TOY_PROTOCOL = SymptomProtocol(
     rule_catalog=(_toy_r_e_01,),
     fallback_rule=_toy_fallback,
     self_care_default_rule=_toy_self_care_default,
-    emergency_message="Đau ngực dữ dội - gọi cấp cứu ngay.",
+    patient_red_flag_message="Đau ngực dữ dội - gọi cấp cứu ngay.",
     safety_signal_fields=("chest_pain_severe",),
     opportunistic_keywords=(("chest_pain_severe", ("đau ngực dữ dội",)),),
 )

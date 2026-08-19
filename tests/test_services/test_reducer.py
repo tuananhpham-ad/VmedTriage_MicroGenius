@@ -62,7 +62,7 @@ def _protocol(*, confirm: frozenset[str] = frozenset(), derive=None, contradicti
         rule_catalog=(),
         fallback_rule=lambda _a: None,
         self_care_default_rule=lambda _a: None,
-        emergency_message="EMERGENCY",
+        patient_red_flag_message="EMERGENCY",
         safety_signal_fields=(),
         opportunistic_keywords=(),
         field_dependencies={"fever_reported": ("temp_c", "temp_site")},

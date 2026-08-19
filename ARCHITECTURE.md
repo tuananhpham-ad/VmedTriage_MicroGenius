@@ -1,7 +1,6 @@
 # Kiến trúc hệ thống VMedTriage
 
-> Cập nhật: 2026-08-16. Bản trước (2026-08-15) mô tả bốn luồng xử lý song song; ba trong số đó đã bị
-> gỡ. Mục 15 ghi lại đợt dọn này.
+> Cập nhật: 2026-08-16
 
 ## 1. Tổng quan
 

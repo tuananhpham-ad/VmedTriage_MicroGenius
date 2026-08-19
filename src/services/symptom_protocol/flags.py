@@ -52,6 +52,27 @@ def retraction_confirmation_enabled() -> bool:
     return get_settings().agent_retraction_confirmation_enabled
 
 
+def llm_controller_shadow_enabled() -> bool:
+    """Controller bằng model ở SHADOW MODE (§4.11 bước 1). **Mặc định TẮT.**
+
+    Hợp lệ theo §8.1 vì shadow mode không có đường nào tác động tới hành vi: nó hỏi model, ghi lại
+    `controller_agreement_rate`, rồi vứt câu trả lời đi. Bật nó lên không đổi một quyết định nào -
+    đó chính là định nghĩa của bước 1, và cũng là lý do rủi ro của bước này bằng 0."""
+    return get_settings().agent_llm_controller_shadow_enabled
+
+
+def model_red_flag_branch_enabled() -> bool:
+    """Nhánh red-flag thứ ba bằng model (§4.1). **Mặc định TẮT.**
+
+    Công tắc này hợp lệ dù nó động tới red flag, vì nhánh model không phải một lớp bảo vệ: tắt nó thì
+    L0 + rule engine vẫn chạy đủ và vẫn quyết định escalate y như trước. Thứ mất đi là số liệu
+    `agreement_rate`/`model_only`, tức là mất một cái THƯỚC chứ không phải một cái lưới.
+
+    Mặc định tắt vì nó tốn thêm một lời gọi model mỗi lượt trên ngân sách vốn đã là 2 lời gọi - bật
+    khi chạy eval, không bật mặc định trong demo."""
+    return get_settings().agent_model_red_flag_branch_enabled
+
+
 def unset_operation_enabled() -> bool:
     """`operation: "unset"` của bộ trích xuất (§4.1). Tắt ⇒ bỏ qua, hồ sơ chỉ bị xoá qua đường phủ
     định field cha như trước P2.4.

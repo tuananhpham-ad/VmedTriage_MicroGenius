@@ -208,3 +208,13 @@ async def test_middleware_blocks_wrong_role(client, patient_headers):
 async def test_middleware_requires_bearer_token(client):
     response = await client.get("/api/v1/nurse/queue")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_case_summary_is_restricted_to_authenticated_nurse(client, patient_headers, nurse_headers):
+    path = "/api/v1/cases/no-such-case/summary"
+
+    assert (await client.get(path)).status_code == 401
+    assert (await client.get(path, headers=patient_headers)).status_code == 403
+    # Nhân viên y tế đi qua middleware; route mới trả 404 vì case không tồn tại.
+    assert (await client.get(path, headers=nurse_headers)).status_code == 404

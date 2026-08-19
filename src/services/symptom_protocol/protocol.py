@@ -84,7 +84,13 @@ class SymptomProtocol:
     """Rule chạy khi KHÔNG rule nào khớp VÀ `self_care_checklist_satisfied` True - fever dùng để trả
     `R-S-01`/`SELF_CARE`. Nhận `answers` để giữ chữ ký thống nhất với `fallback_rule`, thường bỏ qua."""
 
-    emergency_message: str
+    patient_red_flag_message: str
+    """Câu TĨNH bệnh nhân đọc khi phiên chạm chốt đỏ. Theo ADR-007 đây là câu NGHI NGỜ
+    (`SUSPECTED_RED_FLAG_MESSAGE`), không phải câu khẳng định cấp cứu.
+
+    Tên trường cũ là `emergency_message` và nó đã trở thành một lời nói dối sau ADR-007: nội dung
+    không còn khẳng định cấp cứu, còn `EMERGENCY_MESSAGE` thì vẫn tồn tại nhưng thuộc về ĐIỀU DƯỠNG
+    ở bước duyệt. Hai thứ khác người nói, khác thời điểm, nên chúng phải khác tên."""
     """Thông điệp cấp cứu TĨNH, không qua LLM (đúng P0-2 - không được để LLM tự sinh văn bản báo cấp
     cứu, rủi ro lỡ chẩn đoán/diễn đạt sai)."""
 
@@ -131,6 +137,19 @@ class SymptomProtocol:
     `fever_duration_days` tính từ `fever_onset_at`. KHÔNG bắt LLM tự nhẩm ngày tháng (không đáng tin
     cậy, LLM không biết "hôm nay" nếu không được cho biết) - đây là phép tính THUẦN, xác định. Trả
     `None` (mặc định) nếu protocol không cần field dẫn xuất nào."""
+
+    derived_field_keys: tuple[str, ...] = ()
+    """Field mà `derive_fields` TÍNH RA - không cụm nào hỏi chúng, và đó là đúng thiết kế.
+
+    Phải khai TƯỜNG MINH vì nếu không thì không phân biệt được với một lỗi thật. `metrics
+    ._mandatory_unasked` đếm "field M0/M1 chưa có căn cứ mà chưa hề nằm trong schema câu hỏi nào" -
+    một field dẫn xuất luôn thoả điều kiện đó, nên nó bị báo là BỎ SÓT ở mọi phiên. Đo được ngày
+    2026-08-19: `complaint_duration_days` của generic bị đếm là bỏ sót dù `complaint_onset_at` (field
+    nguồn của nó) đã được hỏi đàng hoàng ở G1-01.
+
+    Đường thay thế - suy "field không thuộc cụm nào thì chắc là dẫn xuất" - KHÔNG dùng được: đó đúng
+    là dấu hiệu của lỗi thật (`diarrhea` của generic là tier M1 mà không cụm nào hỏi), và một quy tắc
+    suy đoán như vậy sẽ nuốt luôn cả lỗi lẫn thiết kế."""
 
     reason_code_labels: dict[str, str] = dataclass_field(default_factory=dict)
     """`RF-xx` -> nhãn tiếng Việt, CHỈ để hiển thị trên phiếu bàn giao. Rule engine chỉ trả về MÃ (mã

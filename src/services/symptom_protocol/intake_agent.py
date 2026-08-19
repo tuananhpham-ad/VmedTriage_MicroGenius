@@ -1073,6 +1073,17 @@ def _ranking_context(
     )
 
 
+def _stop_requested(stop_signals: stage_machine.StopSignals) -> bool:
+    """Người bệnh đã nói rõ họ muốn dừng chưa.
+
+    Cần riêng một hàm vì nhánh HỎI LẠI CỤM CŨ đi VÒNG QUA `advance` (`Advance(cluster, stage, None)`)
+    - nó là đường duy nhất trong `run_turn` không đi qua `should_stop`. Không chặn ở đây thì người
+    bệnh nói "tôi không trả lời nữa" đúng lượt cụm đang được hỏi lại sẽ bị hỏi lại y hệt câu vừa từ
+    chối. `no_more_symptoms` KHÔNG nằm trong đây: nó là tín hiệu mềm và `should_stop` mới đủ dữ kiện
+    (cụm chưa hỏi mang field M0/M1) để quyết."""
+    return not stop_signals.user_can_continue or stop_signals.uncooperative
+
+
 def run_turn(
     protocol: SymptomProtocol,
     session_id: str,
@@ -1095,6 +1106,7 @@ def run_turn(
     screening_history: dict[str, tuple[frozenset[str], ...]] | None = None,
     ledger: coverage.CoverageLedger | None = None,
     confirmed_retractions: frozenset[str] = frozenset(),
+    stop_signals: stage_machine.StopSignals = stage_machine.NO_STOP_SIGNALS,
 ) -> TurnResult:
     """Một lượt hỏi-đáp. MỘT luồng duy nhất cho mọi stage (không còn chia hướng C/E):
 
@@ -1143,9 +1155,23 @@ def run_turn(
     # L3 REDUCER - nguồn sự thật DUY NHẤT của hồ sơ (§5). Đính chính + mâu thuẫn nằm TRONG nó và vì
     # thế chạy TRƯỚC rule_engine: nếu chạy sau, mức triage của chính lượt này được tính trên hồ sơ còn
     # rác (vd đã nói "không sốt" nhưng `temp_c=39` vẫn còn trong answers).
+    # §4.8: ý tier O/H bị bỏ qua trong một lượt hỏi GỘP được suy `false`. Đứng ĐẦU danh sách sự
+    # kiện = ưu tiên THẤP NHẤT: mọi nguồn thật (quét từ khoá, verdict sàng lọc, trích xuất) đều ghi
+    # đè lên nó. Field M0/M1/an toàn không bao giờ có mặt ở đây - xem `skipped_field_defaults`.
+    batch_defaults = (
+        batching.skipped_field_defaults(
+            protocol, cluster, answers,
+            information_gain=any(
+                stage_machine.is_filled(value) for value in extraction.cluster_fields.values()
+            ),
+        )
+        if batching.is_batch(cluster)
+        else {}
+    )
     reduced = reducer.reduce(
         protocol, answers,
         (
+            *reducer.events_from_values(batch_defaults, source=reducer.SOURCE_BATCH_DEFAULT),
             *reducer.events_from_values(opportunistic, source=reducer.SOURCE_KEYWORD),
             *reducer.events_from_values(screened_negatives, source=reducer.SOURCE_SCREENING),
             *extraction.events,
@@ -1207,13 +1233,13 @@ def run_turn(
         # P0-5: dừng NGAY, không hỏi nốt checklist. Thông điệp TĨNH, không qua LLM (P0-2).
         stage_log.step(
             session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="agent_message",
-            input=None, output={"text": active.emergency_message}, llm_used=False,
+            input=None, output={"text": active.patient_red_flag_message}, llm_used=False,
         )
         stage_log.step(
             session_id, turn=turn, stage=stage, cluster_id=cluster.id, event="stop", stop_reason="RED_FLAG",
         )
         return TurnResult(
-            answers=merged, extracted=extraction.all_fields, agent_message=active.emergency_message,
+            answers=merged, extracted=extraction.all_fields, agent_message=active.patient_red_flag_message,
             next_cluster=None, llm_used=True, emergency=True,
             protocol_name=active.name if protocol_switched else "",
             answer_quality=extraction.answer_quality, reopened_cluster_ids=reopened,
@@ -1275,9 +1301,9 @@ def run_turn(
         if protocol_switched:
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
-                context=ranking_context,
+                context=ranking_context, stop_signals=stop_signals,
             )
-        elif retry_this_cluster:
+        elif retry_this_cluster and not _stop_requested(stop_signals):
             step = stage_machine.Advance(cluster, stage, None)
         else:
             step = stage_machine.advance(
@@ -1289,6 +1315,7 @@ def run_turn(
                 # ngắn lại bị coi như đã tiêu gần hết ngân sách và bị cắt ở Stage 5.
                 asked_count=len(closed_now - (screened_ids | screened_closed)),
                 known_triage_level=rule_result.triage_level,
+                stop_signals=stop_signals,
             )
         following = step.cluster
         rec.output = {
@@ -1471,7 +1498,7 @@ def run_open_turn(
             session_id, turn=turn, stage="OPEN", cluster_id="OPEN", event="stop", stop_reason="RED_FLAG",
         )
         return TurnResult(
-            answers=merged, extracted=extraction.all_fields, agent_message=protocol.emergency_message,
+            answers=merged, extracted=extraction.all_fields, agent_message=protocol.patient_red_flag_message,
             next_cluster=None, llm_used=True, emergency=True, protocol_name=protocol_name,
             answer_quality=extraction.answer_quality,
             triage_level=rule_result.triage_level,
