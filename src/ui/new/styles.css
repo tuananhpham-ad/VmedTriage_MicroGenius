@@ -404,6 +404,14 @@ body.is-high-contrast { --muted:#364758; --muted-2:#526476; --line:#c1cad4; --li
 .record-header p:not(.eyebrow) { margin:4px 0 0; color:var(--muted); font-size:13px; }
 .record-header > div:last-child { display:flex; flex-wrap:wrap; justify-content:end; gap:7px; }
 .red-flag-alert { margin:18px 20px 0; border-left:3px solid var(--red); border-radius:0 8px 8px 0; padding:12px 13px; color:#7d2525; background:var(--red-soft); font-weight:600; }
+/* Điều dưỡng sửa được mọi trường, kể cả red flag (§4.4). Ô lý do chỉ hiện khi cờ bị hạ - ma sát cố ý. */
+.red-flag-notice { margin:6px 0 10px; font-weight:500; font-size:.86rem; line-height:1.45; color:#8a3a3a; }
+.red-flag-row { display:flex; flex-direction:column; gap:6px; padding:6px 0; border-top:1px solid rgba(125,37,37,.14); }
+.red-flag-row:first-of-type { border-top:0; }
+.red-flag-row label { display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer; }
+.red-flag-reason { padding:7px 9px; border:1px solid rgba(125,37,37,.35); border-radius:6px; font:inherit; font-weight:400; background:#fff; }
+.clinical-input { width:100%; padding:6px 8px; border:1px solid var(--line, #d8dee7); border-radius:6px; font:inherit; background:#fff; }
+.clinical-input:disabled { background:#f4f6f9; color:#5b6473; }
 /* Ý kiến tham khảo từ agent quyết định (src/graph_triage/). Cố tình KHÔNG dùng màu của thang
    priority: khối này không phải một mức ưu tiên có hiệu lực, chỉ là ý kiến thứ hai. */
 .advisory-block { background:var(--surface-muted, #f6f7f9); }
@@ -444,3 +452,8 @@ body.is-high-contrast { --muted:#364758; --muted-2:#526476; --line:#c1cad4; --li
 @media (max-width:680px) { .landing-contact { width:calc(100% - 28px); padding-top:15px; } }
 @media (prefers-reduced-transparency:reduce) { .role-board { background:#edf4fa; backdrop-filter:none; -webkit-backdrop-filter:none; } .role-card { background:#fff; } }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; } .care-flow-pulse { opacity:0; } }
+
+/* Đồng hồ SLA của ca nghi ngờ red-flag (ADR-007) - cảnh báo NỘI BỘ, bệnh nhân không thấy khối này. */
+.sla-badge { display:inline-block; margin-top:4px; padding:2px 7px; border-radius:999px; font-weight:600; font-size:.74rem; }
+.sla-badge.is-warning { background:#fff4e0; color:#8a5a10; }
+.sla-badge.is-breached { background:var(--red-soft, #fdeaea); color:#7d2525; }

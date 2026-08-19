@@ -275,7 +275,9 @@ def test_should_stop_returns_red_flag_immediately_on_emergency_field():
     assert fsm.should_stop("3A", answers, asked_count=1) == "RED_FLAG"
 
 
-def test_should_stop_user_cannot_continue_overrides_everything():
+def test_should_stop_user_cannot_continue_beats_everything_except_a_red_flag():
+    """Tên cũ ghi "overrides everything" và đó chính là lỗi P0.6: ý định dừng của người bệnh KHÔNG
+    được thắng một tín hiệu đỏ. Thứ tự đầy đủ nằm ở `test_user_intent_and_stopping.py`."""
     answers: dict[str, object] = {}
     assert fsm.should_stop("1", answers, asked_count=1, user_can_continue=False) == "USER_CANNOT_CONTINUE"
 

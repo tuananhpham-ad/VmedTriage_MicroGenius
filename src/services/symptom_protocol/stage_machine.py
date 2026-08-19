@@ -17,7 +17,20 @@ from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for
 if TYPE_CHECKING:  # `ranking` import ngược lại module này lúc chạy - xem `select_cluster`.
     from src.services.symptom_protocol.ranking import RankingContext
 
-StopReason = Literal["RED_FLAG", "SUFFICIENT_EVIDENCE", "BUDGET_EXHAUSTED", "USER_CANNOT_CONTINUE"]
+StopReason = Literal[
+    "RED_FLAG",
+    "SUFFICIENT_EVIDENCE",
+    "BUDGET_EXHAUSTED",
+    "USER_CANNOT_CONTINUE",
+    "USER_UNCOOPERATIVE",
+    "NO_MORE_SYMPTOMS",
+]
+"""Lý do dừng, mã ỔN ĐỊNH - phiếu bàn giao và log đều đọc theo mã này (§1 bất biến 7).
+
+Ba mã cuối đều là "người bệnh không khai tiếp nữa" nhưng KHÔNG được gộp làm một: điều dưỡng cần
+phân biệt ca bỏ dở giữa chừng (`USER_CANNOT_CONTINUE`), ca không hợp tác sau khi đã được hỏi lại
+(`USER_UNCOOPERATIVE`), và ca người bệnh khẳng định đã kể hết trong khi hệ thống cũng không còn cụm
+bắt buộc nào (`NO_MORE_SYMPTOMS`). Gộp lại thì ba ca đó ra ba phiếu trông giống hệt nhau."""
 
 
 def is_filled(value: object) -> bool:
@@ -187,6 +200,31 @@ def next_stage(protocol: SymptomProtocol, stage: str) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class StopSignals:
+    """Ý định người bệnh, dạng dữ liệu, để đi qua `run_turn` -> `advance` -> `should_stop`.
+
+    Gói thành MỘT đối tượng thay vì ba tham số rời vì nó phải xuyên qua ba tầng: thêm một tín hiệu
+    nữa về sau là sửa đúng một chỗ. Mặc định "người bệnh vẫn hợp tác" nên mọi caller cũ chạy y như
+    trước khi chưa truyền gì.
+
+    Đây CHỈ là đầu vào của việc DỪNG. Không tầng nào được đọc nó để chọn cụm, đổi protocol hay hạ
+    escalation - xem docstring `should_stop`."""
+
+    user_can_continue: bool = True
+    """`False` = người bệnh nói rõ họ muốn dừng / không trả lời nữa (`user_intent.wants_to_stop`)."""
+
+    uncooperative: bool = False
+    """`True` = đã lạc đề liên tiếp, đã được hỏi lại một lần, và vẫn không hợp tác (§4.7b)."""
+
+    no_more_symptoms: bool = False
+    """`True` = người bệnh khẳng định không còn triệu chứng nào khác. Tín hiệu MỀM."""
+
+
+NO_STOP_SIGNALS = StopSignals()
+"""Mặc định dùng chung - `StopSignals` là frozen nên chia sẻ được một thể hiện."""
+
+
+@dataclass(frozen=True, slots=True)
 class Advance:
     """Kết quả duyệt tới cụm kế tiếp, có thể đã BĂNG QUA ranh giới stage."""
 
@@ -208,6 +246,7 @@ def advance(
     asked_count: int | None = None,
     known_triage_level: str | None = None,
     context: RankingContext | None = None,
+    stop_signals: StopSignals = NO_STOP_SIGNALS,
 ) -> Advance:
     """Cụm kế tiếp THẬT SỰ sẽ được hỏi, băng qua stage nếu stage hiện tại đã hết cụm.
 
@@ -225,6 +264,9 @@ def advance(
         stop = should_stop(
             protocol, current_stage, answers, asked_count=count, asked_ids=asked_ids,
             known_triage_level=known_triage_level, context=context,
+            user_can_continue=stop_signals.user_can_continue,
+            uncooperative=stop_signals.uncooperative,
+            no_more_symptoms=stop_signals.no_more_symptoms,
         )
         if stop is not None:
             return Advance(None, current_stage, stop)
@@ -292,15 +334,40 @@ def should_stop(
     route: str | None = None,
     known_triage_level: str | None = None,
     user_can_continue: bool = True,
+    uncooperative: bool = False,
+    no_more_symptoms: bool = False,
     context: RankingContext | None = None,
 ) -> StopReason | None:
-    """Áp theo thứ tự: chốt đỏ > đủ căn cứ > hết ngân sách > người dùng không tiếp tục được.
-    `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ)."""
-    if not user_can_continue:
-        return "USER_CANNOT_CONTINUE"
+    """Áp theo thứ tự: chốt đỏ > ý định người bệnh > đủ căn cứ > hết ngân sách.
+    `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ).
+
+    **`RED_FLAG` phải được xét TRƯỚC mọi nhánh ý định người bệnh** (P0.6). Bản cũ kiểm
+    `user_can_continue` đầu tiên, nên đúng lượt người bệnh vừa khai một dấu hiệu cấp cứu rồi nói
+    "thôi khỏi" thì phiên đóng với `USER_CANNOT_CONTINUE` - tức là KHÔNG escalate. Đó là một lỗi an
+    toàn, không phải một lựa chọn thứ tự: ý định dừng của người bệnh không bao giờ được tắt một tín
+    hiệu đỏ (`CLAUDE.md` nguyên tắc 4).
+
+    Ba tham số ý định đều chỉ được phép DỪNG phiên, không được đổi mức ưu tiên và không được chọn
+    cụm - chúng do `user_intent.classify` (thuần code) suy ra từ tin nhắn.
+
+    `no_more_symptoms` là tín hiệu MỀM: "không còn gì nữa" chỉ đóng phiên khi từ stage hiện tại trở
+    đi không còn cụm CHƯA HỎI nào mang field M0/M1. Người bệnh nói "hết rồi" khi chưa ai hỏi họ về
+    ngất hay đau lan xuống tay - họ không biết những thứ đó là triệu chứng cần khai (§1 bất biến 8:
+    được đổi THỨ TỰ hỏi, không được BỎ hỏi)."""
 
     if protocol.provisional_emergency_signal(answers) or known_triage_level == "EMERGENCY":
         return "RED_FLAG"
+
+    if not user_can_continue:
+        return "USER_CANNOT_CONTINUE"
+
+    if uncooperative:
+        return "USER_UNCOOPERATIVE"
+
+    if no_more_symptoms and not _unasked_mandatory_cluster_remains(
+        protocol, stage, answers, asked_ids,
+    ):
+        return "NO_MORE_SYMPTOMS"
 
     resolved_route = route or protocol.determine_route(answers)
 

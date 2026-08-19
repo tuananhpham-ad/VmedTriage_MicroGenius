@@ -30,7 +30,7 @@
 
 ## ADR-004: Banner khẩn cấp hiển thị ngay cho bệnh nhân, không chờ duyệt
 
-- **Ngày:** 04/08/2026 · **Trạng thái:** Đã chốt (add-on, đã đưa vào MVP)
+- **Ngày:** 04/08/2026 · **Trạng thái:** ⛔ **SUPERSEDED bởi ADR-008 (19/08/2026)** — phần "hiển thị ngay, không chờ duyệt" được GIỮ; phần "khẳng định cấp cứu" bị thay bằng "nêu nghi ngờ"
 - **Bối cảnh:** Xung đột giữa nguyên tắc HITL (ADR-002) và nhu cầu cảnh báo tức thời khi có red-flag.
 - **Quyết định:** Banner khẩn cấp (W-04) hiển thị ngay cho bệnh nhân khi phát hiện red-flag, **không chờ** nhân viên y tế duyệt — đây là ngoại lệ có chủ đích của ADR-002.
 - **Phương án khác:** Để bệnh nhân chờ chung với luồng duyệt bình thường như mọi ca khác — bị loại vì an toàn tức thời (khuyến cáo gọi 115) quan trọng hơn việc chờ xác nhận nội dung chi tiết.
@@ -44,13 +44,42 @@
 - **Phương án khác:** Realtime WebSocket — bị loại, đưa vào "Out of scope" để giảm độ phức tạp kỹ thuật trong 6 tuần, ưu tiên nguồn lực cho phần Agent/HITL.
 - **Hệ quả:** API `/queue` thiết kế dạng REST polling định kỳ, không cần hạ tầng WebSocket.
 
-## ADR-006: Định nghĩa format phiếu tóm tắt (nghiệp vụ) phải chốt trước khi viết schema JSON (kỹ thuật)
+## ADR-006: Phiếu tóm tắt giữ schema PHẲNG, ISBAR map ở tầng render; hai output song song
 
-- **Ngày:**  _chưa chốt_ · **Trạng thái:** 
-- **Bối cảnh:** 
-- **Quyết định:** 
-- **Phương án khác:** 
-- **Hệ quả:**
+- **Ngày:** 19/08/2026 · **Trạng thái:** Đã chốt
+- **Bối cảnh:** `HandoffSummary` (`src/models/schemas.py`) đã chạy và UI W-07 đã dựng theo nó, trong khi team có một template ISBAR chuẩn (WHO). Đối chiếu: 7/13 trường đã có, 4 trường thiếu là dữ liệu hành chính/tiền sử đơn giản, 2 trường cần quyết định. Tức là **bổ sung field, không phải migrate kiến trúc**.
+- **Quyết định:**
+  1. **Giữ `HandoffSummary` PHẲNG.** Việc nhóm thành 5 khối I/S/B/A/R xảy ra ở **renderer**, không ở schema lưu trữ. Không đụng `NurseQueueItem`, không đụng UI đang chạy.
+  2. **Hai output song song, đọc CÙNG MỘT snapshot đã validate** — đây là điều kiện duy nhất khiến chúng không mâu thuẫn nhau:
+     - `summary_text` — văn xuôi do LLM viết lại, dùng để **lưu DB và làm memory** về sau;
+     - `summary_json` — `HandoffSummary` phẳng, renderer map sang **bảng ISBAR** cho điều dưỡng.
+  3. Bổ sung 5 trường còn thiếu: `age`, `sex`, `allergies`, `comorbidities`, `current_medications`. Dị ứng dùng đúng semantics 3 giá trị (`true`/`false`/`unknown`) của reducer, **không thêm kiểu mới**.
+  4. Khối `[R]` của template viết như hành động đã thực hiện (*"AI Action: Khuyên bệnh nhân đến bệnh viện ngay"*) — đọc theo mặt chữ thì AI đã khuyên bệnh nhân trước khi điều dưỡng duyệt, ngược `CLAUDE.md` nguyên tắc 1. **Đổi thành `proposed_action` + `approval_status`.**
+  5. **Bệnh nền: liệt kê TẤT CẢ.** Template gợi ý "chỉ hiển thị bệnh có liên quan nếu AI có khả năng lọc" — đó là giao một phán đoán lâm sàng cho LLM, và lọc sai thì điều dưỡng không có cách nào biết cái gì đã bị giấu (lỗi im lặng, ngược nguyên tắc 3). Sắp xếp lại thì được; giấu đi thì không.
+- **Phương án khác:** Đổi schema thành lồng I/S/B/A/R — bị loại: đắt hơn, kéo theo `NurseQueueItem` và UI W-07, và không được thêm gì mà tầng render không làm được.
+- **Hệ quả:** `Triage Category` nằm trong khối `[I]` của bảng nhưng **do code tất định điền, không do LLM** — phải ghi rõ điều đó trong chính template, vì đó là chỗ dễ bị hiểu nhầm nhất. Quy tắc render: trường rỗng **không xuất**, nhưng **snapshot giữ đủ ba giá trị** (lọc ở renderer, không ở nguồn); **ngoại lệ — field an toàn luôn được render** kể cả khi `false`/`unknown`.
+
+## ADR-008: Hệ thống nêu NGHI NGỜ red-flag, không khẳng định cấp cứu — supersede ADR-004
+
+> ⚠️ **Lưu ý đánh số:** `_guidance/what_to_do_next.md` §4.12 gọi quyết định này là "ADR-007". Số 007
+> đã bị entry "Lựa chọn LLM provider" (đang pending) chiếm từ 03/08/2026, nên nó nhận số **008**.
+> Khi đọc §4.12 hãy hiểu "ADR-007" ở đó = ADR-008 ở đây.
+
+- **Ngày:** 19/08/2026 · **Trạng thái:** Đã chốt — **supersede ADR-004**
+- **Bối cảnh:** Xung đột giữa ADR-004 (banner khẳng định cấp cứu, hiển thị ngay) và Feature Spec :253-256 (hệ thống không được tự khẳng định kết luận lâm sàng chưa qua người). Chọn một bên thì bên kia vẫn đúng.
+- **Quyết định:** Hệ thống **không khẳng định cấp cứu**. Nó nêu **nghi ngờ**, đẩy ca lên ưu tiên cao nhất, và điều dưỡng — trực **24/7** — mới là người kết luận. Đây là nguyên tắc y tế chuẩn: *công cụ sàng lọc nêu nghi ngờ, lâm sàng viên kết luận.* Ba thông điệp TĨNH, ba thời điểm, ba người nói (`common_safety/emergency_message.py`):
+
+  | Câu | Ai "nói" | Khi nào |
+  | --- | --- | --- |
+  | `SUSPECTED_RED_FLAG_MESSAGE` | hệ thống | t=0, ngay lượt phát hiện |
+  | `SLA_BREACH_MESSAGE` | hệ thống | quá SLA mà chưa điều dưỡng nào **mở** ca |
+  | `EMERGENCY_MESSAGE` | **điều dưỡng** | SAU khi duyệt — mặc định cho `approved_response` |
+
+- **Vì sao nó giải được xung đột thay vì chọn một bên:** nó thoả mãn lo ngại *thật* của cả hai tài liệu. Feature Spec sợ hệ thống tự khẳng định → không còn khẳng định nào. ADR-004 sợ bệnh nhân bị bỏ mặc chờ → trực 24/7 **cộng** một lưới an toàn phổ quát ngay từ t=0 (*"nếu bạn thấy tình trạng xấu đi, hãy gọi 115 ngay — đừng chờ phản hồi ở đây"*), câu này đúng với mọi người bệnh trong mọi tình huống nên nói ra không phải là chẩn đoán.
+- **SLA = 5 phút (chốt tạm)**, tính từ lúc ca vào hàng đợi tới lúc một điều dưỡng **MỞ** ca (không phải tới lúc duyệt xong). Cảnh báo nội bộ ở 60% (3 phút). Cấu hình ở `sessions/red_flag_sla.py`. **Đây là câu hỏi cho PM và người tổ chức ca trực, không phải cho engineering** — nhưng nó phải có một giá trị, vì thiếu nó thì `SLA_BREACH_MESSAGE` không bao giờ bắn và cam kết 24/7 chỉ có trên giấy.
+- **Cảnh báo khi hiệu chỉnh về sau:** `SLA_clinical` (được phép chờ bao lâu, suy từ nhu cầu lâm sàng) và `p99_observed` (đang đáp ứng bao lâu, suy từ đo) là **hai số, không phải một**. Đặt `SLA = p99` thì `sla_breach_rate` luôn ≈ 1% theo đúng định nghĩa, và SLA thôi không còn là yêu cầu an toàn — nó trở thành bản mô tả năng lực hiện tại. `p99_observed > SLA_clinical` là **vấn đề nhân sự**, không phải vấn đề cấu hình.
+- **Phạm vi — thứ KHÔNG đổi:** `triage_level = "EMERGENCY"` giữ nguyên. Rule engine, `escalation_lock`, thứ tự hàng đợi, mọi luật an toàn không đổi. Đây thuần tuý là thay đổi **tầng ngôn ngữ và tầng hiển thị** — đó cũng là lý do nó làm được trong một sprint ngắn.
+- **Hệ quả:** `SymptomProtocol.emergency_message` đổi tên thành `patient_red_flag_message` (tên cũ đã thành một lời nói dối: nội dung không còn khẳng định cấp cứu). Chỉ số theo dõi từ ngày đầu: `sla_breach_rate`, **phải gần 0** — không gần 0 thì cam kết trực 24/7 chỉ có trên giấy và lập luận an toàn của quyết định này sụp.
 
 ## ADR-007 (pending): Lựa chọn LLM provider
 

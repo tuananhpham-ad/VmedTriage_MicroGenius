@@ -49,12 +49,34 @@ def test_cluster_bound_to_a_screening_group_is_left_alone():
     assert _batch("4", "Q4-00") == ()
 
 
-def test_batch_stops_at_the_length_cap_even_when_more_clusters_are_available():
-    """Stage 2 còn nhiều cụm hơn trần, nên cắt phải xảy ra thật chứ không phải "vừa đủ nên không cắt"."""
-    uncapped = _batch("2", "Q2-01", max_clusters=99)
+def test_batch_stops_at_the_cluster_cap_even_when_more_clusters_are_available():
+    """Cắt phải xảy ra thật chứ không phải "vừa đủ nên không cắt". Nới trần Ý lên trước để cô lập
+    đúng trần CỤM - hai trần chặn hai thứ khác nhau (§4.8).
 
-    assert len(uncapped) > batching.MAX_CLUSTERS_PER_BATCH
-    assert len(_batch("2", "Q2-01")) == batching.MAX_CLUSTERS_PER_BATCH
+    Trần dùng ở đây là 2 chứ không phải `MAX_CLUSTERS_PER_BATCH`: sau khi nới lên 4, Stage 2 của
+    fever KHÔNG còn nhiều hơn 4 cụm gộp được, nên trần thật không còn chỗ nào để chặn trên dữ liệu
+    thật - và một test "cắt" trên tập vừa đủ thì không chứng minh được gì."""
+    uncapped = _batch("2", "Q2-01", max_clusters=99, max_fields=99)
+
+    assert len(uncapped) > 2
+    assert len(_batch("2", "Q2-01", max_clusters=2, max_fields=99)) == 2
+
+
+def test_batch_never_reads_out_more_ideas_than_the_field_cap():
+    """Trần Ý là trần người bệnh THẬT SỰ nhìn thấy: một cụm có thể là 1 ý hoặc 3 ý, nên đếm cụm
+    không kiểm soát được độ dài tin nhắn (§4.8: 4-7 ý mỗi lượt)."""
+    groups = _batch("2", "Q2-01", max_clusters=99)
+
+    assert sum(len(cluster.fields) for cluster in groups) <= batching.MAX_FIELDS_PER_BATCH
+
+
+def test_field_cap_skips_an_oversized_cluster_instead_of_ending_the_batch():
+    """Một cụm 3 ý không được chặn mất mọi cụm 1 ý đứng sau nó - nếu không, trần Ý biến thành một
+    cách bỏ sót câu hỏi thay vì một cách giới hạn độ dài."""
+    capped = _batch("2", "Q2-01", max_clusters=99, max_fields=2)
+
+    assert len(capped) >= 2
+    assert sum(len(cluster.fields) for cluster in capped) <= 2
 
 
 def test_no_batch_when_only_one_cluster_is_left():

@@ -207,7 +207,7 @@ def test_a_clear_text_signal_escalates_before_any_model_call(monkeypatch) -> Non
     assert session.escalation_lock is True
     assert session.stop_reason == "RED_FLAG"
     assert session.reason_codes == ["TEXT_SIGNAL_SEIZURE"]
-    assert session.last_question == FEVER_PROTOCOL.emergency_message
+    assert session.last_question == FEVER_PROTOCOL.patient_red_flag_message
     mock.assert_not_called()
 
 

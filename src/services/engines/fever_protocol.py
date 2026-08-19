@@ -21,7 +21,7 @@ from typing import Literal
 from src.services.checklists.fever_checklist import FIELDS_BY_KEY, QUESTION_CLUSTERS
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
-from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
+from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months
 from src.services.symptom_protocol.common_safety.predicates import array_has_any as _array_has_any
 from src.services.symptom_protocol.common_safety.predicates import as_float as _as_float
@@ -680,7 +680,7 @@ FEVER_PROTOCOL = SymptomProtocol(
     rule_catalog=RULE_CATALOG,
     fallback_rule=_fallback_rule,
     self_care_default_rule=_self_care_default_rule,
-    emergency_message=EMERGENCY_MESSAGE,
+    patient_red_flag_message=SUSPECTED_RED_FLAG_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=OPPORTUNISTIC_KEYWORDS,
     screening_groups=SCREENING_GROUPS,

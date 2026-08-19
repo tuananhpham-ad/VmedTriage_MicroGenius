@@ -6,6 +6,10 @@ import bất cứ thứ gì từ `fever_*`/`generic_*`. Vi phạm chiều này l
 hai kéo theo cả kiến thức về sốt.
 """
 
-from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
+from src.services.symptom_protocol.common_safety.emergency_message import (
+    EMERGENCY_MESSAGE,
+    SLA_BREACH_MESSAGE,
+    SUSPECTED_RED_FLAG_MESSAGE,
+)
 
-__all__ = ["EMERGENCY_MESSAGE"]
+__all__ = ["EMERGENCY_MESSAGE", "SLA_BREACH_MESSAGE", "SUSPECTED_RED_FLAG_MESSAGE"]
