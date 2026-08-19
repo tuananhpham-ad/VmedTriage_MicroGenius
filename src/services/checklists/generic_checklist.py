@@ -67,6 +67,14 @@ QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
     *common_clusters.emergency_scan_clusters("2"),
     # --- Stage 3 — quét dấu hiệu cần khám sớm ---
     *common_clusters.early_visit_scan_clusters("3"),
+    # `diarrhea` là tier M1 (mất nước, nguồn nhiễm) nhưng TRƯỚC 2026-08-19 không cụm nào của generic
+    # hỏi tới nó - không đường nào thu thập được, nên `mandatory_unasked` khác 0 ở MỌI phiên generic
+    # (đo được: 9/10 phiên trong log ngày 17/08 đều thiếu đúng field này).
+    #
+    # Cụm RIÊNG của generic chứ không thêm vào `common_clusters`: fever đã hỏi tiêu chảy ở Q5-04 với
+    # ngữ cảnh khác (nguồn nhiễm của một ca đang sốt), và nhét vào cụm dùng chung sẽ làm fever hỏi
+    # trùng hai lần ở hai stage.
+    QuestionCluster("G3-01", "3", ("diarrhea",), script_hint="Mấy hôm nay có đi ngoài phân lỏng nhiều lần không"),
     # --- Stage 4 — bối cảnh nguy cơ + thuốc + an toàn tại nhà ---
     *common_clusters.risk_context_clusters("4"),
     *common_clusters.medication_clusters("4"),

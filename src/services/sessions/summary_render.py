@@ -90,9 +90,9 @@ _UNKNOWN_MARKERS: tuple[str, ...] = (
 """Cụm từ nói đúng rằng field còn `unknown`. Câu có chúng thì KHÔNG bị tính là bịa phủ định, kể cả
 khi nó cũng chứa chữ "không" ("chưa xác định được có sốt hay không")."""
 
-_CLAUSE_SPLIT = re.compile(r"[.;\n]")
+_CLAUSE_SPLIT = re.compile("[.;]")
 """Tách mệnh đề. Kiểm theo MỆNH ĐỀ chứ không theo cả đoạn: một đoạn văn nói đúng ở câu đầu và bịa
-ở câu ba sẽ lọt hết nếu chỉ kiểm toàn văn."""
+ở câu ba sẽ lọt nếu chỉ kiểm toàn văn."""
 
 
 def narrative_invents_denials(narrative: str, summary: FieldSummary) -> list[str]:

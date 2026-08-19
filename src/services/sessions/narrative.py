@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 
+from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
 from src.services.sessions.summary_render import (
     FieldSummary,
@@ -47,10 +48,14 @@ QUY TẮC BẮT BUỘC:
 _FALLBACK_REASON_NO_MODEL = "provider_unavailable"
 
 
+NARRATIVE_SOURCE_LLM = "llm"
+
+
 def build_narrative(
     summary: FieldSummary,
     *,
     credential: provider_router.LLMCredential | None = None,
+    session_id: str = "",
 ) -> tuple[str, str]:
     """Trả `(narrative, source)`.
 
@@ -58,9 +63,26 @@ def build_narrative(
     vi phạm guard). Trả ra thay vì chỉ log: phiếu cần nói được nó đang hiển thị bản nào, và
     `narrative_fallback_rate` là một chỉ số §8 thật chứ không phải chuyện gỡ lỗi."""
     deterministic = summary.as_text()
+
+    def _record(source: str) -> None:
+        """Ghi MỘT dòng log cho mỗi lần sinh văn xuôi, để `narrative_fallback_rate` đếm được.
+
+        Phải ghi riêng chứ không nhét vào bản chụp metric của phiên: bản chụp đó được viết lúc
+        `_finish()`, còn văn xuôi thì sinh SAU đó (ở `symptom_case_bridge`, khi dựng phiếu) - lúc
+        biết được nó fallback hay không thì file meta của phiên đã đóng rồi. Dời việc sinh văn xuôi
+        lên trước `_finish()` thì sạch hơn về dữ liệu nhưng đặt một lời gọi LLM vào giữa đường đóng
+        phiên, và provider chậm sẽ làm chậm đúng lượt cuối của người bệnh."""
+        if session_id:
+            stage_log.step(
+                session_id, turn=0, stage="SUMMARY", cluster_id=None, event="agent_message",
+                input=None, output={"narrative_source": source},
+                llm_used=source == NARRATIVE_SOURCE_LLM,
+            )
+
     if not deterministic:
         # Chưa thu được field nào - không có gì để viết lại, và bịa ra một đoạn văn ở đây là đúng
         # thứ nguyên tắc 3 của `CLAUDE.md` cấm.
+        _record("empty_record")
         return "", "empty_record"
 
     try:
@@ -75,6 +97,7 @@ def build_narrative(
         )
     except Exception as error:  # provider hỏng/timeout - phiếu vẫn phải bàn giao được
         logger.warning("narrative fallback: %s", error)
+        _record(_FALLBACK_REASON_NO_MODEL)
         return deterministic, _FALLBACK_REASON_NO_MODEL
 
     text = (result.text or "").strip()
@@ -89,5 +112,8 @@ def build_narrative(
     )
     if not verdict.ok:
         logger.warning("narrative rejected by guard: %s", verdict.violations)
-        return deterministic, ",".join(verdict.violations)
-    return text, "llm"
+        reason = ",".join(verdict.violations)
+        _record(reason)
+        return deterministic, reason
+    _record(NARRATIVE_SOURCE_LLM)
+    return text, NARRATIVE_SOURCE_LLM

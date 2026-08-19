@@ -184,6 +184,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     name=PROTOCOL_NAME,
     fields_by_key=FIELDS_BY_KEY,
     clusters=QUESTION_CLUSTERS,
+    derived_field_keys=("complaint_duration_days",),
     stage_order=STAGE_ORDER,
     gate_stages=GATE_STAGES,
     budget=BUDGET,
