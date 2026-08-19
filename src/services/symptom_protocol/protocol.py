@@ -138,6 +138,19 @@ class SymptomProtocol:
     cậy, LLM không biết "hôm nay" nếu không được cho biết) - đây là phép tính THUẦN, xác định. Trả
     `None` (mặc định) nếu protocol không cần field dẫn xuất nào."""
 
+    derived_field_keys: tuple[str, ...] = ()
+    """Field mà `derive_fields` TÍNH RA - không cụm nào hỏi chúng, và đó là đúng thiết kế.
+
+    Phải khai TƯỜNG MINH vì nếu không thì không phân biệt được với một lỗi thật. `metrics
+    ._mandatory_unasked` đếm "field M0/M1 chưa có căn cứ mà chưa hề nằm trong schema câu hỏi nào" -
+    một field dẫn xuất luôn thoả điều kiện đó, nên nó bị báo là BỎ SÓT ở mọi phiên. Đo được ngày
+    2026-08-19: `complaint_duration_days` của generic bị đếm là bỏ sót dù `complaint_onset_at` (field
+    nguồn của nó) đã được hỏi đàng hoàng ở G1-01.
+
+    Đường thay thế - suy "field không thuộc cụm nào thì chắc là dẫn xuất" - KHÔNG dùng được: đó đúng
+    là dấu hiệu của lỗi thật (`diarrhea` của generic là tier M1 mà không cụm nào hỏi), và một quy tắc
+    suy đoán như vậy sẽ nuốt luôn cả lỗi lẫn thiết kế."""
+
     reason_code_labels: dict[str, str] = dataclass_field(default_factory=dict)
     """`RF-xx` -> nhãn tiếng Việt, CHỈ để hiển thị trên phiếu bàn giao. Rule engine chỉ trả về MÃ (mã
     là thứ ổn định để log/test), nhưng điều dưỡng đọc "RF-13" thì không có nghĩa gì. Bảng này KHÔNG

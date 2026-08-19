@@ -236,3 +236,37 @@ def test_a_red_flag_ticket_is_not_marked_complete():
     from src.services.sessions import symptom_case_bridge
 
     assert "RED_FLAG" in symptom_case_bridge._INCOMPLETE_STOP_REASONS
+
+
+def test_a_blanket_denial_with_no_named_field_is_also_rejected():
+    """CA CHẶN THỨ HAI, cũng là nguyên văn model trả về khi chạy thật ngày 2026-08-19:
+
+        "Người bệnh nói không có các triệu chứng khác."
+
+    trong khi `denied` RỖNG - người bệnh chưa phủ nhận điều gì cả. Bản detector đầu tiên không bắt
+    được vì nó đi tìm NHÃN FIELD trong câu, mà câu này cố tình không nêu tên gì. Đây là ca tệ hơn:
+    nó đóng sạch mọi field còn lại trong đầu người đọc và không để lại cái tên nào để truy ngược."""
+    summary = summary_render.FieldSummary(
+        reported=["Người dùng khai có sốt"], unknown_safety=["Cứng gáy"],
+    )
+
+    invented = summary_render.narrative_invents_denials(
+        "Người bệnh có sốt. Người bệnh nói không có các triệu chứng khác.", summary,
+    )
+
+    assert invented, "phủ định gộp không có gì đỡ phải bị bắt"
+    assert output_guard.check_narrative("x", invented_denials=tuple(invented)).ok is False
+
+
+def test_a_denial_naming_a_genuinely_denied_field_passes():
+    """Quy tắc là "có field đỡ hay không", không phải "có chữ không hay không". Người bệnh đã phủ
+    nhận nôn thì viết "không có nôn" là ĐÚNG, không phải bịa."""
+    summary = summary_render.FieldSummary(denied=["Nôn"], unknown_safety=["Cứng gáy"])
+
+    assert summary_render.narrative_invents_denials("Người bệnh không có nôn.", summary) == []
+
+
+def test_a_narrative_with_no_denial_at_all_is_left_alone():
+    summary = summary_render.FieldSummary(reported=["Sốt"], unknown_safety=["Cứng gáy"])
+
+    assert summary_render.narrative_invents_denials("Người bệnh có sốt cao từ sáng.", summary) == []

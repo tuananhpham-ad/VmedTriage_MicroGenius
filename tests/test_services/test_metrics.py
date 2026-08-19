@@ -60,11 +60,30 @@ def test_a_question_touching_a_field_the_patient_just_raised_counts_as_user_led(
     assert counter.questions_asked == 2
 
 
-def test_asking_the_same_cluster_twice_is_counted_as_a_repeat() -> None:
+def test_asking_the_same_cluster_again_immediately_is_a_retry_not_a_repeat() -> None:
+    """Hỏi LẠI NGAY cùng một cụm là `MAX_RETRIES_PER_CLUSTER` đang làm việc của nó - đúng thiết kế.
+
+    Trước 2026-08-19 hai khái niệm này gộp làm một, và `repeat_question_rate` đo ra 0.32 trên log
+    thật (ca tệ nhất 0.50) trông như hệ thống đang quay vòng. Đọc chuỗi cụm mới thấy mẫu
+    `G1-02 -> G1-02 -> G1-02` - đúng 1 lần hỏi + 2 lần retry theo hằng số."""
     counter = metrics.ConversationMetrics()
     counter.record_question(_cluster("Q1", "cough"), recent_fields=frozenset(), deferral_count=0)
     counter.record_question(_cluster("Q1", "cough"), recent_fields=frozenset(), deferral_count=0)
+
+    assert counter.retried_questions == 1
+    assert counter.repeated_questions == 0
+
+
+def test_coming_back_to_a_cluster_after_another_one_is_a_real_repeat() -> None:
+    """QUAY VÒNG thật: đã đi qua cụm khác rồi mới quay lại. Đây mới là thứ phải gần 0 - khác 0 nghĩa
+    là một cụm đã đóng được chọn lại, đúng lớp bug C3."""
+    counter = metrics.ConversationMetrics()
+    counter.record_question(_cluster("Q1", "cough"), recent_fields=frozenset(), deferral_count=0)
+    counter.record_question(_cluster("Q2", "rash"), recent_fields=frozenset(), deferral_count=0)
+    counter.record_question(_cluster("Q1", "cough"), recent_fields=frozenset(), deferral_count=0)
+
     assert counter.repeated_questions == 1
+    assert counter.retried_questions == 0
 
 
 def test_no_cluster_means_no_question_was_asked() -> None:

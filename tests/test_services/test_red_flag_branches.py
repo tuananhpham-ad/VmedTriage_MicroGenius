@@ -161,3 +161,51 @@ def test_the_agreement_survives_a_round_trip_through_the_log():
     restored = branches.parse_json_agreement(original.as_dict())
 
     assert restored.as_dict() == original.as_dict()
+
+
+# --- gộp theo PHIÊN: đồng thuận lệch lượt vẫn là đồng thuận -------------------------------------
+
+
+def test_a_code_caught_by_each_branch_on_different_turns_counts_as_agreement():
+    """CA CHẶN, đo được ở lần chạy eval đầu tiên (2026-08-19, `RF-12`).
+
+    Model bắt mã đó ở lượt 1, rule bắt cùng mã ở lượt 3. Bản gộp đầu tiên chỉ trừ tập `both` của
+    TỪNG lượt, nên mã ấy nằm trong CẢ `rule_only` lẫn `model_only` - đọc ra là "rule bỏ sót nó" và
+    "model bỏ sót nó" cùng lúc, một phát biểu tự mâu thuẫn. Ở mức phiên, câu hỏi đúng là "cả phiên
+    này nhánh nào đã TỪNG thấy mã đó"."""
+    from src.services.symptom_protocol.session import _merged_agreement
+
+    turn_one = branches.RedFlagAgreement(model_only=["RF-12"], model_branch_status=branches.BRANCH_OK)
+    turn_three = branches.RedFlagAgreement(rule_only=["RF-12"], model_branch_status=branches.BRANCH_OK)
+
+    merged = _merged_agreement(turn_one, turn_three)
+
+    assert merged.both == ["RF-12"]
+    assert merged.rule_only == []
+    assert merged.model_only == []
+
+
+def test_a_code_only_one_branch_ever_saw_stays_in_its_own_bucket():
+    """Chống sửa quá tay: gộp lệch lượt KHÔNG được biến mọi bất đồng thành đồng thuận."""
+    from src.services.symptom_protocol.session import _merged_agreement
+
+    merged = _merged_agreement(
+        branches.RedFlagAgreement(model_only=["RF-08"], model_branch_status=branches.BRANCH_OK),
+        branches.RedFlagAgreement(rule_only=["RF-07"], model_branch_status=branches.BRANCH_OK),
+    )
+
+    assert merged.model_only == ["RF-08"]
+    assert merged.rule_only == ["RF-07"]
+    assert merged.both == []
+
+
+def test_a_single_failed_turn_marks_the_whole_session_as_failed():
+    """Trạng thái XẤU NHẤT thắng: một lượt lỗi là đủ để mọi con số của phiên phải đọc kèm cảnh báo."""
+    from src.services.symptom_protocol.session import _merged_agreement
+
+    merged = _merged_agreement(
+        branches.RedFlagAgreement(model_branch_status=branches.BRANCH_FAILED),
+        branches.RedFlagAgreement(model_branch_status=branches.BRANCH_OK),
+    )
+
+    assert merged.model_branch_status == branches.BRANCH_FAILED

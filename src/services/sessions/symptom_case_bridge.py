@@ -266,7 +266,9 @@ def _attach_narrative(
     if not wanted:
         return
     fields = summary_render.field_summary(protocol, answers)
-    text, source = narrative_mod.build_narrative(fields, credential=session.credential)
+    text, source = narrative_mod.build_narrative(
+        fields, credential=session.credential, session_id=session.session_id,
+    )
     summary.narrative = text
     if source != "llm" and text:
         # Truy nguyên: phiếu phải nói được nó đang hiển thị bản LLM hay bản tất định.

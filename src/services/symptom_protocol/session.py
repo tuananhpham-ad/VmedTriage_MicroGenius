@@ -202,10 +202,19 @@ def _merged_agreement(
 
     `both` THẮNG: một mã từng được cả hai nhánh bắt thì nó không được rơi lại về `rule_only` chỉ vì
     lượt sau model không nhắc tới nó nữa. Không có quy tắc này thì `agreement_rate` của cả phiên bị
-    quyết bởi đúng lượt cuối cùng - tức là đo lượt cuối chứ không đo phiên."""
+    quyết bởi đúng lượt cuối cùng - tức là đo lượt cuối chứ không đo phiên.
+
+    **Đồng thuận LỆCH LƯỢT cũng là đồng thuận.** Bản đầu chỉ trừ đi tập `both` của từng lượt, nên một
+    mã mà model bắt ở lượt 1 còn rule bắt ở lượt 3 sẽ nằm trong CẢ `rule_only` lẫn `model_only` - đọc
+    ra là "rule bỏ sót nó" và "model bỏ sót nó" cùng lúc, một phát biểu tự mâu thuẫn. Đo được ngay
+    lần chạy eval đầu tiên (2026-08-19, `RF-12`). Ở mức PHIÊN, câu hỏi đúng là "cả phiên này, nhánh
+    nào đã từng thấy mã đó" - nên hai tập phải giao nhau TRƯỚC khi trừ."""
     both = set(previous.both) | set(current.both)
-    rule_only = (set(previous.rule_only) | set(current.rule_only)) - both
-    model_only = (set(previous.model_only) | set(current.model_only)) - both
+    rule_seen = set(previous.rule_only) | set(current.rule_only) | both
+    model_seen = set(previous.model_only) | set(current.model_only) | both
+    both = rule_seen & model_seen
+    rule_only = rule_seen - both
+    model_only = model_seen - both
     # Trạng thái XẤU NHẤT thắng: một lượt lỗi là đủ để mọi con số của phiên phải đọc kèm cảnh báo.
     status = (
         red_flag_branches.BRANCH_FAILED
@@ -1069,10 +1078,15 @@ class ProtocolSessionStore:
         `Session` cố ý không giữ đối tượng protocol (phiên có thể đổi protocol giữa chừng, giữ tham
         chiếu là mời chấm hồ sơ bằng luật của protocol cũ)."""
         session = self._require(session_id)
-        return session.metrics.summary(
+        summary = session.metrics.summary(
             self._protocol(session), session.answers,
             turns=session.turn_count, stop_reason=session.stop_reason, triage_level=session.triage_level,
         )
+        # Hai bộ số sinh ra NGOÀI `ConversationMetrics` nhưng vẫn thuộc về phiên này. Gắn vào đây để
+        # chúng đi theo phiên vào log, và `metrics.aggregate` gộp được mà không cần thêm hạ tầng.
+        summary["red_flag_agreement"] = session.red_flag_agreement.as_dict()
+        summary["controller_shadow"] = SHADOW_STATS.as_dict() if flags.llm_controller_shadow_enabled() else None
+        return summary
 
     def confirm_summary(self, session_id: str, is_correct: bool) -> Session:
         session = self._require(session_id)

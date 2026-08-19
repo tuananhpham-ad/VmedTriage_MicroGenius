@@ -13,8 +13,15 @@ export const state = {
   selectedNurseCase: null,
   queue: [],
   nurseBusy: false,
+  // W-07 trạng thái "lỗi lưu": header thay nút "Về hàng đợi" bằng chip khoá. Sống ở state chứ không
+  // ở DOM vì `renderNurseCase` vẽ lại toàn bộ màn hình sau mỗi lần thử lưu.
+  nurseSaveError: false,
   queueTimer: null,
   pendingVerificationEmail: "",
+  // W-04 là màn hình chặn một lần cho MỖI CA, không phải mỗi lượt chat: một ca red-flag còn nhiều
+  // lượt trao đổi phía sau, mà bắn lại màn cảnh báo sau mỗi lượt thì người bệnh học cách bấm qua nó
+  // mà không đọc - đúng thứ màn hình này tồn tại để chống lại.
+  redFlagShownCaseId: null,
 };
 
 export const pendingStatuses = new Set([
@@ -59,6 +66,7 @@ export function clearSession() {
   state.patientMessages = [];
   state.summaryConfirmed = false;
   state.selectedNurseCase = null;
+  state.redFlagShownCaseId = null;
   sessionStorage.removeItem("vmed_access_token");
   sessionStorage.removeItem("vmed_user");
   sessionStorage.removeItem("vmed_active_case_id");
