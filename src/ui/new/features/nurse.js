@@ -26,6 +26,33 @@ export function stopQueuePolling() {
   polling = null;
 }
 
+// ── Polling khi đang chat trực tiếp với bệnh nhân (status "needs_more_info") ────────────────────
+// Mirror đúng cơ chế `casePolling` phía patient.js (ADR-005: polling thay WebSocket cho MVP) - điều
+// dưỡng cần thấy tin nhắn mới của bệnh nhân mà không phải tự bấm làm mới.
+let chatPolling = null;
+
+export function stopNurseChatPolling() {
+  if (chatPolling) window.clearInterval(chatPolling);
+  chatPolling = null;
+}
+
+function chatSignature(item) {
+  return [item?.status, item?.conversation?.length].join("|");
+}
+
+function startNurseChatPolling(root, context) {
+  stopNurseChatPolling();
+  const item = state.selectedNurseCase;
+  if (!item || item.status !== "needs_more_info") return;
+  chatPolling = window.setInterval(async () => {
+    let fresh;
+    try { fresh = await api(`/api/v1/cases/${item.case_id}`); } catch { return; }
+    if (chatSignature(fresh) === chatSignature(state.selectedNurseCase)) return;
+    state.selectedNurseCase = fresh;
+    renderNurseCase(root, context);
+  }, 10000);
+}
+
 function nurseHeader(active, { title = "", right = "" } = {}) {
   return appHeader({
     nav: active
@@ -184,12 +211,119 @@ export function renderNurseCase(root, { navigate, logout }) {
   const proposal = item.triage_proposal || {};
   const missing = summary.missing_information || validation.missing_fields || structured.missing_fields || [];
   const isDone = completedStatuses.has(item.status);
-  root.innerHTML = `<section class="app-shell nurse-shell"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng nhân viên y tế"><button class="nav-link" type="button" data-back>Hàng đợi ca</button><button class="nav-link is-active" type="button">Duyệt ca</button></nav>${accountMenu()}</header><main class="review-layout"><section class="case-record"><header class="record-header"><div><p class="eyebrow">Phiếu tóm tắt</p><h1>Ca ${shortCaseId(item.case_id)}</h1><p>${formatDate(item.created_at)}</p></div><div><span class="status-badge ${statusClass(item.status)}">${statusLabels[item.status] || item.status}</span><span class="priority-badge ${priorityClass(priority(item))}">${priorityLabels[priority(item)] || priority(item)}</span></div></header>${item.red_flags?.length ? `<div class="red-flag-alert">Ca có dấu hiệu nguy hiểm: ${item.red_flags.map((flag) => escapeHtml(flag.label || flag.code)).join(", ")}</div>` : ""}${graphDecisionBlock(item)}<section class="record-section"><h2>Thông tin lâm sàng đã thu thập</h2><dl class="clinical-grid">${clinicalField("Triệu chứng chính", summary.chief_complaint || symptomGroupLabels[structured.symptom_group] || "Chưa ghi nhận")}${clinicalField("Khởi phát", summary.onset || "Thiếu thông tin")}${clinicalField("Mức độ", summary.severity || "Thiếu thông tin")}${clinicalField("Độ tin cậy", Number.isFinite(structured.confidence) ? `${Math.round(structured.confidence * 100)}%` : "Chưa có")}</dl><div class="detail-group"><h3>Triệu chứng đi kèm</h3><div class="tag-list">${tags(summary.associated_symptoms, "Chưa ghi nhận")}</div></div>${intakeChecklistMarkup(item, missing)}</section><section class="record-section"><h2>Hội thoại</h2><div class="review-conversation">${conversation(item.conversation)}</div></section></section><aside class="review-actions"><p class="eyebrow">Xác nhận của nhân viên y tế</p><h2>Quyết định xử trí</h2><p>Phản hồi chỉ được gửi đến bệnh nhân sau khi bạn xác nhận.</p><form id="review-form" class="review-form"><label>Mức ưu tiên<select name="edited_priority" ${isDone ? "disabled" : ""}>${["Emergency", "Urgent", "Routine", "Self-care"].map((option) => `<option value="${option}" ${option === priority(item) ? "selected" : ""}>${priorityLabels[option]}</option>`).join("")}</select></label><label>Phản hồi gửi bệnh nhân<textarea name="approved_response" rows="14" required ${isDone ? "disabled" : ""}>${escapeHtml(patientDraft(item, isDone))}</textarea></label><label>Ghi chú nội bộ <span>(không bắt buộc)</span><textarea name="nurse_notes" rows="3" ${isDone ? "disabled" : ""}></textarea></label><p id="review-error" class="form-error" role="alert">${isDone ? "Ca này đã được xử lý và không thể thay đổi." : ""}</p><div class="review-buttons"><button class="primary-button" type="submit" ${isDone ? "disabled" : ""}>Duyệt và gửi</button><button class="secondary-button" type="button" data-ask ${isDone ? "disabled" : ""}>Yêu cầu bổ sung</button><button class="danger-button" type="button" data-escalate ${isDone ? "disabled" : ""}>Chuyển cấp cứu</button></div></form></aside></main></section>`;
-  root.querySelector("[data-back]").addEventListener("click", () => navigate("nurse-queue"));
+  const isChatting = item.status === "needs_more_info";
+  const level = priority(item);
+  const confidence = aiConfidence(proposal.confidence);
+
+  // Trạng thái "lỗi lưu" của thiết kế thay nút "Về hàng đợi" bằng chip khoá — cố ý: khi chưa lưu
+  // được quyết định thì rời màn hình là mất nó.
+  const headerRight = state.nurseSaveError
+    ? `<span class="header-meta"><span class="pill is-muted">${icon("lock", 15)}<span>Đang khoá — chưa lưu được quyết định</span></span></span>`
+    : `<div class="header-right"><button class="back-button" type="button" data-back>${icon("chevronLeft", 15)}<span>Về hàng đợi</span></button>${accountMenu()}</div>`;
+
+  root.innerHTML = `<section class="app-shell">
+    ${nurseHeader("", { title: `Duyệt ca <b>${shortCaseId(item.case_id)}</b> · chờ ${waitingLabel(item.created_at)}`, right: headerRight })}
+    <main class="page">
+      <form id="review-form" class="review-grid">
+        <div class="review-main">
+          <section class="record-card" id="intake-summary">
+            <div class="record-head"><b>Phiếu tóm tắt · Nhóm: ${escapeHtml(symptomGroupLabels[structured.symptom_group] || "Chưa xác định")}</b><span>Tạo lúc ${formatDate(item.created_at)}</span></div>
+            <div class="record-body">
+              ${editableField("summary.chief_complaint", "Triệu chứng chính", summary.chief_complaint || symptomGroupLabels[structured.symptom_group] || "", isDone)}
+              ${editableField("summary.onset", "Khởi phát", summary.onset || "", isDone)}
+              ${editableField("summary.severity", "Mức độ", summary.severity ?? "", isDone)}
+              ${collectedFields(item, missing)}
+              <div class="field-row"><span class="label">Triệu chứng đi kèm</span><span class="value">${escapeHtml((summary.associated_symptoms || []).map((value) => String(value).replaceAll("_", " ")).join(", ") || "Chưa ghi nhận")}</span></div>
+              ${provenanceRow("Nguồn đối chiếu detect", proposal.detect_source)}
+              ${provenanceRow("Nguồn grounding kết luận", proposal.grounding_source)}
+            </div>
+          </section>
+
+          <section class="record-card" id="handoff-summary">
+            <div class="record-head"><b>Phiếu bàn giao (ISBAR)</b></div>
+            <div class="record-body"><p class="muted-copy">Đang tải…</p></div>
+          </section>
+
+          ${graphDecisionBlock(item)}
+          ${sourceSupportCard(item)}
+
+          <section class="record-card">
+            <div class="record-head"><b>Hội thoại với trợ lý</b></div>
+            <div class="transcript">${conversation(item.conversation)}</div>
+          </section>
+        </div>
+
+        <div class="review-side">
+          <div class="banner is-error" id="review-error" role="alert" hidden>${icon("alert", 19)}<span class="banner-text"></span></div>
+          ${redFlagCallout(item, isDone)}
+
+          <div class="ai-priority-card ${priorityClass(level)}">
+            <div class="ai-priority-head">
+              <span class="section-label">Mức ưu tiên AI đề xuất</span>
+              ${confidence ? `<span class="conf-chip is-${confidence.key}"><span class="dot"></span>Độ tin cậy: ${confidence.label}</span>` : ""}
+            </div>
+            <div class="ai-priority-value">${priorityDot(level)}<b>${priorityLabels[level] || level}</b></div>
+            <p>Quyết định cuối cùng thuộc về nhân viên y tế.</p>
+          </div>
+
+          <label class="field">Phản hồi gửi bệnh nhân<textarea name="approved_response" rows="6" required ${isDone ? "disabled" : ""}>${escapeHtml(patientDraft(item, isDone))}</textarea></label>
+          <label class="field">Ghi chú nội bộ <small>(không bắt buộc)</small><textarea name="nurse_notes" rows="2" ${isDone ? "disabled" : ""}></textarea></label>
+
+          <div class="action-stack">
+            <button class="primary-button" type="submit" data-approve ${isDone ? "disabled" : ""}>${icon("check", 18)}<span data-approve-label>Duyệt nguyên trạng</span></button>
+
+            <div>
+              <button class="secondary-button" type="button" data-priority-toggle aria-expanded="false" ${isDone ? "disabled" : ""}><span>Chỉnh sửa mức ưu tiên</span>${icon("chevronDown", 16)}</button>
+              <div class="dropdown-menu" data-priority-menu hidden role="listbox" aria-label="Mức ưu tiên">
+                ${["Emergency", "Urgent", "Self-care"].map((option) => `<button type="button" role="option" aria-selected="${option === level}" data-priority="${option}">${priorityDot(option)}<span>${priorityLabels[option]}</span>${option === level ? icon("check", 16) : ""}</button>`).join("")}
+              </div>
+              <input type="hidden" name="edited_priority" value="${escapeHtml(level)}" />
+            </div>
+
+            <div>
+              <button class="soft-danger-button" type="button" data-reject-toggle aria-expanded="false" ${isDone ? "disabled" : ""}><span>Từ chối ca</span>${icon("chevronDown", 16)}</button>
+              <div class="panel-inline is-reject" data-reject-panel hidden>
+                <h3>Lý do từ chối (bắt buộc)</h3>
+                <label class="field"><span class="section-label">Nhóm lý do</span>
+                  <select name="reject_reason_code">
+                    <option value="ai_incorrect">Đề xuất của AI không chính xác</option>
+                    <option value="already_handled_offline">Ca đã được xử lý ngoài hệ thống</option>
+                    <option value="other">Lý do khác</option>
+                  </select>
+                </label>
+                <textarea name="reject_reason" placeholder="Ví dụ: Thông tin khai báo không đủ tin cậy, cần liên hệ lại bệnh nhân..."></textarea>
+                <button class="danger-button btn-confirm" type="button" data-reject-confirm disabled>Xác nhận từ chối</button>
+              </div>
+            </div>
+
+            <div class="stack-divider"></div>
+
+            <div>
+              <button class="tint-button wide" type="button" data-ask-toggle aria-expanded="${isChatting}" ${isDone ? "disabled" : ""}>${icon("ask", 18)}<span>Hỏi thêm</span></button>
+              <div class="panel-inline is-ask" data-ask-panel ${isChatting ? "" : "hidden"}>
+                <h3>Chat trực tiếp với bệnh nhân</h3>
+                <p>Agent tạm dừng đặt câu hỏi trong lúc chat đang mở. Bạn trao đổi trực tiếp và tự đưa ra mức ưu tiên cuối cùng thay cho đề xuất của AI.</p>
+                <span class="pill who-chip">${icon("user", 13)}<span>${escapeHtml(state.user?.full_name || "Nhân viên y tế")} đang trao đổi trực tiếp</span></span>
+                <div class="ask-chat-thread" data-ask-thread>${conversation(item.conversation)}</div>
+                <textarea name="ask_more_question" placeholder="${isChatting ? "Nhắn tiếp cho bệnh nhân..." : "Câu hỏi gửi tới bệnh nhân, ví dụ: Anh có tiền sử bệnh tim hoặc từng đặt stent chưa?"}" ${isDone ? "disabled" : ""}></textarea>
+                <button class="primary-button btn-confirm" type="button" data-ask-confirm disabled ${isDone ? "disabled" : ""}>${icon("send", 16)}<span>Gửi</span></button>
+              </div>
+            </div>
+
+            <p class="fine-print">Khi bạn vào chat, mức ưu tiên cuối cùng do <strong>bạn quyết định</strong>, không dùng đề xuất của agent. Khi đã đủ thông tin, dùng "Chỉnh sửa mức ưu tiên" rồi "Duyệt và gửi" ở trên để chốt mức ưu tiên cuối cùng và kết thúc ca.</p>
+            ${isDone ? `<p class="fine-print">Ca này đã được xử lý và không thể thay đổi.</p>` : ""}
+          </div>
+        </div>
+      </form>
+    </main>
+  </section>`;
+
+  root.querySelector("[data-back]")?.addEventListener("click", () => navigate("nurse-queue"));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseCase(root, { navigate, logout }) });
   bindRedFlagEditor(root);
   bindReviewActions(root, { navigate, logout, currentPriority: level });
   loadHandoffSummary(root, item.case_id);
+  startNurseChatPolling(root, { navigate, logout });
 }
 
 function bindReviewActions(root, context) {
@@ -338,6 +472,29 @@ function graphDecisionBlock(item) {
   const review = decision.requires_human_review ? `<p class="advisory-review">Mô hình đề nghị bắt buộc có người xem lại.</p>` : "";
   return `<section class="advisory-card"><h3>Ý kiến tham khảo từ mô hình</h3><p class="advisory-note">Đây là ý kiến thứ hai, độc lập với đề xuất mức ưu tiên ở cột bên phải. Quyết định vẫn thuộc về bạn.</p><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-summary">${escapeHtml(decision.decision_summary || "")}</p>${review}<p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
 }
+/** Khối nguồn y văn ĐỌC-CHỈ của part 3 (src/source_support/), tách biệt khỏi ô nháp phản hồi bệnh
+ *  nhân - trước đây trích dẫn chỉ lẫn vào text của `sourceSupportDraft()` nên điều dưỡng không có
+ *  chỗ nào xem nguồn mà không đụng vào bản nháp có thể sửa. Card này KHÔNG được đưa vào form duyệt
+ *  (không có `name=`), chỉ để đọc trước khi sửa ô phản hồi. */
+function sourceSupportCard(item) {
+  const support = item.graph_decision?.source_support;
+  if (!support?.explanation_vi) return "";
+  const summary = support.summary || {};
+  const contradicted = summary.contradicted_claims || [];
+  const citations = (support.explanation_citations || [])
+    .map((cite) => {
+      const quote = String(cite.quote || "").split(/\s+/).join(" ").trim();
+      const label = escapeHtml(cite.publisher || cite.title || "Nguồn");
+      const url = escapeHtml(cite.url || "");
+      return `<li><span class="marker">${escapeHtml(cite.marker || "")}</span> <a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>${quote ? `<blockquote>"${escapeHtml(quote)}"</blockquote>` : ""}</li>`;
+    })
+    .join("");
+  const contradictedNote = contradicted.length
+    ? `<p class="advisory-review">Nguồn có mệnh đề TRÁI NGƯỢC với kết luận: ${escapeHtml(contradicted.join("; "))}. Cần xem lại trước khi duyệt.</p>`
+    : "";
+  return `<section class="advisory-card"><h3>Trích nguồn y văn (tham khảo)</h3><p class="advisory-note">${escapeHtml(support.method?.scope_note || "Nguồn tham khảo hỗ trợ mệnh đề lâm sàng tổng quát, không phải chẩn đoán cho ca này.")}</p><p class="advisory-summary">${escapeHtml(support.explanation_vi)}</p>${citations ? `<ul class="citation-list">${citations}</ul>` : ""}${contradictedNote}</section>`;
+}
+
 /** Khối nguồn y văn của part 3 (src/source_support/), dựng lại đúng như `explanation_vi` +
  *  `explanation_citations` - `explanation_vi` chỉ mang marker [n], phần liệt kê URL do phía hiển thị
  *  tự ghép (prompt bước 7 cấm model tự viết URL vào đoạn văn). */

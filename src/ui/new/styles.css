@@ -615,6 +615,11 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .advisory-summary { margin:0 0 8px; color:var(--muted-2); font-size:14px; line-height:1.55; }
 .advisory-review { margin:0 0 8px; color:var(--red-deep); font-size:13px; font-weight:600; }
 .advisory-disclaimer { margin:0; color:var(--faint); font-size:12px; font-style:italic; }
+.citation-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.citation-list li { font-size:13px; line-height:1.5; }
+.citation-list .marker { font-weight:600; color:var(--muted-2); }
+.citation-list a { color:var(--accent, #2563eb); word-break:break-all; }
+.citation-list blockquote { margin:4px 0 0; padding-left:10px; border-left:2px solid var(--line); color:var(--muted); font-style:italic; font-size:12.5px; }
 
 /* ── W-00 trang chủ bệnh nhân ──────────────────────────────────────────────────────────────── */
 .home-stack { display:flex; flex-direction:column; gap:20px; }

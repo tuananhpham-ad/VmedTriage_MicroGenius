@@ -27,9 +27,11 @@ from src.models.auth import (
     UserResponse,
 )
 from src.models.schemas import (
+    ActorRole,
     CaseStatus,
     ChatRequest,
     ChatResponse,
+    ConversationMessage,
     NurseReviewRequest,
     NurseReviewResponse,
     PipelineTraceStage,
@@ -200,6 +202,8 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     `case_id` chính là `session_id` của phiên agent."""
     patient_id = int(request.state.auth.sub)
     session_id, previous = _prepare_chat_turn(payload, patient_id)
+    if previous is not None and previous.status is CaseStatus.NEEDS_MORE_INFO:
+        return _direct_patient_message(previous, payload.message)
     try:
         session = symptom_session.session_store.submit_message(session_id, payload.message)
     except EmptyMessageError as error:
@@ -207,6 +211,21 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+
+
+def _direct_patient_message(triage_case: TriageCase, message: str) -> ChatResponse:
+    """Bệnh nhân nhắn trong lúc điều dưỡng đang chat trực tiếp (status NEEDS_MORE_INFO).
+
+    KHÔNG được gọi agent: `to_triage_case()` dựng lại `conversation` từ đầu từ session, sẽ xoá mất
+    các tin nhắn điều dưỡng vừa ghi trực tiếp vào case_store. Chỉ nối thêm tin nhắn bệnh nhân."""
+    triage_case.conversation.append(ConversationMessage(role=ActorRole.PATIENT, content=message))
+    case_store.save(triage_case)
+    return ChatResponse(
+        case_id=triage_case.case_id,
+        response="Tin nhắn của bạn đã được gửi tới nhân viên y tế đang hỗ trợ bạn trực tiếp.",
+        status=CaseStatus.NEEDS_MORE_INFO,
+        requires_human_approval=True,
+    )
 
 
 def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, TriageCase | None]:
@@ -265,6 +284,19 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
     """
     patient_id = int(request.state.auth.sub)
     session_id, previous = _prepare_chat_turn(payload, patient_id)
+
+    if previous is not None and previous.status is CaseStatus.NEEDS_MORE_INFO:
+        # Điều dưỡng đang chat trực tiếp: không có gì để stream (agent không chạy), trả thẳng `done`.
+        body = _direct_patient_message(previous, payload.message)
+
+        async def events_paused():
+            yield _sse("done", body.model_dump(mode="json"))
+
+        return StreamingResponse(
+            events_paused(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     async def events():
         loop = asyncio.get_running_loop()
@@ -481,6 +513,7 @@ def _patient_chat_response(triage_case: TriageCase) -> ChatResponse:
     """Return a fixed emergency alert immediately; other guidance still needs review."""
     is_patient_visible = triage_case.status in {
         CaseStatus.COLLECTING_INFORMATION,
+        CaseStatus.NEEDS_MORE_INFO,
         CaseStatus.ESCALATED,
     }
     response = triage_case.patient_visible_response if is_patient_visible else None
@@ -499,7 +532,7 @@ def _patient_case_view(triage_case: TriageCase) -> TriageCase:
         patient_case.red_flags = []
         patient_case.triage_proposal = None
         patient_case.queue_item = None
-        if patient_case.status != CaseStatus.COLLECTING_INFORMATION:
+        if patient_case.status not in (CaseStatus.COLLECTING_INFORMATION, CaseStatus.NEEDS_MORE_INFO):
             patient_case.patient_visible_response = None
     _apply_sla_breach(patient_case, triage_case)
     return patient_case
