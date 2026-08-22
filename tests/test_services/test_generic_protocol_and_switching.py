@@ -99,6 +99,39 @@ def test_universal_red_flags_escalate_on_generic_protocol():
     assert result.triage_level == "EMERGENCY"
 
 
+def test_high_risk_chest_pain_combo_escalates_on_generic_protocol():
+    result = rule_engine.evaluate(
+        GENERIC_PROTOCOL,
+        {
+            "chief_complaint": "đau ngực",
+            "complaint_site": "ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+            "consciousness_level": "drowsy_but_rousable",
+        },
+    )
+
+    assert result.triage_level == "EMERGENCY"
+    assert result.triggered_rules == ("R-E-22",)
+    assert result.reason_codes == ("RF-45",)
+
+
+def test_chest_pain_combo_requires_altered_alertness():
+    result = rule_engine.evaluate(
+        GENERIC_PROTOCOL,
+        {
+            "chief_complaint": "đau ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+            "consciousness_level": "alert",
+        },
+    )
+
+    assert result.triage_level != "EMERGENCY"
+
+
 # --- chọn protocol -------------------------------------------------------------------------------
 
 
@@ -197,6 +230,37 @@ def test_red_flag_in_the_opening_message_escalates_immediately(monkeypatch):
     assert session.state is SessionState.EMERGENCY
     assert session.triage_level == "EMERGENCY"
     assert "115" in session.last_question
+
+
+def test_high_risk_chest_pain_stops_the_session_instead_of_continuing_checklist(monkeypatch):
+    _fake_llm(monkeypatch, {"consciousness_level": ("drowsy_but_rousable", "không tỉnh táo lắm")})
+    store = _open_store()
+    session = store.start_session(protocol_name=GENERIC_PROTOCOL.name)
+    session.answers.update(
+        {
+            "age_value": "30",
+            "age_unit": "year",
+            "sex": "male",
+            "reporter_type": "self",
+            "chief_complaint": "đau ngực",
+            "complaint_site": "ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+        }
+    )
+    cluster = next(item for item in GENERIC_PROTOCOL.clusters if item.id == "Q3-01")
+    session.stage = cluster.stage
+    session.current_cluster = cluster
+
+    session = store.submit_message(session.session_id, "mình không tỉnh táo lắm")
+
+    assert session.state is SessionState.EMERGENCY
+    assert session.stop_reason == "RED_FLAG"
+    assert session.current_cluster is None
+    assert session.triage_level == "EMERGENCY"
+    assert session.triggered_rules == ["text_safety_signals:altered_mental_status"]
+    assert session.reason_codes == ["TEXT_SIGNAL_ALTERED_MENTAL_STATUS"]
 
 
 def test_opening_turn_rejects_a_negation_the_patient_never_uttered(monkeypatch):

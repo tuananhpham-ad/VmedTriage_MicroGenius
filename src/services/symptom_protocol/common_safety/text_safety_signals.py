@@ -76,6 +76,8 @@ SHORT_CIRCUIT_CODES: frozenset[str] = frozenset({
     "cannot_be_woken",
     "seizure",
     "ongoing_seizure",
+    "sudden_confusion",
+    "altered_mental_status",
     "child_convulsion",
     "child_lethargic",
     # Đường thở và hô hấp
@@ -105,6 +107,7 @@ SHORT_CIRCUIT_CODES: frozenset[str] = frozenset({
     "poison_ingestion",
     "medication_overdose",
     "drug_overdose",
+    "acute_liver_failure_pattern",
     "self_harm_imminent",
     "drowning",
     "electrical_injury",

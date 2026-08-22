@@ -16,12 +16,16 @@ from src.services.checklists import fever_checklist as fc
 
 EXPECTED_FIELD_COUNT = 101
 
-# Chép nguyên văn mã cụm CS Part 3, đúng thứ tự xuất hiện trong tài liệu (Q0-01 -> Q5-07).
+# Chép nguyên văn mã cụm CS Part 3. Thứ tự khác tài liệu ở HAI điểm, cả hai có chủ đích (2026-08-22):
+#  1. Stage `E` đứng ĐẦU: ba cụm nguy kịch phổ quát (Q3-06/07/12) chuyển khỏi 3A lên trước nhân
+#     khẩu, để câu hỏi CHỦ ĐỘNG đầu tiên là quét cấp cứu chứ không phải hỏi tuổi.
+#  2. `Q0-02` (giới) đã gộp vào `Q0-01`: tách làm hai cụm tốn thêm một lượt mà không đổi độ phủ.
 EXPECTED_CLUSTER_IDS: tuple[str, ...] = (
-    "Q0-01", "Q0-02",
+    "Q3-06", "Q3-07", "Q3-12",
+    "Q0-01",
     "Q1-01", "Q1-02", "Q1-03",
     "Q2-01", "Q2-02", "Q2-03", "Q2-04", "Q2-05",
-    "Q3-01", "Q3-03", "Q3-04", "Q3-05", "Q3-06", "Q3-07", "Q3-08", "Q3-09", "Q3-11", "Q3-12", "Q3-13",
+    "Q3-01", "Q3-03", "Q3-04", "Q3-05", "Q3-08", "Q3-09", "Q3-11", "Q3-13",
     "Q3-01b", "Q3-08b", "Q3-02", "Q3-13b", "Q3-14",
     "Q4-00", "Q4-01", "Q4-01b", "Q4-02", "Q4-03", "Q4-04", "Q4-05", "Q4-06", "Q4-07", "Q4-08",
     "Q5-01", "Q5-02", "Q5-03", "Q5-04", "Q5-05a", "Q5-05b", "Q5-06", "Q5-07",
@@ -91,14 +95,16 @@ def test_cluster_fields_all_exist_in_registry():
 
 def test_cluster_stage_is_valid_and_batch_negation_only_on_stage_3():
     for cluster in fc.QUESTION_CLUSTERS:
-        assert cluster.stage in {"0", "1", "2", "3A", "3B", "4", "5"}, cluster.id
-        if cluster.stage in {"3A", "3B"}:
+        assert cluster.stage in {"E", "0", "1", "2", "3A", "3B", "4", "5"}, cluster.id
+        if cluster.stage in {"E", "3A", "3B"}:
             assert cluster.batch_negation is True, f"{cluster.id} phải batch_negation=True (CS §3.3A)"
         else:
-            assert cluster.batch_negation is False, f"{cluster.id} không thuộc Stage 3A/3B, không được batch_negation"
+            assert cluster.batch_negation is False, f"{cluster.id} không thuộc Stage E/3A/3B, không được batch_negation"
 
 
 def test_clusters_for_stage_helper_matches_manual_filter():
     stage_3a_ids = [c.id for c in fc.QUESTION_CLUSTERS if c.stage == "3A"]
     assert [c.id for c in fc.clusters_for_stage("3A")] == stage_3a_ids
-    assert len(stage_3a_ids) == 11
+    # 11 -> 8: ba cụm nguy kịch phổ quát đã chuyển sang stage `E` (2026-08-22).
+    assert len(stage_3a_ids) == 8
+    assert [c.id for c in fc.clusters_for_stage("E")] == ["Q3-06", "Q3-07", "Q3-12"]

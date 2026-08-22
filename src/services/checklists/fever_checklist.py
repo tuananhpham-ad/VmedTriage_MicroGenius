@@ -149,6 +149,9 @@ FIELDS_BY_KEY: dict[str, FeverField] = {field.key: field for field in FEVER_FIEL
 # CS Part 3 — Question clusters, đúng thứ tự xuất hiện trong tài liệu (Q0-01 -> Q5-07)
 # ---------------------------------------------------------------------------------------------
 QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
+    # --- Stage E — Quét cấp cứu PHỔ QUÁT, trước cả nhân khẩu (2026-08-22) ---
+    # Chỉ dấu hiệu không phụ thuộc tuổi/giới nên hỏi được khi chưa biết người bệnh là ai.
+    *common_clusters.critical_scan_clusters("E"),
     # --- Stage 0 — Xác định đối tượng (CS §3.0) ---
     *common_clusters.demographic_clusters("0"),
     # --- Stage 1 — Phát hiện sốt (CS §3.1) ---

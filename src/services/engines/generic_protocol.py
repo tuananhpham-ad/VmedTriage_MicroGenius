@@ -26,6 +26,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.services.checklists.generic_checklist import (
+    CRITICAL_SCAN_STAGE,
+    EARLY_VISIT_SCAN_STAGE,
+    EMERGENCY_SCAN_STAGE,
     FIELDS_BY_KEY,
     GATE_STAGES,
     QUESTION_CLUSTERS,
@@ -167,8 +170,9 @@ RULE_CATALOG: tuple = (
 # phiền ngoài sốt phải trả lời tuần tự từng cụm quét đỏ một, đúng thứ mà `screening.py` sinh ra để
 # tránh - và generic lại là protocol phục vụ 6/7 nhóm triệu chứng.
 SCREENING_GROUPS: tuple = (
-    common_screening.emergency_scan_groups(GATE_STAGES[0])
-    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    common_screening.critical_scan_groups(CRITICAL_SCAN_STAGE)
+    + common_screening.emergency_scan_groups(EMERGENCY_SCAN_STAGE)
+    + common_screening.early_visit_scan_groups(EARLY_VISIT_SCAN_STAGE)
     + common_screening.risk_context_groups("4")
 )
 
@@ -187,6 +191,9 @@ GENERIC_PROTOCOL = SymptomProtocol(
     derived_field_keys=("complaint_duration_days",),
     stage_order=STAGE_ORDER,
     gate_stages=GATE_STAGES,
+    critical_scan_stage=CRITICAL_SCAN_STAGE,
+    emergency_scan_stage=EMERGENCY_SCAN_STAGE,
+    early_visit_scan_stage=EARLY_VISIT_SCAN_STAGE,
     budget=BUDGET,
     budget_floor_stage=BUDGET_FLOOR_STAGE,
     determine_route=determine_route,
