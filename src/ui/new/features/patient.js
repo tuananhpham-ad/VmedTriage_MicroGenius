@@ -1,6 +1,6 @@
 import { api, ApiError, apiStream } from "../api.js";
 import { accountMenu, bindAccountMenu } from "./account.js?v=design-20260819b";
-import { setActiveCase, state } from "../state.js";
+import { completedStatuses, setActiveCase, state } from "../state.js";
 import {
   appHeader,
   escapeHtml,
@@ -41,7 +41,7 @@ export function stopCasePolling() {
 /** Chỉ vẽ lại khi có thay đổi THẬT. Vẽ lại mỗi 10s vô điều kiện sẽ nháy màn hình và cuộn lại khung
  *  chat trong lúc người bệnh đang đọc. */
 function statusSignature(item) {
-  return [item?.status, item?.triage_proposal?.priority, item?.patient_visible_response, item?.red_flags?.length].join("|");
+  return [item?.status, item?.triage_proposal?.priority, item?.patient_visible_response, item?.red_flags?.length, item?.conversation?.length].join("|");
 }
 
 function startCasePolling(root, context, render) {
@@ -245,7 +245,9 @@ async function loadPatientHistory(root, { navigate, logout }) {
             state.currentPatientCase = await api(`/api/v1/cases/${button.dataset.historyCase}`);
             setActiveCase(state.currentPatientCase.case_id);
             state.patientMessages = initialMessages(state.currentPatientCase);
-            state.viewingPatientHistory = true;
+            // Ca ĐANG MỞ (kể cả đang chat trực tiếp với điều dưỡng, "needs_more_info") vẫn phải gõ
+            // được — chỉ khoá thành lịch sử chỉ-đọc khi ca đã thật sự kết thúc.
+            state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
             navigate("patient-chat");
           } catch (problem) { showToast(problem.message, true); }
         }),
@@ -289,7 +291,7 @@ function renderRecentCaseLink(root, item, { navigate }) {
       state.currentPatientCase = await api(`/api/v1/cases/${item.case_id}`);
       setActiveCase(state.currentPatientCase.case_id);
       state.patientMessages = initialMessages(state.currentPatientCase);
-      state.viewingPatientHistory = true;
+      state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
       navigate("patient-chat");
     } catch (problem) { showToast(problem.message, true); }
   });
@@ -299,7 +301,7 @@ function renderRecentCaseLink(root, item, { navigate }) {
 function openCurrentCaseHistory(navigate) {
   if (!state.currentPatientCase) return;
   state.patientMessages = initialMessages(state.currentPatientCase);
-  state.viewingPatientHistory = true;
+  state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
   navigate("patient-chat");
 }
 
@@ -652,7 +654,10 @@ export function renderRedFlag(root, { navigate }) {
       </div>
     </div>
   </section>`;
-  root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-result"));
+  // Quay lại đoạn chat đang dở thay vì màn kết quả riêng: đoạn hội thoại vẫn còn ý nghĩa (điều dưỡng
+  // có thể chat trực tiếp tiếp theo), và trạng thái "đang chờ/đã chuyển cấp cứu" đã có sẵn ở cột phải
+  // (`caseStatusCard` → `suspectedRedFlagCard`) nên không cần một màn hình riêng chỉ để chờ.
+  root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-chat"));
 }
 
 /** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải. */
