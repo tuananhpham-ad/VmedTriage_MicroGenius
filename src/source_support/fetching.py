@@ -17,15 +17,23 @@ có thể được trích. Ngưỡng 500 ký tự là sàn thô nhưng đủ đ�
 CẢ HAI CỔNG BỎ ỨNG VIÊN CHỨ KHÔNG RAISE. Một URL chết không phải lỗi hệ thống - URL guideline chết
 khá thường xuyên. Nhưng chúng luôn BÁO RÕ cái gì bị loại và vì sao; im lặng bỏ qua là cách một corpus
 teo dần mà không ai nhận ra.
+
+PUBMED CÓ CƠ CHẾ LẤY BYTES RIÊNG, KHÔNG PHẢI GUARD RIÊNG. Đo thật 2026-08-23: trang
+`pubmed.ncbi.nlm.nih.gov/<pmid>/` chặn MỌI request tự động (HTTP 203, nội dung là trang "Cookies must
+be enabled"), ổn định qua nhiều lần thử lại, không phải lỗi mạng thoáng qua. `_fetch_pubmed_abstract`
+lấy nội dung qua `efetch.fcgi` (API E-utilities, không qua cổng chặn bot) thay vì GET thẳng trang web,
+nhưng Guard 2 vẫn chạy Y HỆT qua `_length_guard_failure` - chỉ cơ chế lấy bytes khác, không hạ chuẩn.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from src.config import get_settings
 from src.source_support.index import DocumentInput
 
 logger = logging.getLogger("vmedtriage.source_support")
@@ -45,6 +53,15 @@ FETCH_TIMEOUT_SECONDS = 20.0
 _USER_AGENT = "VMedTriage-SourceSupport/1.0 (clinical triage research; contact: repo maintainer)"
 
 _STRIP_TAGS = ("script", "style", "nav", "header", "footer", "form", "aside", "noscript")
+
+
+def _length_guard_failure(stripped: str) -> str | None:
+    """Guard 2, phần độ dài. Dùng chung cho MỌI đường lấy nội dung - trang web lẫn PubMed EFetch."""
+    if len(stripped) < MIN_TEXT_CHARS:
+        return f"guard 2: chỉ bóc được {len(stripped)} ký tự (<{MIN_TEXT_CHARS})"
+    if len(stripped) > MAX_TEXT_CHARS:
+        return f"guard 2: bóc ra {len(stripped):,} ký tự (>{MAX_TEXT_CHARS:,}) - nhiều khả năng không phải văn bản"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +133,65 @@ def publisher_of(url: str, allowlist: tuple[str, ...]) -> str:
     return host
 
 
+_PUBMED_ARTICLE_HOST = "pubmed.ncbi.nlm.nih.gov"
+_PUBMED_PMID_PATH = re.compile(r"^/(\d+)/?$")
+_EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+
+def _pubmed_pmid(url: str) -> str | None:
+    """PMID nếu url là trang bài báo PubMed (pubmed.ncbi.nlm.nih.gov/<pmid>/), ngược lại None."""
+    parsed = urlparse(url)
+    if (parsed.hostname or "").lower() != _PUBMED_ARTICLE_HOST:
+        return None
+    match = _PUBMED_PMID_PATH.match(parsed.path)
+    return match.group(1) if match else None
+
+
+def _pubmed_title_from_abstract(text: str) -> str:
+    """Tiêu đề bài báo từ định dạng EFetch: đoạn 1 là trích dẫn tạp chí, đoạn 2 là tiêu đề - ngăn
+    nhau bằng dòng trống. Không dùng `page_title()` vì đây là plain text, không phải HTML."""
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return " ".join(paragraphs[1].split())[:200] if len(paragraphs) >= 2 else ""
+
+
+def _fetch_pubmed_abstract(url: str, pmid: str, *, title: str, publisher: str) -> DocumentInput | FetchFailure:
+    """PubMed CHẶN fetch tự động ở chính trang web (đo thật 2026-08-23: HTTP 203, nội dung là trang
+    "Cookies must be enabled", ổn định qua nhiều lần thử, không phải lỗi mạng thoáng qua). `efetch.fcgi`
+    là API E-utilities, không qua cổng chặn bot - trả thẳng abstract dạng text, HTTP 200. Guard 2 vẫn
+    chạy y hệt qua `_length_guard_failure`; chỉ cơ chế LẤY bytes khác, không phải nới lỏng guard.
+
+    `url` trả về trong `DocumentInput` vẫn là trang PubMed người đọc được (để trích dẫn) - KHÔNG phải
+    URL efetch, đó chỉ là kênh nội bộ để lấy nội dung."""
+    import httpx
+
+    settings = get_settings()
+    params = {"db": "pubmed", "id": pmid, "rettype": "abstract", "retmode": "text"}
+    if settings.ncbi_api_key.strip():
+        params["api_key"] = settings.ncbi_api_key
+
+    try:
+        response = httpx.get(
+            _EFETCH_URL, params=params, timeout=FETCH_TIMEOUT_SECONDS, headers={"User-Agent": _USER_AGENT}
+        )
+    except Exception as error:
+        return FetchFailure(url, f"guard 2: efetch không gọi được ({type(error).__name__})")
+    if response.status_code != 200:
+        return FetchFailure(url, f"guard 2: efetch HTTP {response.status_code}")
+
+    stripped = response.text.strip()
+    failure = _length_guard_failure(stripped)
+    if failure:
+        return FetchFailure(url, failure)
+
+    return DocumentInput(
+        url=url,
+        text=response.text,
+        title=title or _pubmed_title_from_abstract(response.text),
+        publisher=publisher or "ncbi.nlm.nih.gov",
+        retrieved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
 def fetch_document(
     url: str,
     *,
@@ -131,6 +207,10 @@ def fetch_document(
 
     if not domain_allowed(url, allowlist):
         return FetchFailure(url, "guard 1: domain không nằm trong allowlist (hoặc không phải https)")
+
+    pmid = _pubmed_pmid(url)
+    if pmid is not None:
+        return _fetch_pubmed_abstract(url, pmid, title=title, publisher=publisher)
 
     try:
         response = httpx.get(
@@ -162,10 +242,9 @@ def fetch_document(
 
     text = extract_text(response.text)
     stripped = text.strip()
-    if len(stripped) < MIN_TEXT_CHARS:
-        return FetchFailure(url, f"guard 2: chỉ bóc được {len(stripped)} ký tự (<{MIN_TEXT_CHARS})")
-    if len(stripped) > MAX_TEXT_CHARS:
-        return FetchFailure(url, f"guard 2: bóc ra {len(stripped):,} ký tự (>{MAX_TEXT_CHARS:,}) - nhiều khả năng không phải văn bản")
+    failure = _length_guard_failure(stripped)
+    if failure:
+        return FetchFailure(url, failure)
 
     return DocumentInput(
         url=final_url,

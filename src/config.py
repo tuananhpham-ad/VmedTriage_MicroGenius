@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     )
     """Danh sách domain y khoa được phép trích. Guard 1 kiểm theo NHÃN TÊN MIỀN, không phải theo chuỗi
     con, nên `nhs.uk.evil.com` không lọt."""
-    source_support_search_provider: Literal["gemini", "tavily", "none"] = "gemini"
+    source_support_search_provider: Literal["gemini", "tavily", "pubmed", "auto", "none"] = "gemini"
     """Backend cho bước 3 (tìm URL khi index không phủ được claim).
 
     `gemini` = Grounding with Google Search, dùng key Gemini sẵn có, KHÔNG tốn tiền riêng nhưng mỗi
@@ -233,8 +233,19 @@ class Settings(BaseSettings):
     nhánh search chạy thật thì cần key Tavily, hoặc nâng Gemini lên tier trả phí.
     `tavily` = HTTP search API, ~$0,008/lần nhưng KHÔNG đụng quota LLM - hợp lý hơn khi chạy hàng loạt,
     vì với free tier thì RPD mới là giới hạn ràng buộc chứ không phải tiền.
+    `pubmed` = gọi NCBI E-utilities ESearch trực tiếp, không cần key và không tốn quota LLM. Không có
+    key, NCBI giới hạn 3 request/giây/IP; có `NCBI_API_KEY` thì là 10 request/giây. Trang tóm tắt
+    PubMed thường ngắn hơn 500 ký tự nên có thể bị Guard 2 loại; đây là giới hạn chấp nhận được,
+    không hạ Guard 2 riêng cho PubMed.
+    `auto`   = thử lần lượt gemini -> tavily -> pubmed, dừng ở backend ĐẦU TIÊN trả về URL; rỗng HOẶC
+    lỗi ở một backend đều tính là "không được" và rớt sang backend kế tiếp (bắt buộc, vì 429 của
+    grounding ở trên vốn đã bị nuốt thành danh sách rỗng - chỉ bắt exception thì sẽ không bao giờ rớt
+    đúng lúc cần). KHÔNG rẻ hơn dùng 1 backend cố định: trường hợp xấu nhất tốn tới 3 lời gọi mạng
+    cho một lần index-miss thay vì 1; chỉ đáng dùng khi cần độ tin cậy cao hơn một backend đơn lẻ
+    đang không ổn định. Không đổi default sang `auto` - vẫn phải tự bật.
     `none`   = tắt hẳn, tương đương `source_support_index_only`."""
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+    ncbi_api_key: str = os.getenv("NCBI_API_KEY", "")
 
     # Braintrust (eval/ tracing, xem eval/config.py). HOÀN TOÀN TUỲ CHỌN: thiếu key thì tracing
     # phải im lặng trở thành no-op, KHÔNG được làm app hay script trong eval/ crash.
