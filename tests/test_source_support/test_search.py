@@ -50,6 +50,7 @@ def test_search_pubmed_builds_urls_from_pmids(monkeypatch, pubmed_settings):
         "term": "acute abdominal pain",
         "retmax": str(search.MAX_RESULTS),
         "retmode": "json",
+        "sort": "relevance",
     }
 
 
@@ -110,6 +111,54 @@ def test_search_pubmed_adds_api_key_only_when_configured(monkeypatch, pubmed_set
 
     assert "api_key" not in params_seen[0]
     assert params_seen[1]["api_key"] == "test-key"
+
+
+# ---------- _pubmed_query: câu mệnh đề -> từ khoá ESearch ----------
+
+
+def test_pubmed_query_strips_esearch_operator_chars():
+    """Dấu ngoặc là toán tử boolean của ESearch, không phải chữ - để nguyên thì trả về 0 kết quả."""
+    trimmed = search._pubmed_query("Acute liver failure (acetaminophen poisoning acceptable)")
+    assert "(" not in trimmed and ")" not in trimmed
+    assert "acetaminophen" in trimmed and "poisoning" in trimmed
+
+
+def test_pubmed_query_drops_recommendation_and_filler_words():
+    trimmed = search._pubmed_query(
+        "COPD exacerbation in elderly patients with purulent sputum requires clinical evaluation"
+    )
+    for dropped in ("in", "with", "requires", "clinical", "evaluation", "patients"):
+        assert dropped not in trimmed.split()
+    for kept in ("COPD", "exacerbation", "elderly", "purulent", "sputum"):
+        assert kept in trimmed.split()
+
+
+def test_pubmed_query_caps_term_count():
+    long_claim = " ".join(f"term{index}" for index in range(30))
+    assert len(search._pubmed_query(long_claim).split()) == search._PUBMED_MAX_TERMS
+
+
+def test_pubmed_query_falls_back_when_everything_is_filtered():
+    """Chuỗi rỗng khiến ESearch khớp toàn bộ PubMed, nên phải trả lại câu gốc."""
+    assert search._pubmed_query("the patient requires clinical evaluation") == (
+        "the patient requires clinical evaluation"
+    )
+
+
+def test_search_pubmed_sends_the_trimmed_term(monkeypatch, pubmed_settings):
+    captured: dict = {}
+
+    def fake_get(url, *, params, timeout):
+        captured.update(params=params)
+        return _Response({"esearchresult": {"idlist": []}})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    claim = "Acute appendicitis in patients with fever requires clinical evaluation"
+    search._search_pubmed(claim, PUBMED_ALLOWLIST)
+
+    assert captured["params"]["term"] == search._pubmed_query(claim)
+    assert captured["params"]["term"] != claim
 
 
 # ---------- auto (chain gemini -> tavily -> pubmed) ----------
