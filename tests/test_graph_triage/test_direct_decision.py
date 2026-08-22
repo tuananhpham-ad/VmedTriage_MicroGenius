@@ -39,6 +39,14 @@ def test_direct_classifier_validates_structured_label(monkeypatch):
     assert captured["response_format"]["type"] == "json_schema"
 
 
+def test_direct_classifier_schema_is_openai_strict_compatible():
+    schema = direct_decision._RESPONSE_FORMAT["json_schema"]["schema"]
+
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["DirectEvidence"]["additionalProperties"] is False
+    assert set(schema["required"]) == set(schema["properties"])
+
+
 def test_direct_decision_keeps_only_evidence_from_the_summary(monkeypatch):
     class _Completions:
         def create(self, **kwargs):

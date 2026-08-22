@@ -490,16 +490,8 @@ function graphDecisionBlock(item) {
   const decision = item.graph_decision;
   if (!decision) return "";
   const label = graphLabels[decision.triage_label] || decision.triage_label || "Không xác định";
-  const review = decision.requires_human_review ? `<p class="advisory-review">Mô hình đề nghị bắt buộc có người xem lại.</p>` : "";
-  const c6Enabled = Boolean(decision.safety_gate);
-  const title = c6Enabled ? "Đánh giá an toàn C6" : "Ý kiến tham khảo từ mô hình";
-  const note = c6Enabled
-    ? "C6 chỉ có thể nâng mức ưu tiên ở cột bên phải; không tự hạ mức hoặc gửi nội dung cho bệnh nhân. Quyết định cuối vẫn thuộc về bạn."
-    : "Đây là ý kiến thứ hai, độc lập với đề xuất mức ưu tiên ở cột bên phải. Quyết định vẫn thuộc về bạn.";
-  const raisedBy = Array.isArray(decision.escalated_by) && decision.escalated_by.length
-    ? `<p class="advisory-review">Đã nâng lên Cấp cứu bởi: ${escapeHtml(decision.escalated_by.join(", "))}.</p>`
-    : "";
-  return `<section class="advisory-card"><h3>${title}</h3><p class="advisory-note">${note}</p><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-summary">${escapeHtml(decision.decision_summary || "")}</p>${raisedBy}${review}<p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
+  const title = "Đánh giá mức độ";
+  return `<section class="advisory-card"><h3>${title}</h3><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
 }
 /** Khối nguồn y văn ĐỌC-CHỈ của part 3 (src/source_support/), tách biệt khỏi ô nháp phản hồi bệnh
  *  nhân - trích dẫn không còn tự đổ vào bản nháp có thể sửa (xem `patientDraft`), chỉ hiện ở đây.

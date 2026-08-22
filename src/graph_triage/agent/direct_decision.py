@@ -11,7 +11,7 @@ import json
 from typing import Literal
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_settings
 from src.graph_triage.graph_schema import normalise_span
@@ -34,15 +34,23 @@ thì trả `evidence` rỗng. Trả JSON đúng schema."""
 
 
 class DirectEvidence(BaseModel):
+    # OpenAI strict structured output requires every object in the JSON Schema to explicitly
+    # forbid additional keys. Pydantic emits that constraint from extra="forbid".
+    model_config = ConfigDict(extra="forbid")
+
     concept: str = Field(min_length=1, max_length=120)
     status: Literal["present", "absent", "uncertain"]
     source_span: str = Field(min_length=1, max_length=500)
 
 
 class DirectDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     triage_label: str
     decision_summary: str = Field(min_length=1, max_length=600)
-    evidence: list[DirectEvidence] = Field(default_factory=list, max_length=3)
+    # Strict JSON Schema also requires every declared property to be required. The model can
+    # still return an empty list when no evidence is available.
+    evidence: list[DirectEvidence] = Field(max_length=3)
 
 _RESPONSE_FORMAT = {
     "type": "json_schema",

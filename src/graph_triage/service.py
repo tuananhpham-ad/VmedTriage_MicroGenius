@@ -56,10 +56,7 @@ _c6_fusion_lock = threading.Lock()
 _c6_fusion_gate: Any | None = None
 _c6_fusion_unavailable_reason: str | None = None
 
-_C6_DECISION_SUMMARY = (
-    "C6 đã đánh giá an toàn từ phiếu tóm tắt. Kết quả chỉ có thể nâng mức ưu tiên; "
-    "điều dưỡng vẫn phải duyệt quyết định cuối."
-)
+_C6_DECISION_SUMMARY = ""
 _C6_DISCLAIMER = "Đánh giá an toàn hỗ trợ, không thay thế đánh giá của nhân viên y tế."
 
 
