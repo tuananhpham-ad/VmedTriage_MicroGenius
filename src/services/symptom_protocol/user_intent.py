@@ -36,6 +36,7 @@ _WANTS_TO_STOP_PHRASES: tuple[str, ...] = (
     "minh muon dung",
     "dung lai di",
     "dung o day",
+    "dung di ba",
     "dung hoi nua",
     "dung hoi di",
     "thoi dung hoi",
@@ -83,6 +84,47 @@ _PROFANITY_TOKENS: frozenset[str] = frozenset(
 ba tín hiệu đếm bất hợp tác, và bắt nhầm ở đây (`"lon"` trong "lớn") sẽ đẩy một người bệnh đang hợp
 tác vào nhánh dừng. Vì thế khớp sau khi đã bỏ dấu VÀ tách theo ranh giới từ."""
 
+_JOKING_NON_ANSWER_PHRASES: tuple[str, ...] = (
+    "an cut",
+    "noi dua",
+    "dua thoi",
+    "dua day",
+    "joke",
+    "haha",
+    "hihi",
+    "lol",
+)
+"""Tin nhắn đùa/tục rõ ràng, không trả lời vào câu đang hỏi.
+
+Danh sách này chỉ được caller dùng khi ĐANG có câu hỏi lâm sàng chờ trả lời. Ở lượt mở, một tin nhắn
+lạ vẫn đi đường mở/phi lâm sàng; giữa checklist thì các cụm này là tín hiệu "nhắc lại lịch sự", không
+phải dữ kiện để extractor suy diễn thành triệu chứng.
+"""
+
+_CONFIRM_STOP_REPLIES: frozenset[str] = frozenset({
+    "co",
+    "co a",
+    "co nhe",
+    "co dung",
+    "dung",
+    "dung roi",
+    "uh",
+    "u",
+    "vang",
+    "ok",
+    "oke",
+})
+
+_DECLINE_STOP_REPLIES: frozenset[str] = frozenset({
+    "khong",
+    "khong a",
+    "khong dau",
+    "chua",
+    "tiep tuc",
+    "hoi tiep di",
+    "cu hoi tiep",
+})
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -122,6 +164,35 @@ def classify(message: str) -> UserIntent:
         profanity=bool(tokens & _PROFANITY_TOKENS),
         matched=matched + no_more,
     )
+
+
+def stop_prompt_confirmation(message: str) -> bool | None:
+    """Read a reply to the fixed "Bạn muốn dừng ở đây không?" prompt.
+
+    A bare "có" is not a stop request in general. It only means stop when the caller knows the
+    immediately previous assistant turn asked that exact confirmation.
+    """
+    folded = " ".join(_TOKEN_RE.findall(_fold(message)))
+    if folded in _CONFIRM_STOP_REPLIES:
+        return True
+    if folded in _DECLINE_STOP_REPLIES:
+        return False
+    return None
+
+
+def is_joking_non_answer(message: str) -> bool:
+    """Tin nhắn giống câu đùa/tục và không nên đưa vào extractor.
+
+    Không tự đọc thành "muốn dừng": nhiều người đùa hoặc gõ bậy một lượt rồi vẫn tiếp tục trả lời.
+    Cách xử lý đúng là nhắc lại câu hỏi đang chờ, lịch sự và ngắn.
+    """
+    folded = " ".join(_TOKEN_RE.findall(_fold(message)))
+    if not folded:
+        return False
+    if any(phrase in folded for phrase in _JOKING_NON_ANSWER_PHRASES):
+        return True
+    tokens = set(folded.split())
+    return bool(tokens & _PROFANITY_TOKENS) and len(tokens) <= 4
 
 
 UNCOOPERATIVE_STREAK_LIMIT = 2

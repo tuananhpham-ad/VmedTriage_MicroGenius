@@ -16,6 +16,7 @@ import pytest
 
 from src import paths
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
+from src.services.engines.generic_protocol import GENERIC_PROTOCOL
 from src.services.symptom_protocol import coverage, ranking, stage_machine
 from src.services.symptom_protocol.models import FieldSpec, QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -365,5 +366,24 @@ def test_fever_safety_fields_come_from_its_emergency_scan_stage() -> None:
     assert "temp_c" not in keys
 
 
-def test_fever_first_question_is_unchanged_without_any_signal() -> None:
-    assert stage_machine.next_cluster(FEVER_PROTOCOL, FEVER_PROTOCOL.stage_order[0], {}).id == "Q0-01"
+def test_the_first_active_question_is_the_universal_emergency_scan() -> None:
+    """2026-08-22: câu hỏi CHỦ ĐỘNG đầu tiên là quét cấp cứu, KHÔNG phải hỏi tuổi.
+
+    Trước đó ca "đau ngực từ sáng, đi vài bước là hụt hơi" bị hỏi "bé hay người lớn, bao nhiêu
+    tuổi" đầu tiên (`registry.py:8`). L0 và `OPENING_CLUSTER` vẫn chạy trước, nhưng cả hai đều THỤ
+    ĐỘNG - chúng chỉ bắt được thứ người bệnh tự nói ra."""
+    first = stage_machine.next_cluster(FEVER_PROTOCOL, FEVER_PROTOCOL.stage_order[0], {})
+    assert first.id in {"Q3-06", "Q3-07", "Q3-12"}
+    assert FEVER_PROTOCOL.stage_order[0] == FEVER_PROTOCOL.critical_scan_stage
+
+
+def test_stage_e_needs_no_demographics_so_it_can_run_at_turn_one() -> None:
+    """Điều kiện ĐỂ stage `E` đứng trước nhân khẩu: không cụm nào của nó bị skip theo tuổi/giới.
+
+    Nếu một cụm phụ thuộc tuổi lọt vào `E`, hệ thống sẽ hỏi câu dành cho trẻ sơ sinh cho người lớn
+    40 tuổi - đúng loại "hỏi ngu" mà việc chuyển stage này sinh ra để bỏ."""
+    for protocol in (FEVER_PROTOCOL, GENERIC_PROTOCOL):
+        stage = protocol.critical_scan_stage
+        empty = stage_machine.eligible_clusters(protocol, stage, {})
+        for age in ({"age_value": 2, "age_unit": "month"}, {"age_value": 40, "age_unit": "year"}):
+            assert stage_machine.eligible_clusters(protocol, stage, dict(age)) == empty

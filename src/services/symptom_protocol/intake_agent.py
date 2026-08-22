@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -524,10 +525,55 @@ def _invoke_json(
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_EDGE_PUNCT_RE = re.compile(r"^[\s,.;:!?]+|[\s,.;:!?]+$")
 
 
 def _normalize_for_evidence(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", (text or "").strip()).casefold()
+
+
+def _fold_bare_reply(text: str) -> str:
+    folded = unicodedata.normalize("NFD", text or "")
+    folded = "".join(char for char in folded if unicodedata.category(char) != "Mn")
+    folded = folded.replace("đ", "d").replace("Đ", "D")
+    folded = _EDGE_PUNCT_RE.sub("", folded)
+    return _WHITESPACE_RE.sub(" ", folded.strip()).casefold()
+
+
+_BARE_CLUSTER_NEGATIVE_REPLIES: frozenset[str] = frozenset({
+    "binh thuong",
+    "van binh thuong",
+    "hoan toan binh thuong",
+    "tat ca binh thuong",
+    "mọi thứ bình thường",
+    "moi thu binh thuong",
+    "on",
+    "on a",
+    "binh thuong a",
+    "khong",
+    "minh khong",
+    "toi khong",
+    "em khong",
+    "da bao khong",
+    "da noi khong",
+    "khong co",
+    "khong thay",
+    "khong co dau hieu nao",
+    "khong co gi",
+    "khong co gi ca",
+})
+
+
+def _apply_bare_cluster_negation(parsed: dict, message: str, *, batch_negation: bool) -> dict:
+    """Treat terse normal/negative replies as a scoped denial of the cluster just asked."""
+    if not batch_negation or parsed.get("cluster_all_negative"):
+        return parsed
+    if _fold_bare_reply(message) not in _BARE_CLUSTER_NEGATIVE_REPLIES:
+        return parsed
+    patched = dict(parsed)
+    patched["cluster_all_negative"] = True
+    patched["negation_evidence"] = message.strip()
+    return patched
 
 
 # Đoạn trích KHÔNG mang thông tin: nó nằm trong hầu hết mọi câu trả lời nên chứng minh được mọi thứ,
@@ -666,6 +712,7 @@ def _collect_fields(
 
     Nguyên tắc rút ra: **bằng chứng chỉ bắt buộc khi model nói thay người dùng về thứ chưa được hỏi**,
     và chỉ ở chiều làm ca nhẹ đi. Trả lời trực tiếp cho đúng câu vừa hỏi thì không phải chứng minh."""
+    parsed = _apply_bare_cluster_negation(parsed, message, batch_negation=batch_negation)
     cluster_negative = (
         batch_negation
         and bool(parsed.get("cluster_all_negative"))
@@ -842,7 +889,12 @@ class TurnResult:
 
 _QUESTION_ONLY_SYSTEM = """Bạn là điều dưỡng đang hỏi triệu chứng qua tin nhắn cho người bệnh/người nhà.
 
-Hãy diễn đạt lại {scope_intro} dưới đây thành MỘT tin nhắn tiếng Việt tự nhiên, ấm áp, ngắn gọn:
+Hãy tự soạn MỘT tin nhắn tiếng Việt tự nhiên, ấm áp, ngắn gọn để hỏi {scope_intro} dưới đây.
+
+ĐIỀU CẦN BIẾT (mỗi gạch đầu dòng là MỘT thông tin phải thu được - tự chọn cách hỏi):
+{field_brief}
+
+Cách diễn đạt tham khảo của điều dưỡng (KHÔNG bắt buộc chép, PHẢI viết khác đi cho tự nhiên hơn):
 "{script_hint}"{focus}
 
 ĐÃ BIẾT VỀ NGƯỜI BỆNH (TUYỆT ĐỐI không hỏi lại những điều này):
@@ -856,12 +908,16 @@ QUY TẮC BẮT BUỘC:
 - KHÔNG khuyên dùng thuốc, KHÔNG nêu liều, KHÔNG đưa hướng xử trí.
 - {scope_rule}
 - {instruction}
+- Hỏi thân mật nhưng đi thẳng vào ý cần hỏi. Tránh mẫu câu lặp lại như "mình đã ghi nhận",
+  "để mình nắm rõ hơn", "để mình yên tâm hơn" nếu không thật sự cần.
+- Nếu không có dữ kiện cần công nhận, bắt đầu thẳng bằng câu hỏi.
 - Nói VỚI người bệnh (ngôi thứ hai), không nói VỀ họ ở ngôi thứ ba.
 - KHÔNG chép lại nhãn kỹ thuật, tên trường dữ liệu, hay bất kỳ câu hướng dẫn nào ở trên.
 - Chỉ trả về đúng nội dung tin nhắn, không thêm lời dẫn hay giải thích.
 
 ĐỊNH DẠNG (tin nhắn chat, không phải tài liệu):
-- Tách phần công nhận thông tin và phần câu hỏi thành HAI ĐOẠN, cách nhau một dòng trống.
+- Nếu có phần công nhận thông tin, viết tối đa 1 câu ngắn rồi xuống dòng sang câu hỏi. Nếu không có
+  phần công nhận, chỉ viết câu hỏi.
 - Từ hai ý hỏi trở lên thì tách gạch đầu dòng "- ", mỗi ý một dòng; một ý thì viết liền câu.
 - KHÔNG in đậm, KHÔNG in nghiêng, KHÔNG bảng, KHÔNG tiêu đề "#", KHÔNG khối mã.
 - Tối đa {max_questions} dấu hỏi trong cả tin nhắn."""
@@ -883,6 +939,27 @@ def _batch_scope(parts: int) -> tuple[str, str]:
     )
 
 
+def _field_brief(protocol: SymptomProtocol, keys: tuple[str, ...]) -> str:
+    """Nhãn + gợi ý của từng field cần thu, cho renderer TỰ SOẠN câu thay vì chép `script_hint`.
+
+    Vì sao đổi (2026-08-22): trước đây prompt chỉ đưa `script_hint` - một câu tiếng Việt viết cứng -
+    nên model chỉ còn việc diễn đạt lại đúng câu đó. Không gian sáng tạo bằng 0 về mặt *hỏi cái gì*
+    và rất hẹp về *hỏi thế nào*, và đó là nguồn của cảm giác "hỏi máy móc".
+
+    RANH GIỚI KHÔNG NỚI: danh sách field này do `stage_machine` + `ranking` chốt, model KHÔNG chọn.
+    Nó được tự do về cách nói, thứ tự các ý trong cùng một lượt và giọng điệu - không được tự do về
+    việc hỏi field nào. `output_guard` check 4 chặn câu chạm field đã biết, và `EvidencePolicy` chặn
+    việc điền field không có bằng chứng, nên nới ở đây không mở đường cho model bịa dữ kiện."""
+    lines = []
+    for key in keys:
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            continue
+        hint = (spec.hint or "").strip()
+        lines.append(f"- {spec.label}" + (f" ({hint})" if hint else ""))
+    return "\n".join(lines) if lines else "(không có ý nào)"
+
+
 def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
     if not conversation:
         return "(chưa có lượt nào trước đó)"
@@ -897,10 +974,12 @@ def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
 # script_hint mỗi lần, làm hội thoại cảm giác "học thuộc lòng" (phát hiện qua test tay với LLM thật).
 _QUESTION_TEMPERATURE = 0.7
 
-# Số lần hỏi lại tối đa cho MỘT cụm trước khi bỏ qua. 2 là đánh đổi tường minh: đủ để người dùng hiểu
-# ra ý câu hỏi khi diễn đạt lần đầu chưa rõ, nhưng không biến hội thoại thành vòng lặp - hội thoại
-# treo vô hạn là bug đã gặp thật ở Stage 3A (Checkpoint 6).
-MAX_RETRIES_PER_CLUSTER = 2
+# Số lần hỏi lại tối đa cho MỘT cụm trước khi bỏ qua.
+#
+# Chốt UX 2026-08-22: hỏi một cụm đúng MỘT LẦN. Người bệnh thường chỉ trả lời những ý họ có/nhớ;
+# phần đã hỏi mà họ không nhắc tới giữ nguyên `unknown` và cụm được đóng dưới dạng unresolved, thay
+# vì hỏi lại làm hội thoại dài và lạc nhịp.
+MAX_RETRIES_PER_CLUSTER = 0
 
 
 def _worth_retrying(protocol: SymptomProtocol, cluster: QuestionCluster, answers: dict[str, TriState]) -> bool:
@@ -966,7 +1045,10 @@ def _generate_question(
 
     scope_intro, scope_rule = _batch_scope(parts) if parts > 1 else _SINGLE_SCOPE
     acknowledge = plan.acknowledge if plan is not None else ""
+    # Field cho renderer: phan CON THIEU neu biet, khong thi ca cum.
+    brief_keys = tuple(missing) if missing else tuple(cluster.fields)
     system_prompt = _QUESTION_ONLY_SYSTEM.format(
+        field_brief=_field_brief(protocol, brief_keys),
         scope_intro=scope_intro,
         scope_rule=scope_rule,
         script_hint=cluster.script_hint,
@@ -1581,7 +1663,7 @@ def run_open_turn(
     )
 
 
-SAFETY_LOOKAHEAD_CLUSTERS = 12
+SAFETY_LOOKAHEAD_CLUSTERS = 0
 """Bao nhiêu cụm SẮP hỏi được đưa kèm vào schema trích xuất mỗi lượt.
 
 Trước đây là 5, và đó là nguồn của phàn nàn "có thông tin trong câu trả lời rồi mà vẫn hỏi lại":
@@ -1589,9 +1671,17 @@ người bệnh kể vượt trước một chi tiết thuộc cụm nằm ngoà
 của Stage 4 ngay lượt mở) thì model KHÔNG có ô nào trong schema để ghi - chi tiết đó rơi mất, và khi
 hội thoại đi tới đúng cụm đó thì hỏi lại nguyên văn thứ họ vừa nói.
 
-12 phủ trọn hai stage của mọi protocol hiện có mà vẫn có trần. Nới rộng KHÔNG mở đường cho model bịa:
-field chưa được hỏi vẫn chịu `EvidencePolicy` khắt khe nhất (phải trích được nguyên văn câu của người
-bệnh mới được điền), nên cái giá duy nhất là prompt dài hơn."""
+**`0` = KHÔNG TRẦN** (2026-08-22): mọi cụm còn lại của protocol đều có ô trong schema, ở mọi lượt.
+
+12 từng đủ khi mục tiêu là "phủ hai stage kế tiếp". Yêu cầu mới mạnh hơn: field thuộc về TỪNG
+BƯỚC của quy trình, và người bệnh trả lời trước field của BẤT KỲ bước nào thì phải ghi nhận được
+ngay, để khi hội thoại đi tới bước đó thì KHÔNG hỏi lại - và dùng lượt đó hỏi field khác. Một trần
+12 cụm vẫn để lọt ca "kể luôn bệnh nền và thuốc đang dùng ngay lượt mở" (Stage 4/5 của fever).
+
+Nới rộng KHÔNG mở đường cho model bịa: field chưa được hỏi vẫn chịu `EvidencePolicy` khắt khe nhất
+(phải trích được nguyên văn câu của người bệnh mới được điền). Cái giá thật là **prompt dài hơn và
+tốn token hơn mỗi lượt** - fever có 101 field. Đó là đánh đổi có chủ đích: đổi token lấy việc không
+hỏi lại thứ người bệnh vừa nói. Đặt lại một số dương nếu cần cắt chi phí."""
 
 
 def _safety_extra_keys(
@@ -1615,7 +1705,7 @@ def _safety_extra_keys(
 
     upcoming = 0
     for candidate in protocol.clusters:
-        if upcoming >= lookahead:
+        if lookahead and upcoming >= lookahead:
             break
         if candidate.id == cluster.id or candidate.id in asked_ids:
             continue

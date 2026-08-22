@@ -141,7 +141,7 @@ def test_a_correction_is_acknowledged_with_the_corrected_fact() -> None:
     assert "false" in plan.acknowledge
 
 
-def test_the_acknowledgement_carries_data_only_never_text_to_copy() -> None:
+def test_routine_answer_does_not_force_an_acknowledgement() -> None:
     """Trộn hướng dẫn ngôi thứ ba vào cùng chuỗi với dữ kiện thì model chép thẳng ra tin nhắn, và
     người bệnh đọc được một câu nói VỀ mình - lỗi đo được trên transcript thật với deepseek-chat."""
     plan = dialogue.build_response_plan(
@@ -151,16 +151,15 @@ def test_the_acknowledgement_carries_data_only_never_text_to_copy() -> None:
         recent_fields=frozenset({"fever_reported"}),
     )
     assert plan is not None
-    assert "Người bệnh" not in plan.acknowledge
-    assert plan.acknowledge == f"{FEVER_PROTOCOL.fields_by_key['fever_reported'].label} = true"
+    assert plan.acknowledge == ""
 
 
-def test_the_acknowledgement_stays_short_and_only_mentions_new_facts() -> None:
+def test_the_correction_acknowledgement_stays_short_and_only_mentions_new_facts() -> None:
     """§6.3: công nhận NGẮN điều vừa nhận được, không đọc lại toàn bộ hồ sơ."""
     answers = {"fever_reported": "true", "temp_c": "39", "age_value": "20", "sex": "male"}
     plan = dialogue.build_response_plan(
         FEVER_PROTOCOL, _CLUSTER,
-        act=dialogue.DialogueAct.ANSWER,
+        act=dialogue.DialogueAct.CORRECTION,
         answers=answers,
         recent_fields=frozenset({"fever_reported", "temp_c", "age_value"}),
     )

@@ -37,8 +37,11 @@ Route = Literal[
     "ROUTE_LOCALIZED_SOURCE",
 ]
 
-STAGE_ORDER: tuple[str, ...] = ("0", "1", "2", "3A", "3B", "4", "5")
-GATE_STAGES: tuple[str, str] = ("3A", "3B")
+STAGE_ORDER: tuple[str, ...] = ("E", "0", "1", "2", "3A", "3B", "4", "5")
+GATE_STAGES: tuple[str, ...] = ("E", "3A", "3B")
+CRITICAL_SCAN_STAGE = "E"
+EMERGENCY_SCAN_STAGE = "3A"
+EARLY_VISIT_SCAN_STAGE = "3B"
 # Ngân sách CS §6.5 bắt đầu có hiệu lực từ Stage 4. Trước đây là "5" - cũng chính là stage CUỐI, nên
 # ngân sách 12-16 cụm không bao giờ cắt được gì trước khi hội thoại đã đi hết Stage 4 (10 cụm). Đặt ở
 # "4" cho ngân sách đúng vai trò của nó, trong khi Stage 3A/3B (quét đỏ, không được rút gọn) vẫn nằm
@@ -365,6 +368,21 @@ def _skip_q3_02(answers: dict[str, object]) -> bool:
     return age_months is not None and age_months < 16 * 12
 
 
+def _skip_q3_13(answers: dict[str, object]) -> bool:
+    """Không kéo ca sốt thuần sang hỏi bụng nếu người bệnh chưa hề khai triệu chứng bụng.
+
+    Q3-13 là dấu hiệu đỏ có giá trị khi đau bụng/bụng cứng đã xuất hiện trong lời khai. Nhưng hỏi
+    chủ động ở mọi ca sốt tạo đúng trải nghiệm xấu: người bệnh đang khai sốt lại bị chuyển mạch sang
+    "bụng có đau không". Dấu hiệu này vẫn được bắt qua L0/opportunistic scan nếu người bệnh tự nói ra.
+    """
+    severity = answers.get("abdominal_pain_severity")
+    if severity not in (None, "", "unknown", "none", "false"):
+        return False
+    if _is_true(answers.get("abdominal_guarding")):
+        return False
+    return not bool(answers.get("abdominal_pain_location"))
+
+
 def _skip_q4_01(answers: dict[str, object]) -> bool:
     age_months = age_in_months(answers)
     if answers.get("sex") != "female" or age_months is None:
@@ -402,6 +420,7 @@ _SKIP_RULES: dict[str, object] = {
     "Q2-04": _skip_when_no_fever,
     "Q2-05": _skip_q2_05,
     "Q3-02": _skip_q3_02,
+    "Q3-13": _skip_q3_13,
     "Q4-01": _skip_q4_01,
     "Q4-01b": _skip_q4_01b,
     "Q4-02": _skip_q4_02,
@@ -654,8 +673,9 @@ CONTRADICTION_RULES: tuple = (_contradiction_no_fever_but_hot,)
 # là nút thắt lớn nhất còn lại sau khi 3A/3B đã được nén (~7-8 lượt cho một stage toàn câu trả lời
 # "không").
 SCREENING_GROUPS: tuple = (
-    common_screening.emergency_scan_groups(GATE_STAGES[0])
-    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    common_screening.critical_scan_groups(CRITICAL_SCAN_STAGE)
+    + common_screening.emergency_scan_groups(EMERGENCY_SCAN_STAGE)
+    + common_screening.early_visit_scan_groups(EARLY_VISIT_SCAN_STAGE)
     + common_screening.risk_context_groups("4")
 )
 
@@ -670,6 +690,9 @@ FEVER_PROTOCOL = SymptomProtocol(
     clusters=QUESTION_CLUSTERS,
     stage_order=STAGE_ORDER,
     gate_stages=GATE_STAGES,
+    critical_scan_stage=CRITICAL_SCAN_STAGE,
+    emergency_scan_stage=EMERGENCY_SCAN_STAGE,
+    early_visit_scan_stage=EARLY_VISIT_SCAN_STAGE,
     budget=BUDGET,
     budget_floor_stage=BUDGET_FLOOR_STAGE,
     determine_route=determine_route,

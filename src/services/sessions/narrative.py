@@ -36,12 +36,10 @@ _SYSTEM_PROMPT = """Bạn viết lại lời khai của người bệnh thành M
 QUY TẮC BẮT BUỘC:
 - CHỈ dùng dữ kiện có trong danh sách bên dưới. TUYỆT ĐỐI không thêm chi tiết y khoa nào khác.
 - KHÔNG nêu tên bệnh, KHÔNG chẩn đoán, KHÔNG khuyên xử trí, KHÔNG nhắc tới thuốc hay việc đi khám.
-- Ghi rõ cả ba nhóm, và TUYỆT ĐỐI KHÔNG trộn chúng vào nhau:
+- Chỉ viết hai nhóm dữ kiện đã xác định, và TUYỆT ĐỐI KHÔNG trộn chúng vào nhau:
   * mục "Triệu chứng ghi nhận" -> viết là người bệnh CÓ;
   * mục "Người bệnh phủ nhận" -> viết là người bệnh nói KHÔNG CÓ;
-  * mục "Chưa xác định được" -> viết là CHƯA XÁC ĐỊNH / CHƯA HỎI TỚI.
-- Mục "Chưa xác định được" KHÔNG BAO GIỜ được viết thành "không ghi nhận", "không có" hay "phủ nhận".
-  Chưa ai hỏi thì không được viết như thể đã hỏi và người bệnh trả lời không.
+- Không viết về field chưa xác định/chưa hỏi tới. Không dùng chữ "unknown" trong đoạn tóm tắt.
 - Viết ở ngôi thứ ba ("Người bệnh..."), 3-5 câu, không gạch đầu dòng, không markdown.
 - Nếu cùng một thông tin bị đính chính nhiều lần, chỉ dùng giá trị MỚI NHẤT."""
 

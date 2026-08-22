@@ -18,6 +18,13 @@ _session_factory: sessionmaker[Session] | None = None
 _database_url: str | None = None
 
 
+def normalize_database_url(database_url: str) -> str:
+    """Normalize platform-provided connection URLs for SQLAlchemy."""
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql://", 1)
+    return database_url
+
+
 def _ensure_sqlite_directory(database_url: str) -> None:
     prefixes = ("sqlite:///", "sqlite+pysqlite:///")
     prefix = next((item for item in prefixes if database_url.startswith(item)), None)
@@ -32,7 +39,7 @@ def _ensure_sqlite_directory(database_url: str) -> None:
 def configure_database(database_url: str | None = None) -> Engine:
     global _engine, _session_factory, _database_url
 
-    resolved_url = database_url or get_settings().database_url
+    resolved_url = normalize_database_url(database_url or get_settings().database_url)
     if _engine is not None and _database_url == resolved_url:
         return _engine
 

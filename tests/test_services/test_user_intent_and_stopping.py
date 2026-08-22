@@ -124,10 +124,29 @@ def _full_benign_record() -> dict[str, object]:
         "toi khong muon tra loi nua",
         "tóm tắt cho tôi đi",
         "dừng ở đây nhé",
+        "dừng đi ba",
     ],
 )
 def test_explicit_stop_requests_are_detected(message: str):
     assert user_intent.classify(message).wants_to_stop is True
+
+
+def test_bare_yes_only_confirms_stop_after_the_stop_prompt():
+    assert user_intent.classify("có").wants_to_stop is False
+    assert user_intent.stop_prompt_confirmation("có") is True
+    assert user_intent.stop_prompt_confirmation("không") is False
+
+
+@pytest.mark.parametrize("message", ["bé ăn cứt", "nói đùa thôi", "haha", "lol"])
+def test_joking_non_answers_are_detected(message: str):
+    assert user_intent.is_joking_non_answer(message) is True
+
+
+def test_joking_non_answer_is_not_a_stop_request():
+    intent = user_intent.classify("bé ăn cứt")
+
+    assert intent.wants_to_stop is False
+    assert intent.no_more_symptoms is False
 
 
 @pytest.mark.parametrize(
@@ -260,6 +279,48 @@ def test_asking_for_a_summary_closes_the_session_with_missing_information(fake_l
     assert case.summary.missing_information, "phiếu bỏ dở phải liệt kê field M0/M1 còn thiếu"
 
 
+def test_a_non_answered_cluster_is_not_asked_again(fake_llm):
+    """Chốt UX 2026-08-22: hỏi một cụm một lần.
+
+    Người bệnh thường chỉ trả lời phần họ có/biết. Nếu model không trích được field nào từ lượt đó,
+    phần còn lại giữ `unknown`, cụm được ghi unresolved và phiên đi tiếp thay vì hỏi lại nguyên ý cũ.
+    """
+    store = ProtocolSessionStore(FEVER_PROTOCOL)
+    session = _fever_session(store)
+    cluster = next(item for item in FEVER_PROTOCOL.clusters if item.id == "Q2-01")
+    session.stage = cluster.stage
+    session.current_cluster = cluster
+    session.pending_probe = ()
+    session.screening_history.clear()
+    session.answers.update({"fever_reported": "true", "fever_status": "subjective"})
+
+    store.submit_message(session.session_id, "mình không có nhiệt kế")
+
+    assert session.cluster_key("Q2-01") in session.unresolved_cluster_ids
+    assert session.current_cluster is None or session.current_cluster.id != "Q2-01"
+    assert session.retry_count_by_cluster.get(session.cluster_key("Q2-01")) == 1
+
+
+def test_a_joking_non_answer_repeats_the_current_question_without_calling_model(monkeypatch):
+    spy = Mock(side_effect=AssertionError("Câu đùa không được đưa vào extractor"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(FEVER_PROTOCOL)
+    session = _fever_session(store)
+    before_question = session.last_question
+    before_cluster = session.current_cluster
+    before_probe = session.pending_probe
+
+    store.submit_message(session.session_id, "bé ăn cứt")
+
+    assert session.current_cluster is before_cluster
+    assert session.pending_probe == before_probe
+    assert before_question in session.last_question
+    assert "đau bụng" not in session.last_question.casefold()
+    assert session.llm_used_last_turn is False
+    spy.assert_not_called()
+
+
 def test_a_stop_request_does_not_lower_an_escalation(fake_llm):
     """§7.1 mục 6. Ý định người bệnh chỉ được DỪNG, không được hạ mức - phiên có dấu hiệu đỏ thật
     trong hồ sơ vẫn phải đóng bằng `RED_FLAG`, không phải bằng ý định."""
@@ -288,6 +349,20 @@ def test_session_asks_once_then_stops_as_uncooperative(fake_llm):
 
     store.submit_message(session.session_id, "chán chả buồn nói")
     assert session.stop_reason == "USER_UNCOOPERATIVE"
+
+
+def test_yes_to_the_stop_prompt_closes_the_session(fake_llm):
+    store = ProtocolSessionStore(FEVER_PROTOCOL)
+    session = _fever_session(store)
+
+    store.submit_message(session.session_id, "hôm nay trời mưa to quá")
+    store.submit_message(session.session_id, "kệ đi ông ơi")
+    assert session.last_question == user_intent.UNCOOPERATIVE_PROMPT
+
+    store.submit_message(session.session_id, "có")
+
+    assert session.stop_reason == "USER_CANNOT_CONTINUE"
+    assert session.state.value == "awaiting_confirmation"
 
 
 def test_uncooperative_session_is_not_asked_the_catch_all_question(fake_llm):

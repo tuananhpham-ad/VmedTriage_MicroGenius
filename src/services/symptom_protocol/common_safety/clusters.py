@@ -22,10 +22,17 @@ from src.services.symptom_protocol.models import QuestionCluster
 
 
 def demographic_clusters(stage: str = "0") -> tuple[QuestionCluster, ...]:
-    """Ai đang cần tư vấn - tuổi/giới quyết định gần như mọi ngưỡng lâm sàng phía sau."""
+    """Ai đang cần tư vấn - tuổi/giới quyết định gần như mọi ngưỡng lâm sàng phía sau.
+
+    MỘT cụm chứ không phải hai (2026-08-22): tuổi và giới luôn đi cùng nhau trong mọi câu hỏi hồ sơ
+    thật ("bé trai mấy tuổi ạ?"), nên tách làm hai cụm chỉ tốn thêm một lượt mà không đổi được gì
+    về độ phủ. Mã cụm giữ `Q0-01` để không mất đường truy ngược về CS §3.0.
+    """
     return (
-        QuestionCluster("Q0-01", stage, ("age_value", "age_unit", "reporter_type"), script_hint="Người đang cần tư vấn là bé hay người lớn, bao nhiêu tuổi/tháng"),
-        QuestionCluster("Q0-02", stage, ("sex",), script_hint="Nam hay nữ"),
+        QuestionCluster(
+            "Q0-01", stage, ("age_value", "age_unit", "reporter_type", "sex"),
+            script_hint="Người đang cần tư vấn là bé hay người lớn, bao nhiêu tuổi/tháng, nam hay nữ",
+        ),
     )
 
 
@@ -38,13 +45,32 @@ def emergency_scan_clusters(stage: str) -> tuple[QuestionCluster, ...]:
         QuestionCluster("Q3-03", stage, ("seizure_occurred", "seizure_active_now", "seizure_features"), batch_negation=True, script_hint="Có bị co giật không - đang co giật ngay lúc này không"),
         QuestionCluster("Q3-04", stage, ("neck_stiffness", "photophobia", "severe_headache", "bulging_fontanelle"), batch_negation=True, script_hint="Có cứng gáy, sợ ánh sáng, đau đầu dữ dội khác thường không"),
         QuestionCluster("Q3-05", stage, ("focal_neuro_deficit",), batch_negation=True, script_hint="Có yếu tay/chân một bên, méo miệng, nói khó mới xuất hiện không"),
-        QuestionCluster("Q3-06", stage, ("breathing_difficulty", "cyanosis", "chest_indrawing", "nasal_flaring_grunting"), batch_negation=True, script_hint="Có khó thở không - môi/đầu ngón tay tím tái không"),
-        QuestionCluster("Q3-07", stage, ("stridor_or_drooling",), batch_negation=True, script_hint="Có thở rít khi hít vào, chảy dãi không nuốt được không"),
         QuestionCluster("Q3-08", stage, ("cold_clammy_skin", "capillary_refill_ge_3s"), batch_negation=True, script_hint="Da có lạnh, ẩm, nổi vân tím không - CRT có chậm không"),
         QuestionCluster("Q3-09", stage, ("urine_output", "feeding_intake", "vomiting_severity"), batch_negation=True, script_hint="6 giờ qua có đi tiểu không, ăn uống được không, có nôn nhiều không"),
         QuestionCluster("Q3-11", stage, ("non_blanching_rash", "rash_present", "rash_type"), batch_negation=True, script_hint="Trên da có nổi ban đỏ/tím không - ấn kính vào có mất không"),
-        QuestionCluster("Q3-12", stage, ("mucosal_bleeding", "gi_bleeding"), batch_negation=True, script_hint="Có chảy máu bất thường không - chân răng, mũi, nôn ra máu, phân đen"),
         QuestionCluster("Q3-13", stage, ("abdominal_pain_severity", "abdominal_pain_location", "abdominal_guarding"), batch_negation=True, script_hint="Có đau bụng không - mức nào, bụng có cứng không"),
+    )
+
+
+def critical_scan_clusters(stage: str) -> tuple[QuestionCluster, ...]:
+    """Dấu hiệu nguy kịch **PHỔ QUÁT** - hỏi được NGAY LƯỢT 1, trước cả tuổi/giới (stage `E`).
+
+    Tách khỏi `emergency_scan_clusters` theo một tiêu chí DUY NHẤT, kiểm chứng được: **không cụm nào
+    trong đây có skip-rule đọc `age` hay `sex`** ở bất kỳ protocol nào. Đó là điều kiện để hỏi chúng
+    trước khi biết người bệnh là ai mà không hỏi nhầm câu dành cho trẻ sơ sinh cho người lớn.
+
+    Vì sao phải có stage này dù đã có L0 + `OPENING_CLUSTER`: cả hai đều **thụ động** - chúng chỉ bắt
+    được thứ người bệnh TỰ nói ra. Người nhắn "tôi bị sốt" thì không có gì để bắt, và trước
+    2026-08-22 câu hỏi CHỦ ĐỘNG đầu tiên của hệ thống là hỏi TUỔI (`registry.py:8` ghi lại đúng lời
+    phàn nàn đó). Một câu quét gộp ở đây tốn đúng MỘT lượt và đổi thứ tự đó.
+
+    Q3-01 (tri giác) và Q3-03 (co giật) CỐ Ý Ở LẠI `3A` dù cũng phổ quát: CS §3.3A cấm suỷ hai cụm
+    này từ một câu phủ định gộp, nên đưa vào `E` thì chúng vẫn phải hỏi riêng từng cụm - mất đúng cái
+    lợi mà stage này sinh ra để có."""
+    return (
+        QuestionCluster("Q3-06", stage, ("breathing_difficulty", "cyanosis", "chest_indrawing", "nasal_flaring_grunting"), batch_negation=True, script_hint="Có khó thở không - môi/đầu ngón tay tím tái không"),
+        QuestionCluster("Q3-07", stage, ("stridor_or_drooling",), batch_negation=True, script_hint="Có thở rít khi hít vào, chảy dãi không nuốt được không"),
+        QuestionCluster("Q3-12", stage, ("mucosal_bleeding", "gi_bleeding"), batch_negation=True, script_hint="Có chảy máu bất thường không - chân răng, mũi, nôn ra máu, phân đen"),
     )
 
 

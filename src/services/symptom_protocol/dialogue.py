@@ -88,7 +88,7 @@ class ActPolicy:
 # BẢNG. Phải phủ ĐỦ mọi `DialogueAct` - có test duyệt toàn bảng canh việc đó.
 DIALOGUE_POLICY: dict[DialogueAct, ActPolicy] = {
     DialogueAct.ANSWER: ActPolicy(
-        acknowledge_instruction="Công nhận NGẮN dữ kiện vừa nhận được rồi hỏi tiếp.",
+        acknowledge_instruction="",
         simplify=False,
     ),
     DialogueAct.PARTIAL_ANSWER: ActPolicy(

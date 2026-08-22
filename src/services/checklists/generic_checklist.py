@@ -54,10 +54,15 @@ FIELDS_BY_KEY: dict[str, FieldSpec] = {field.key: field for field in GENERIC_FIE
 # để `stage_machine` chạy y nguyên: hai stage quét đỏ/khám sớm phải TÁCH RỜI thì cơ chế "chỉ quét
 # early-visit khi emergency-scan đã sạch" (`_cluster_is_skipped`) mới có chỗ bám. Bảng trong
 # `agent_conversation_policy.md` §3.4 gộp chúng vào một stage - làm vậy sẽ mất cơ chế đó.
-STAGE_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4")
-GATE_STAGES: tuple[str, str] = ("2", "3")
+STAGE_ORDER: tuple[str, ...] = ("E", "0", "1", "2", "3", "4")
+GATE_STAGES: tuple[str, ...] = ("E", "2", "3")
+CRITICAL_SCAN_STAGE = "E"
+EMERGENCY_SCAN_STAGE = "2"
+EARLY_VISIT_SCAN_STAGE = "3"
 
 QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
+    # --- Stage E — quét cấp cứu PHỔ QUÁT, trước cả nhân khẩu (2026-08-22) ---
+    *common_clusters.critical_scan_clusters("E"),
     # --- Stage 0 — ai đang cần tư vấn ---
     *common_clusters.demographic_clusters("0"),
     # --- Stage 1 — than phiền là gì ---

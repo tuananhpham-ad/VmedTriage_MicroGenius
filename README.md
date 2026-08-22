@@ -63,6 +63,8 @@ make eval         # python eval/scripts/run_eval.py
 | `ENABLE_GRAPH_TRIAGE_AGENT` | Bật module `src/graph_triage/` (second opinion, không bao giờ ghi đè `TriageProposal.priority`) — mặc định `false` | — |
 | `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
 
+Production deploy không được dùng SQLite mặc định vì filesystem của web service có thể bị xoá khi redeploy. `render.yaml` hiện khai báo Render Postgres `vmedtriage-postgres` bằng gói `basic-256mb` và bind `DATABASE_URL` bằng `fromDatabase.connectionString`; khi `APP_ENV=production`, app sẽ từ chối khởi động nếu `DATABASE_URL` vẫn trỏ tới SQLite.
+
 ## API & luồng chính
 
 Luồng production thật là `/api/v1/chat` (xem `src/api/routes.py` + `src/services/symptom_protocol/`). Chi tiết:

@@ -15,10 +15,9 @@ văn xuôi do LLM viết nằm ở `intake_agent`; nó ghi vào `HandoffSummary.
 **Chế độ (b) là BẢN ĐỐI CHỨNG của chế độ (a).** Nếu văn xuôi nói một điều mà không field nào ở đây
 đỡ, thì văn xuôi đang bịa. Đó là một kiểm tra rẻ và nên chạy tự động - xem `narrative_is_grounded`.
 
-**Quy tắc lọc (ADR-006):** trường rỗng KHÔNG xuất. Nhưng việc lọc xảy ra ở ĐÂY, không ở nguồn dữ
-liệu - snapshot vẫn giữ đủ ba giá trị. **Ngoại lệ: field an toàn luôn được render**, kể cả khi
-`false` hoặc `unknown`, vì "người bệnh phủ nhận đau lan xuống tay" và "chưa ai hỏi về đau lan xuống
-tay" là hai thứ điều dưỡng bắt buộc phải phân biệt được - và đó chính là chỗ họ nhìn đầu tiên.
+**Quy tắc lọc (ADR-006):** trường rỗng/`unknown` KHÔNG xuất trong phần chữ. Snapshot vẫn giữ đủ ba
+giá trị cho rule engine, missing-data UI và guard chống bịa phủ định; riêng summary đọc cho người và
+LLM chỉ được dùng dữ kiện đã xác định (`true`/`false`).
 """
 
 from __future__ import annotations
@@ -36,8 +35,8 @@ _TRUE, _FALSE, _UNKNOWN = "true", "false", "unknown"
 class FieldSummary:
     """Chế độ (b) của §4.3: render TẤT ĐỊNH từ snapshot, không qua model.
 
-    Ba nhóm, và nhóm thứ ba không được bỏ: `unknown` là dữ kiện nói "chỗ này chưa ai biết". Xoá nó đi
-    thì phiếu đọc ra giống hệt như đã hỏi và người bệnh nói không."""
+    Summary text chỉ viết hai nhóm có dữ kiện thật: `true` và `false`. `unknown_safety` vẫn tồn tại
+    nội bộ để guard bắt lỗi bản văn xuôi bịa phủ định cho field chưa hỏi, nhưng không render ra chữ."""
 
     reported: list[str] = field(default_factory=list)
     """Field = `true` - triệu chứng ghi nhận."""
@@ -48,11 +47,10 @@ class FieldSummary:
     phải đọc 80 dòng để tìm 3 dòng có nghĩa, và như vậy là làm hỏng chính mục đích của khối này."""
 
     def as_text(self) -> str:
-        """Bản chữ cho phiếu. Khối rỗng không xuất - đúng quy tắc render của ADR-006."""
+        """Bản chữ cho phiếu. Chỉ render field `true`/`false`; `unknown` không dùng để viết summary."""
         blocks = [
             ("Triệu chứng ghi nhận:", self.reported),
             ("Người bệnh phủ nhận:", self.denied),
-            ("Chưa xác định được:", self.unknown_safety),
         ]
         return "\n\n".join(
             "\n".join([heading, *(f"- {item}" for item in items)])
@@ -62,7 +60,11 @@ class FieldSummary:
 
 
 def field_summary(protocol: SymptomProtocol, answers: dict[str, object]) -> FieldSummary:
-    """Snapshot -> ba nhóm field. THUẦN: không model, không I/O."""
+    """Snapshot -> field summary. THUẦN: không model, không I/O.
+
+    `reported`/`denied` là nguồn để viết summary. `unknown_safety` chỉ là dữ liệu guard nội bộ, không
+    xuất hiện trong `as_text()` hay prompt narrative.
+    """
     safety = frozenset(protocol.safety_signal_fields)
     result = FieldSummary()
     for key, spec in protocol.fields_by_key.items():
@@ -89,6 +91,17 @@ _UNKNOWN_MARKERS: tuple[str, ...] = (
 )
 """Cụm từ nói đúng rằng field còn `unknown`. Câu có chúng thì KHÔNG bị tính là bịa phủ định, kể cả
 khi nó cũng chứa chữ "không" ("chưa xác định được có sốt hay không")."""
+
+_BLANKET_DENIAL_MARKERS: tuple[str, ...] = (
+    "không có các triệu chứng khác", "khong co cac trieu chung khac",
+    "không ghi nhận triệu chứng khác", "khong ghi nhan trieu chung khac",
+    "không còn triệu chứng nào", "khong con trieu chung nao",
+    "không có dấu hiệu nào khác", "khong co dau hieu nao khac",
+)
+"""Phủ định gộp không nêu tên field. Nếu còn `unknown_safety`, câu này biến "chưa hỏi" thành
+"người bệnh phủ nhận hết" mà không có nhãn nào để so khớp."""
+
+_BLANKET_UNKNOWN_DENIAL = "__blanket_unknown_denial__"
 
 _CLAUSE_SPLIT = re.compile("[.;]")
 """Tách mệnh đề. Kiểm theo MỆNH ĐỀ chứ không theo cả đoạn: một đoạn văn nói đúng ở câu đầu và bịa
@@ -124,6 +137,10 @@ def narrative_invents_denials(narrative: str, summary: FieldSummary) -> list[str
             continue
         if any(marker in clause for marker in _UNKNOWN_MARKERS):
             continue
+        if any(marker in clause for marker in _BLANKET_DENIAL_MARKERS):
+            if _BLANKET_UNKNOWN_DENIAL not in invented:
+                invented.append(_BLANKET_UNKNOWN_DENIAL)
+            continue
         invented.extend(
             label for label in summary.unknown_safety
             if label.casefold() in clause and label not in invented
@@ -134,14 +151,15 @@ def narrative_invents_denials(narrative: str, summary: FieldSummary) -> list[str
 def narrative_is_grounded(narrative: str, summary: FieldSummary) -> bool:
     """Văn xuôi có được ít nhất một field đỡ không - kiểm tra RẺ chống bịa (§4.3).
 
-    Cố ý thô: nó chỉ trả lời "bản văn xuôi này có nhắc tới thứ gì trong hồ sơ không", không phải "mọi
+    Cố ý thô: nó chỉ trả lời "bản văn xuôi này có nhắc tới thứ gì đã được viết trong summary không",
+    không phải "mọi
     câu trong đó đều đúng". Kiểm tra đúng-từng-câu cần một model thứ hai chấm một model thứ nhất, mà
     như thế thì không còn là kiểm tra tất định nữa. Bản thô này bắt được ca tệ nhất và hay gặp nhất:
     model trả về một đoạn văn tổng quát không dính gì tới ca này.
 
     Phiếu KHÔNG có field nào (phiên đóng ngay lượt đầu) thì không có gì để đối chứng - trả `True`,
     vì báo "bịa" ở đó là báo sai."""
-    labels = [*summary.reported, *summary.denied, *summary.unknown_safety]
+    labels = [*summary.reported, *summary.denied]
     if not labels or not narrative.strip():
         return True
     folded = narrative.casefold()
@@ -184,7 +202,6 @@ def to_isbar(summary: HandoffSummary) -> dict[str, dict[str, object]]:
                 "Mức độ": summary.severity,
                 "Triệu chứng đi kèm": summary.associated_symptoms,
                 "Dấu hiệu nguy hiểm phát hiện": [flag.label or flag.code for flag in summary.red_flags],
-                "Thông tin còn thiếu": summary.missing_information,
                 "Phiếu đã đầy đủ": summary.is_complete,
                 "Lý do kết thúc": summary.stop_reason,
             }
@@ -200,12 +217,12 @@ def to_isbar(summary: HandoffSummary) -> dict[str, dict[str, object]]:
 
 
 def _present(rows: dict[str, object]) -> dict[str, object]:
-    """Bỏ trường rỗng. `False` và `0` KHÔNG phải rỗng - `is_complete=False` là đúng thứ điều dưỡng
-    cần thấy, mà một phép kiểm `if not value` sẽ nuốt mất nó."""
+    """Bỏ trường rỗng/`unknown`. `False` và `0` KHÔNG phải rỗng - `is_complete=False` là đúng thứ
+    điều dưỡng cần thấy, mà một phép kiểm `if not value` sẽ nuốt mất nó."""
     return {
         label: value
         for label, value in rows.items()
-        if value is not None and value != "" and value != []
+        if value is not None and value != "" and value != [] and str(value).casefold() != _UNKNOWN
     }
 
 

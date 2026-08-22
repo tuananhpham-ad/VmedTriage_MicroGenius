@@ -23,10 +23,16 @@ from src.services.infra import fever_stage_log, provider_router
 from src.services.symptom_protocol import intake_agent, screening
 from src.services.symptom_protocol.models import ScreeningGroup
 
-STAGE_3A, STAGE_3B = FEVER_PROTOCOL.gate_stages
+# KHONG unpack `gate_stages`: tu 2026-08-22 no co ba phan tu (`E` quet cap cuu pho quat
+# dung truoc nhan khau). Doc thang thuoc tinh tuong minh - do la ly do chung ton tai.
+STAGE_3A = FEVER_PROTOCOL.emergency_scan_stage
+STAGE_3B = FEVER_PROTOCOL.early_visit_scan_stage
 
 GROUPS_3A = tuple(g for g in FEVER_PROTOCOL.screening_groups if g.stage == STAGE_3A)
 GROUPS_3B = tuple(g for g in FEVER_PROTOCOL.screening_groups if g.stage == STAGE_3B)
+
+STAGE_E = FEVER_PROTOCOL.critical_scan_stage
+GROUPS_E = tuple(g for g in FEVER_PROTOCOL.screening_groups if g.stage == STAGE_E)
 
 # Stage 3A có 5 nhóm nhưng MỘT câu sàng lọc chỉ được đọc tối đa `MAX_GROUPS_PER_PROBE` nhóm - phần
 # dư rơi sang vòng sau. Tính từ hằng số thay vì viết cứng 3: đổi trần là quyết định về UX, không phải
@@ -81,6 +87,30 @@ def test_consciousness_and_seizure_clusters_stay_outside_every_group():
     assert "Q3-14" not in grouped  # câu "gut-check" thang 0-10, không phủ định gộp được một con số
 
 
+def test_stage_e_emits_its_single_group_as_the_static_first_probe():
+    """Stage E cố ý chỉ có MỘT group nhưng group đó chứa NHIỀU cụm cấp cứu.
+
+    Regression cho lỗi ngưỡng: `next_probe` từng yêu cầu tối thiểu 2 group nên bỏ qua `GE-CRIT`,
+    khiến lượt đầu rơi xuống hỏi riêng Q3-06 qua LLM thay vì đọc câu quét tĩnh đầy đủ.
+    """
+    candidate = next(
+        cluster for cluster in FEVER_PROTOCOL.clusters if cluster.stage == STAGE_E
+    )
+
+    groups = screening.next_probe(FEVER_PROTOCOL, STAGE_E, {}, candidate)
+    probe = screening.probe_cluster(FEVER_PROTOCOL, STAGE_E, groups)
+
+    assert groups == GROUPS_E
+    assert len(groups) == 1
+    assert set(probe.fields) == {
+        field
+        for cluster in FEVER_PROTOCOL.clusters
+        if cluster.stage == STAGE_E
+        for field in cluster.fields
+    }
+    assert probe.script_hint == screening.probe_question(GROUPS_E)
+
+
 def test_every_other_scan_cluster_belongs_to_exactly_one_group():
     outside = {"Q3-01", "Q3-03", "Q3-14"}
     for stage, groups in ((STAGE_3A, GROUPS_3A), (STAGE_3B, GROUPS_3B)):
@@ -111,7 +141,8 @@ def test_detail_only_enum_fields_get_no_invented_negative_value():
     kiểu ban nào" trong enum, nên ghi bừa một giá trị vào đó là dựng dữ liệu lâm sàng không ai khai."""
     groups = tuple(g for g in GROUPS_3A if g.id in ("G3A-BLEED", "G3A-ABDO"))
     outcome = screening.apply_verdicts(
-        FEVER_PROTOCOL, STAGE_3A, groups, _verdicts(groups, "negative"), dict(ADULT),
+        FEVER_PROTOCOL, STAGE_3A, groups, _verdicts(groups, "negative"),
+        dict(ADULT, abdominal_pain_location="bụng"),
         evidence_ok=_always_ok,
     )
     assert "rash_type" not in outcome.negatives
@@ -170,10 +201,18 @@ def test_group_negative_never_overwrites_what_the_patient_already_confirmed():
     """Người bệnh đã khai CÓ chảy máu chân răng ở lượt trước; một câu phủ định gộp sau đó không được
     xoá nó đi. Cùng nguyên tắc đơn điệu với `_merge_answers` (vá M3), áp ở tầng nhóm."""
     answers = dict(ADULT, mucosal_bleeding="true", urine_output="reduced")
-    outcome = screening.apply_verdicts(
+    # Q3-12 (chảy máu) chuyển sang stage `E` từ 2026-08-22 nên phải quét CẢ hai nhóm: `urine_output`
+    # vẫn ở 3A, `mucosal_bleeding`/`gi_bleeding` ở `E`. Kiểm trên một stage thôi thì test không còn
+    # chạm tới ca nó sinh ra để chặn.
+    outcome_3a = screening.apply_verdicts(
         FEVER_PROTOCOL, STAGE_3A, GROUPS_3A, _verdicts(GROUPS_3A, "negative"), answers,
         evidence_ok=_always_ok,
     )
+    outcome = screening.apply_verdicts(
+        FEVER_PROTOCOL, STAGE_E, GROUPS_E, _verdicts(GROUPS_E, "negative"), answers,
+        evidence_ok=_always_ok,
+    )
+    assert "urine_output" not in outcome_3a.negatives
     assert "mucosal_bleeding" not in outcome.negatives
     assert "urine_output" not in outcome.negatives
     assert outcome.negatives["gi_bleeding"] == "false"  # field còn trống của cùng cụm vẫn được ghi
@@ -199,7 +238,8 @@ def test_unresolved_groups_ignores_groups_whose_clusters_are_all_closed():
     closed = frozenset({"Q3-04", "Q3-05"})
     remaining = screening.unresolved_groups(FEVER_PROTOCOL, STAGE_3A, dict(ADULT), closed_ids=closed)
     assert "G3A-NEURO" not in {group.id for group in remaining}
-    assert len(remaining) == len(GROUPS_3A) - 1
+    assert "G3A-ABDO" not in {group.id for group in remaining}
+    assert len(remaining) == len(GROUPS_3A) - 2
 
 
 def test_unresolved_groups_respects_skip_rule():
@@ -260,7 +300,8 @@ def test_second_round_reads_out_the_groups_the_first_round_had_no_room_for():
     `MAX_GROUPS_PER_PROBE` nhóm, phần dư CHƯA ai nghe nên bắt buộc phải có vòng sau."""
     read_first = frozenset(g.id for g in GROUPS_3A_ROUND_1)
     groups = screening.next_probe(
-        FEVER_PROTOCOL, STAGE_3A, dict(ADULT), CLUSTERS_BY_ID["Q3-04"], history=(read_first,),
+        FEVER_PROTOCOL, STAGE_3A, dict(ADULT, abdominal_pain_location="bụng"),
+        CLUSTERS_BY_ID["Q3-04"], history=(read_first,),
     )
 
     assert {g.id for g in GROUPS_3A_ROUND_2} <= {group.id for group in groups}
@@ -374,10 +415,9 @@ def test_screening_turn_closes_clusters_and_keeps_them_out_of_the_budget(monkeyp
     result = _run_probe_turn(monkeypatch, response, MESSAGE, dict(ADULT))
 
     assert result.emergency is False
-    # 9 cụm đóng bằng ĐÚNG MỘT câu hỏi - đây là toàn bộ mục đích của cơ chế.
-    assert result.screened_cluster_ids == frozenset(
-        {"Q3-04", "Q3-05", "Q3-06", "Q3-07", "Q3-08", "Q3-09", "Q3-11", "Q3-12", "Q3-13"}
-    )
+    # 6 cụm đóng bằng ĐÚNG MỘT câu hỏi - đây là toàn bộ mục đích của cơ chế.
+    # Trước 2026-08-22 là 9: Q3-06/Q3-07/Q3-12 nay thuộc stage `E` và đóng bởi nhóm `GE-CRIT`.
+    assert result.screened_cluster_ids == frozenset({"Q3-04", "Q3-05", "Q3-08", "Q3-09", "Q3-11"})
     assert result.answers["urine_output"] == "normal"
     assert result.answers["non_blanching_rash"] == "false"
     # Không còn nhóm nào chưa giải quyết ⇒ lượt sau là câu hỏi cụm thường, không phải sàng lọc nữa.
@@ -396,6 +436,47 @@ def test_a_screening_turn_that_harvests_nothing_falls_back_instead_of_repeating_
     assert result.cluster_resolved is True
     assert result.screened_cluster_ids == frozenset()
     assert result.next_cluster is not None and result.next_cluster.id == "Q3-04"
+
+
+@pytest.mark.parametrize("message", ["bình thường", "mình không", "đã bảo không"])
+def test_bare_normal_reply_closes_the_current_batch_cluster(monkeypatch, message):
+    monkeypatch.setattr(provider_router, "complete", _fake_complete({"answer_quality": "answered"}))
+    session_id = "bare-normal-closes-cluster"
+    fever_stage_log.start(session_id, route="ROUTE_STANDARD", budget=16)
+
+    result = intake_agent.run_turn(
+        FEVER_PROTOCOL, session_id, turn=1, stage=STAGE_E, cluster=CLUSTERS_BY_ID["Q3-07"],
+        message=message,
+        answers=dict(
+            ADULT,
+            breathing_difficulty="none",
+            cyanosis="false",
+            chest_indrawing="false",
+            nasal_flaring_grunting="false",
+        ),
+        asked_ids=frozenset({"Q3-06"}),
+    )
+
+    assert result.answers["stridor_or_drooling"] == "false"
+    assert result.cluster_resolved is True
+    assert result.retried_same_cluster is False
+    assert result.next_cluster is None or result.next_cluster.id != "Q3-07"
+
+
+def test_mixed_normal_and_positive_reply_is_not_treated_as_all_negative(monkeypatch):
+    monkeypatch.setattr(provider_router, "complete", _fake_complete({"answer_quality": "answered"}))
+    session_id = "mixed-normal-not-all-negative"
+    fever_stage_log.start(session_id, route="ROUTE_STANDARD", budget=16)
+
+    result = intake_agent.run_turn(
+        FEVER_PROTOCOL, session_id, turn=1, stage=STAGE_E, cluster=CLUSTERS_BY_ID["Q3-06"],
+        message="môi bình thường, mũi hơi phập phồng",
+        answers=dict(ADULT),
+    )
+
+    assert result.answers.get("cyanosis") in (None, "unknown")
+    assert result.answers.get("nasal_flaring_grunting") in (None, "unknown")
+    assert result.cluster_resolved is False
 
 
 def test_probe_question_is_static_and_costs_no_extra_llm_call(monkeypatch):

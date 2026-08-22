@@ -41,16 +41,11 @@ class ConversationMetrics:
 
     Phải gần 0. Khác 0 nghĩa là một cụm đã đóng được chọn lại, đúng lớp bug C3."""
     retried_questions: int = 0
-    """Hỏi LẠI NGAY cùng một cụm vì lượt trước không thu được gì - **đúng thiết kế**
-    (`MAX_RETRIES_PER_CLUSTER`), không phải lỗi.
+    """Hỏi LẠI NGAY cùng một cụm vì lượt trước không thu được gì.
 
-    Tách khỏi `repeated_questions` sau khi đọc log ngày 2026-08-19: `repeat_question_rate` đo ra 0.32
-    (ca tệ nhất 0.50) và trông như hệ thống đang quay vòng, nhưng đọc chuỗi cụm thì thấy mẫu
-    `G1-02 -> G1-02 -> G1-02` - đúng 3 lần, tức 1 lần hỏi + 2 lần retry theo hằng số. Gộp hai khái
-    niệm vào một con số làm chỉ số vừa báo động giả vừa che mất ca quay vòng thật.
-
-    Đọc chỉ số này như "câu hỏi nào người bệnh không trả lời được" - cao nghĩa là câu hỏi khó hiểu
-    hoặc extractor không khớp, chứ không phải state machine sai."""
+    Chốt UX 2026-08-22 đặt `MAX_RETRIES_PER_CLUSTER = 0`: cụm hỏi một lần, không ép người bệnh trả
+    lời đủ checklist. Vì vậy chỉ số này giờ phải gần 0 tuyệt đối; khác 0 là dấu hiệu còn đường retry
+    sót lại hoặc một caller cũ tự ghi câu hỏi lặp."""
     asked_cluster_ids: list[str] = field(default_factory=list)
     """Lịch sử cụm đã hỏi, theo thứ tự. Giữ danh sách chứ không giữ set: `repeated_questions` cần
     biết một cụm quay lại LẦN THỨ MẤY, và thứ tự là thứ duy nhất trả lời được "vì sao agent hỏi câu

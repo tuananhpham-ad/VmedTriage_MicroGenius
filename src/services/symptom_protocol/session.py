@@ -188,7 +188,7 @@ class Session:
 
 
 CATCH_ALL_QUESTION = (
-    "Trước khi mình chốt lại, còn triệu chứng hay điều gì khác khiến bạn lo không? "
+    "Ngoài những điều mình vừa hỏi, bạn còn thấy triệu chứng nào khác không? "
     "Nếu không còn gì, bạn cứ trả lời \"không\" là được."
 )
 """Câu QUÉT SÓT tĩnh (§8.6 mục 4). Không qua LLM: nó phải giữ nguyên tính chất "câu mở, không
@@ -239,6 +239,14 @@ _NO_CATCH_ALL_REASONS = frozenset(
     {"RED_FLAG", "USER_CANNOT_CONTINUE", "USER_UNCOOPERATIVE", "NO_MORE_SYMPTOMS"}
 )
 """Lý do dừng mà bước QUÉT SÓT phải bị bỏ qua - xem `_ask_catch_all`."""
+
+_JOKING_RETRY_PREFIXES = (
+    "Mình chưa ghi nhận được câu trả lời y tế từ tin nhắn vừa rồi. Bạn trả lời giúp mình ý này nhé:",
+    "Có vẻ tin nhắn vừa rồi chưa trả lời vào câu đang hỏi. Mình hỏi lại ngắn gọn nhé:",
+    "Mình cần thông tin thật để ghi nhận cho nhân viên y tế. Bạn trả lời giúp mình câu trước nhé:",
+)
+"""Biến thể cho lượt đùa/tục/non-answer. Nội dung phải luôn: không trách, không suy diễn triệu chứng,
+và quay lại đúng câu vừa hỏi."""
 
 
 def _catch_all_cluster(protocol: SymptomProtocol, stage: str) -> QuestionCluster:
@@ -424,6 +432,28 @@ class ProtocolSessionStore:
             return self._escalate_from_text_signal(session, cleaned, scan)
         session.pending_safety_signals = tuple(signal.code for signal in scan.needs_confirmation)
 
+        if session.uncooperative.prompted and session.last_question == user_intent.UNCOOPERATIVE_PROMPT:
+            decision = user_intent.stop_prompt_confirmation(cleaned)
+            if decision is True:
+                session.turn_count += 1
+                console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
+                session.conversation.append({"role": "user", "content": cleaned})
+                self._finish(session, "USER_CANNOT_CONTINUE")
+                self._remember(session)
+                return session
+            if decision is False:
+                session.turn_count += 1
+                console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
+                session.conversation.append({"role": "user", "content": cleaned})
+                session.uncooperative.streak = 0
+                session.uncooperative.prompted = False
+                question = session.current_cluster.script_hint if session.current_cluster is not None else registry.OPENING_QUESTION
+                session.last_question = question
+                session.conversation.append({"role": "assistant", "content": question})
+                console_log.agent_question(session.session_id, question, llm_used=False)
+                self._remember(session)
+                return session
+
         # L0.5 ý định người bệnh - THUẦN code, chạy SAU tín hiệu an toàn và TRƯỚC mọi lời gọi model.
         # Sau, vì `scan.short_circuit` đã thoát ở trên: một tin nhắn vừa mang dấu hiệu cấp cứu vừa
         # nói "thôi khỏi" phải escalate, không được đọc thành ý định dừng (§1 bất biến 3).
@@ -439,6 +469,13 @@ class ProtocolSessionStore:
         )
         if lane.is_non_clinical:
             return self._answer_non_clinical(session, cleaned, lane)
+
+        if (
+            session.phase is SessionPhase.COLLECTING
+            and session.current_cluster is not None
+            and user_intent.is_joking_non_answer(cleaned)
+        ):
+            return self._answer_joking_non_answer(session, cleaned)
         self._run_model_red_flag_branch(session, cleaned)
 
         is_opening = session.phase is SessionPhase.OPENING
@@ -774,7 +811,7 @@ class ProtocolSessionStore:
         session.turn_count += 1
         console_log.user_message(session.session_id, message, turn=session.turn_count)
         session.conversation.append({"role": "user", "content": message})
-        reply = non_clinical.reply_for(lane.lane)
+        reply = non_clinical.reply_for(lane.lane, variant_key=session.turn_count)
         session.conversation.append({"role": "assistant", "content": reply})
         session.last_question = reply
         session.llm_used_last_turn = False
@@ -783,6 +820,35 @@ class ProtocolSessionStore:
             cluster_id=session.current_cluster.id if session.current_cluster else "OPEN",
             event="agent_message", input=None,
             output={"non_clinical_lane": lane.lane.value, "matched": list(lane.matched), "text": reply},
+            llm_used=False,
+        )
+        console_log.agent_question(session.session_id, reply, llm_used=False)
+        self._remember(session)
+        return session
+
+    def _answer_joking_non_answer(self, session: Session, message: str) -> Session:
+        """Người dùng đùa/tục thay vì trả lời câu đang hỏi: nhắc lại lịch sự, không gọi model.
+
+        Đây không phải ý định dừng và cũng không phải dữ kiện y tế. Cho extractor đọc những câu kiểu
+        này rất dễ sinh suy diễn lạ ("ăn cứt" thành đau bụng/ngộ độc), nên đường đúng là giữ nguyên
+        cụm và hỏi lại đúng câu vừa phát.
+        """
+        session.turn_count += 1
+        console_log.user_message(session.session_id, message, turn=session.turn_count)
+        session.conversation.append({"role": "user", "content": message})
+        prefix = _JOKING_RETRY_PREFIXES[session.turn_count % len(_JOKING_RETRY_PREFIXES)]
+        previous = session.last_question or (
+            session.current_cluster.script_hint if session.current_cluster is not None else registry.OPENING_QUESTION
+        )
+        reply = f"{prefix}\n\n{previous}"
+        session.conversation.append({"role": "assistant", "content": reply})
+        session.last_question = reply
+        session.llm_used_last_turn = False
+        stage_log.step(
+            session.session_id, turn=session.turn_count, stage=session.stage or "OPEN",
+            cluster_id=session.current_cluster.id if session.current_cluster else "OPEN",
+            event="agent_message", input=None,
+            output={"intent": "joking_non_answer", "text": reply},
             llm_used=False,
         )
         console_log.agent_question(session.session_id, reply, llm_used=False)
@@ -937,10 +1003,8 @@ class ProtocolSessionStore:
     def _record_cluster_outcome(self, session: Session, cluster: QuestionCluster, result) -> None:
         """Quyết định cụm vừa hỏi đã XONG chưa. Đây là chỗ vá bug C3.
 
-        Bản cũ `asked_ids.add(cluster.id)` vô điều kiện: gõ "." hay né tránh cũng được tính là đã hỏi
-        xong, cụm không bao giờ quay lại, field trống suốt cả phiên. Giờ chỉ đánh dấu xong khi THẬT
-        SỰ thu được gì; không thì hỏi lại, tối đa `MAX_RETRIES_PER_CLUSTER` lần rồi mới bỏ qua và ghi
-        vào `unresolved_cluster_ids`."""
+        Cụm chỉ được hỏi một lần. Nếu người bệnh trả lời một phần, phần thu được được lưu; phần không
+        nhắc tới giữ `unknown`, và cụm được ghi vào `unresolved_cluster_ids` để không quay lại hỏi nữa."""
         # Cụm bị mở lại do đính chính/mâu thuẫn: field bên trong vừa bị xoá hoặc đang chọi nhau, phải
         # được phép hỏi lại dù trước đó đã hoàn tất.
         if result.reopened_cluster_ids:
