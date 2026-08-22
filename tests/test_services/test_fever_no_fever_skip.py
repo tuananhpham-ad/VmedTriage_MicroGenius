@@ -54,8 +54,31 @@ def test_stage_2_still_has_questions_for_a_real_fever_case():
 def test_red_flag_clusters_are_not_skipped_by_a_no_fever_correction():
     """Rút lại lời khai sốt KHÔNG được làm im lặng màn quét dấu hiệu nguy hiểm.
 
-    Không sốt không có nghĩa là không nguy hiểm — co giật, tím tái, li bì vẫn phải hỏi."""
+    Không sốt không có nghĩa là không nguy hiểm — co giật, tím tái, li bì vẫn phải hỏi. Q3-13 là
+    ngoại lệ đã chốt sau transcript 2026-08-22: chỉ hỏi đau bụng khi người bệnh đã khai dấu hiệu bụng,
+    để ca sốt thuần không bị chuyển mạch sang bụng."""
     answers = {**_BASE, "fever_reported": "false"}
     for cluster in FEVER_PROTOCOL.clusters:
-        if cluster.stage == "3A":
+        if cluster.stage == "3A" and cluster.id != "Q3-13":
             assert FEVER_PROTOCOL.skip_rule(cluster, answers) is False
+
+
+def test_abdominal_red_flag_cluster_is_skipped_for_plain_fever():
+    answers = {**_BASE, "fever_reported": "true", "fever_status": "subjective"}
+    cluster = next(c for c in FEVER_PROTOCOL.clusters if c.id == "Q3-13")
+    assert FEVER_PROTOCOL.skip_rule(cluster, answers) is True
+
+
+@pytest.mark.parametrize(
+    "abdominal_evidence",
+    [
+        {"abdominal_pain_severity": "mild"},
+        {"abdominal_pain_severity": "severe"},
+        {"abdominal_guarding": "true"},
+        {"abdominal_pain_location": "hạ vị"},
+    ],
+)
+def test_abdominal_red_flag_cluster_is_asked_when_abdominal_symptom_was_reported(abdominal_evidence):
+    answers = {**_BASE, "fever_reported": "true", "fever_status": "subjective", **abdominal_evidence}
+    cluster = next(c for c in FEVER_PROTOCOL.clusters if c.id == "Q3-13")
+    assert FEVER_PROTOCOL.skip_rule(cluster, answers) is False

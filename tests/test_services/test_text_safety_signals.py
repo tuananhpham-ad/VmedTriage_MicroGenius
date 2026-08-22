@@ -133,6 +133,26 @@ def test_a_clear_ongoing_positive_short_circuits() -> None:
     assert scan.reason_codes == ("TEXT_SIGNAL_SEIZURE",)
 
 
+def test_adult_altered_mental_status_short_circuits() -> None:
+    scan = scan_text_safety_signals("Chồng phát hiện bệnh nhân lú lẫn và ngày càng lơ mơ.")
+
+    assert "altered_mental_status" in [signal.code for signal in scan.short_circuit]
+    assert "TEXT_SIGNAL_ALTERED_MENTAL_STATUS" in scan.reason_codes
+
+
+def test_negated_altered_mental_status_does_not_escalate() -> None:
+    scan = scan_text_safety_signals("Bệnh nhân không lú lẫn, không lơ mơ, vẫn nói chuyện bình thường.")
+
+    assert scan.short_circuit == ()
+    assert _status_of("Bệnh nhân không lú lẫn", "altered_mental_status")[0] is SignalStatus.SUPPRESSED
+
+
+def test_single_standard_paracetamol_dose_is_not_an_overdose_signal() -> None:
+    scan = scan_text_safety_signals("Tôi mới uống thêm paracetamol 500mg để trị đau lưng dưới.")
+
+    assert all(signal.code != "paracetamol_overdose_pattern" for signal in scan.signals)
+
+
 def test_a_positive_outside_the_reviewed_list_asks_instead_of_escalating() -> None:
     """"sưng họng" khớp một luật thật nhưng gặp ở mọi ca viêm họng thường - không được gọi 115."""
     status, guard = _status_of("Em bé bị sưng họng", "throat_swelling")
@@ -208,6 +228,32 @@ def test_a_clear_text_signal_escalates_before_any_model_call(monkeypatch) -> Non
     assert session.stop_reason == "RED_FLAG"
     assert session.reason_codes == ["TEXT_SIGNAL_SEIZURE"]
     assert session.last_question == FEVER_PROTOCOL.patient_red_flag_message
+    mock.assert_not_called()
+
+
+def test_opening_liver_failure_case_escalates_before_any_model_call(monkeypatch) -> None:
+    mock = _llm_that_must_not_be_called(monkeypatch)
+    store = _store()
+    session = store.start_session()
+
+    store.submit_message(
+        session.session_id,
+        (
+            "Nữ 48 tuổi, tiền sử đau nửa đầu (migraine), thay đổi ý thức trong vài giờ qua. "
+            "Chồng phát hiện bệnh nhân lú lẫn và ngày càng lơ mơ. "
+            "Lần khám trước: vàng mắt (scleral icterus), ấn đau nhẹ hạ sườn phải, "
+            "dấu hiệu asterixis (run vẫy tay). Xét nghiệm sơ bộ: ALT 6498 U/L, "
+            "bilirubin toàn phần 5,6 mg/dL, INR 6,8. Chồng cho biết bệnh nhân dùng thuốc giảm đau "
+            "liên tục và mới uống thêm paracetamol 500mg vài ngày nay để trị đau lưng dưới. "
+            "Khai thác thêm cho thấy đang dùng nhiều chế phẩm chứa paracetamol cùng lúc."
+        ),
+    )
+
+    assert session.state is SessionState.EMERGENCY
+    assert session.triage_level == "EMERGENCY"
+    assert session.stop_reason == "RED_FLAG"
+    assert "TEXT_SIGNAL_ALTERED_MENTAL_STATUS" in session.reason_codes
+    assert session.current_cluster is None
     mock.assert_not_called()
 
 

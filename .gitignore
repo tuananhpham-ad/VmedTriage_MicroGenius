@@ -66,8 +66,13 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-_guidance/*
+# _guidance/*
 /notebooks/
 /runs/
 .eval_run/
 eval/
+docs/eval/
+tests/eval/
+# Added by Braintrust Wizard
+.env.braintrust
+.braintrust.json

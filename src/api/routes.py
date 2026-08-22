@@ -251,9 +251,27 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
 
 async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
-    await _attach_graph_decision(triage_case, previous)
-    case_store.save(triage_case)
+    await _save_with_graph_decision(triage_case)
     return _patient_chat_response(triage_case)
+
+
+_case_locks: dict[str, asyncio.Lock] = {}
+"""Khoá theo `case_id` cho chuỗi đọc-tính-ghi `graph_decision`. `/chat` và `/chat/stream` có thể tới
+gần như đồng thời cho CÙNG một case (`streamChatTurn` phía client rơi về `POST /chat` thường khi
+stream lỗi giữa chừng - hai request cho một lượt), mỗi request tự đọc `previous` RỒI mới chạy agent
+~vài giây; nếu không khoá, request nào lưu SAU cùng thắng và có thể ghi đè kết quả tốt bằng `None`
+của request kia dù trace Braintrust của request đó chạy thành công - đúng triệu chứng "trace có,
+UI không" mà bug này gây ra."""
+
+
+async def _save_with_graph_decision(triage_case: TriageCase) -> None:
+    lock = _case_locks.setdefault(triage_case.case_id, asyncio.Lock())
+    async with lock:
+        # Đọc lại NGAY TRƯỚC khi tính, không dùng `previous` bên ngoài lock (đã có thể lỗi thời nếu
+        # một request song song vừa lưu xong trong lúc request này còn đang chờ agent trả lời).
+        latest = case_store.get(triage_case.case_id)
+        await _attach_graph_decision(triage_case, latest)
+        case_store.save(triage_case)
 
 
 def _sse(event: str, data: object) -> str:
@@ -341,6 +359,32 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
         # Proxy đệm lại thì SSE mất hết ý nghĩa - nó về đúng bằng một response chậm.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/cases/{case_id}/force-complete", response_model=ChatResponse)
+async def force_complete_case(case_id: str, request: Request) -> ChatResponse:
+    """Bệnh nhân tự chốt "không còn gì để khai báo thêm" dù checklist chưa đủ.
+
+    KHÔNG dùng `/api/v1/fever/sessions/{id}/confirm`: router đó là demo độc lập, không đụng tới
+    `case_store` (xem docstring `fever_intake.py`) - phiên bị chốt bên trong nó nhưng nurse queue
+    không bao giờ thấy, và `_attach_graph_decision` (nguồn của "Mức ưu tiên AI đề xuất" + trace
+    Braintrust) không bao giờ chạy vì nó chỉ được gọi từ `_finish_chat_turn`. Endpoint này đi đúng
+    đường `/chat` đi: chốt phiên rồi dựng lại `TriageCase` + gắn graph decision + lưu case_store,
+    y hệt một lượt `/chat` bình thường kết thúc checklist.
+    """
+    patient_id = int(request.state.auth.sub)
+    previous = case_store.get(case_id)
+    if previous is not None and previous.patient_id not in (None, patient_id):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
+    try:
+        session = symptom_session.session_store.confirm_summary(case_id, True, force=True)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+    await _save_with_graph_decision(triage_case)
+    return _patient_chat_response(triage_case)
 
 
 async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:

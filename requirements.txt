@@ -44,6 +44,10 @@ lxml>=5.0
 # Triage dataset catalogs (scripts/red_flag_catalog.py, evidence_catalog.yaml)
 pyyaml>=6.0
 
+# Observability/tracing for eval/ (Braintrust). Optional at runtime: BRAINTRUST_API_KEY absent ==
+# tracing becomes a no-op, app/scripts must not crash (see eval/config.py).
+braintrust>=0.0.180
+
 # NOTE: scripts/translate_patient_doctor_train.py additionally needs torch +
 # transformers + sentencepiece. Those live in requirements-translate.txt and are
 # deliberately not installed here -- torch alone is ~2.5 GB and CI never runs
@@ -54,7 +58,7 @@ pyyaml>=6.0
 # and are deliberately not installed here for the same reason. The app boots without
 # them: src/graph_triage/service.py imports lazily and disables the feature instead.
 
-# anthropic
+anthropic>=0.100,<1.0
 requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0

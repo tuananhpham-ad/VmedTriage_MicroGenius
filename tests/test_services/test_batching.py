@@ -11,7 +11,10 @@ from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.symptom_protocol import batching
 
 ADULT = {"age_value": "30", "age_unit": "year", "sex": "male", "reporter_type": "self"}
-STAGE_3A, STAGE_3B = FEVER_PROTOCOL.gate_stages
+# KHONG unpack `gate_stages`: tu 2026-08-22 no co ba phan tu (`E` quet cap cuu pho quat
+# dung truoc nhan khau). Doc thang thuoc tinh tuong minh - do la ly do chung ton tai.
+STAGE_3A = FEVER_PROTOCOL.emergency_scan_stage
+STAGE_3B = FEVER_PROTOCOL.early_visit_scan_stage
 
 
 def _batch(stage: str, first_id: str, answers: dict | None = None, **kwargs):

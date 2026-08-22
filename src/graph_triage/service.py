@@ -31,6 +31,7 @@ from typing import Any
 from src.config import get_settings
 from src.graph_triage.summary_text import build_summary_text
 from src.models.schemas import TriageCase
+from src.observability.braintrust_tracing import traced_root_span, traced_span
 from src.paths import RUNS_DIR
 from src.source_support import pipeline as source_support
 from src.source_support.schemas import SourceSupport
@@ -114,64 +115,130 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
     agent = _get_agent()
     if agent is None:
         return None
-    try:
-        result = agent.decide(summary_text)
-    except Exception as error:
-        logger.warning(
-            "graph_triage.failed case_id=%s error=%s: %s", triage_case.case_id, type(error).__name__, error
-        )
-        return None
-    decision = result["llm_decision"]
-    analysis = result["model_analysis"]
-    logger.info(
-        "graph_triage.decided case_id=%s label=%s human_review=%s model=%s models=%s disagreement=%s",
-        triage_case.case_id,
-        decision["triage_label"],
-        decision["requires_human_review"],
-        result["tool_audit"]["model"],
-        "/".join(f"{name}:{item['predicted_label']}" for name, item in analysis["models"].items()),
-        analysis["model_disagreement"],
-    )
-    # Xác suất từng model và evidence graph KHÔNG ra tới UI (quyết định thiết kế, mục A5), nhưng khi
-    # gỡ lỗi thì đó chính là thứ cần nhìn - nên ghi ở mức DEBUG. Bật bằng:
-    #     logging.getLogger("vmedtriage.graph_triage").setLevel(logging.DEBUG)
-    if logger.isEnabledFor(logging.DEBUG):
-        for name, item in analysis["models"].items():
-            probabilities = " ".join(f"{label}={value:.3f}" for label, value in item["probabilities"].items())
-            logger.debug("graph_triage.model case_id=%s %s -> %s | scope=%s",
-                         triage_case.case_id, name, probabilities, item["run_metrics"].get("evaluation_scope"))
-        for item in analysis["evidence_graph"]["evidence"]:
-            logger.debug("graph_triage.evidence case_id=%s [%s] %s <- %r",
-                         triage_case.case_id, item["status"], item["concept"], item["source_span"])
-        logger.debug("graph_triage.summary_text case_id=%s\n%s", triage_case.case_id, summary_text)
-    # Part 3 phải chạy TRƯỚC chỗ thu hẹp bên dưới: `decision` ở đây còn `evidence` và
-    # `risk_modifiers`, mà bước tách claim lẫn Guard 0b đều cần chúng - sau khi thu hẹp thì không lấy
-    # lại được nữa. Best-effort đúng ràng buộc 3: phần trích nguồn hỏng thì ca vẫn vào hàng đợi điều
-    # dưỡng như thường.
-    support = _source_support_for(triage_case, decision)
+    settings = get_settings()
+    with traced_root_span(
+        "graph_triage_decide_for_case",
+        case_id=triage_case.case_id,
+        metadata={"track": "2_advisory", "authoritative": False},
+    ) as (root_span, trace_link):
+        if trace_link:
+            logger.info("braintrust.trace_link case_id=%s url=%s", triage_case.case_id, trace_link)
+        try:
+            # `agent.decide` chạy cả Unit A (model_predictions, không LLM) lẫn Unit B (LLM reasoning,
+            # OpenAI trực tiếp) trong một lời gọi opaque duy nhất (xem docs/eval/01_evaluation_units.md
+            # mục 2-3) - không tách được thành 2 span BAO QUANH lời gọi mà không sửa nội bộ
+            # `ToolCallingDecisionAgent.decide`. Ta mở một span bao trọn cả hai, rồi log lại
+            # input/output của từng unit SAU KHI có kết quả, đúng dữ liệu documented cho mỗi unit.
+            with traced_span(
+                "model_predictions_and_llm_reasoning",
+                input={"patient_text_chars": len(summary_text)},
+                metadata={
+                    "units": ["A: model_predictions", "B: llm_reasoning"],
+                    "via_provider_router": False,
+                    "provider": "openai_direct",
+                    "model": settings.openai_model_name,
+                    "note": "opaque single call, xem ToolCallingDecisionAgent.decide "
+                    "(src/graph_triage/agent/llm_decision.py)",
+                },
+            ) as combined_span:
+                result = agent.decide(summary_text)
+                analysis = result["model_analysis"]
+                decision = result["llm_decision"]
+                combined_span.log(
+                    output={
+                        "unit_A_model_predictions": {
+                            "models": {
+                                name: item.get("predicted_label")
+                                for name, item in analysis.get("models", {}).items()
+                            },
+                            "model_disagreement": analysis.get("model_disagreement"),
+                        },
+                        "unit_B_llm_decision": {
+                            "triage_label": decision["triage_label"],
+                            "requires_human_review": decision["requires_human_review"],
+                            "model_agreement_summary": decision.get("model_agreement_summary"),
+                        },
+                    },
+                    metadata={"model_used": result["tool_audit"]["model"]},
+                )
+        except Exception as error:
+            logger.warning(
+                "graph_triage.failed case_id=%s error=%s: %s", triage_case.case_id, type(error).__name__, error
+            )
+            return None
 
-    # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
-    # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
-    payload = {
-        "triage_label": decision["triage_label"],
-        "decision_summary": decision["decision_summary"],
-        # Cờ GỘP: part 3 chỉ được BẬT THÊM, không bao giờ hạ cờ mà agent quyết định đã dựng lên.
-        "requires_human_review": source_support.merge_human_review(decision["requires_human_review"], support),
-        "disclaimer": decision["disclaimer"],
-        "model": result["tool_audit"]["model"],
-    }
-    if support is not None:
-        # CHỈ phần hiển thị, đúng tinh thần mục A5 ("chỉ giữ kết luận cuối"). `claims[]` mang
-        # `grounded_in` và toàn bộ đường truy vết retrieval - hữu ích để audit nhưng cùng loại với
-        # evidence graph, vốn đã có quyết định là không đưa ra UI. Nó đã nằm trong log ở mức INFO.
-        # `cost` cũng vậy: đó là số liệu vận hành, không phải nội dung điều dưỡng cần đọc.
-        payload["source_support"] = {
-            "explanation_vi": support.explanation_vi,
-            "explanation_citations": [c.model_dump(mode="json") for c in support.explanation_citations],
-            "summary": support.summary.model_dump(mode="json"),
-            "method": support.method.model_dump(mode="json"),
+        # Unit C - "advisory_decision": output cuối của graph_triage cho case này. KHÔNG phải quyết
+        # định cuối của hệ thống (đó vẫn là TriageProposal/ProtocolTriageEngine, rule-based, Track 1).
+        with traced_span(
+            "advisory_decision",
+            input={"case_id": triage_case.case_id},
+            output={
+                "triage_label": decision["triage_label"],
+                "decision_summary": decision.get("decision_summary"),
+                "disclaimer": decision.get("disclaimer"),
+                "requires_human_review": decision["requires_human_review"],
+            },
+            metadata={
+                "unit": "C: advisory final decision (graph_triage, non-authoritative)",
+                "via_provider_router": False,
+                "provider": "openai_direct",
+                "model": settings.openai_model_name,
+                "overrides_triage_proposal_priority": False,
+            },
+        ):
+            pass
+
+        logger.info(
+            "graph_triage.decided case_id=%s label=%s human_review=%s model=%s models=%s disagreement=%s",
+            triage_case.case_id,
+            decision["triage_label"],
+            decision["requires_human_review"],
+            result["tool_audit"]["model"],
+            "/".join(f"{name}:{item['predicted_label']}" for name, item in analysis["models"].items()),
+            analysis["model_disagreement"],
+        )
+        # Xác suất từng model và evidence graph KHÔNG ra tới UI (quyết định thiết kế, mục A5), nhưng khi
+        # gỡ lỗi thì đó chính là thứ cần nhìn - nên ghi ở mức DEBUG. Bật bằng:
+        #     logging.getLogger("vmedtriage.graph_triage").setLevel(logging.DEBUG)
+        if logger.isEnabledFor(logging.DEBUG):
+            for name, item in analysis["models"].items():
+                probabilities = " ".join(f"{label}={value:.3f}" for label, value in item["probabilities"].items())
+                logger.debug("graph_triage.model case_id=%s %s -> %s | scope=%s",
+                             triage_case.case_id, name, probabilities, item["run_metrics"].get("evaluation_scope"))
+            for item in analysis["evidence_graph"]["evidence"]:
+                logger.debug("graph_triage.evidence case_id=%s [%s] %s <- %r",
+                             triage_case.case_id, item["status"], item["concept"], item["source_span"])
+            logger.debug("graph_triage.summary_text case_id=%s\n%s", triage_case.case_id, summary_text)
+        # Part 3 phải chạy TRƯỚC chỗ thu hẹp bên dưới: `decision` ở đây còn `evidence` và
+        # `risk_modifiers`, mà bước tách claim lẫn Guard 0b đều cần chúng - sau khi thu hẹp thì không lấy
+        # lại được nữa. Best-effort đúng ràng buộc 3: phần trích nguồn hỏng thì ca vẫn vào hàng đợi điều
+        # dưỡng như thường. Gọi bên trong root span để Unit D/E (mở span trong
+        # `src/source_support/pipeline.py`) parent đúng vào cùng trace này.
+        support = _source_support_for(triage_case, decision)
+
+        # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
+        # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
+        payload = {
+            "triage_label": decision["triage_label"],
+            "decision_summary": decision["decision_summary"],
+            # Cờ GỘP: part 3 chỉ được BẬT THÊM, không bao giờ hạ cờ mà agent quyết định đã dựng lên.
+            "requires_human_review": source_support.merge_human_review(decision["requires_human_review"], support),
+            "disclaimer": decision["disclaimer"],
+            "model": result["tool_audit"]["model"],
         }
-    return payload
+        if support is not None:
+            # CHỈ phần hiển thị, đúng tinh thần mục A5 ("chỉ giữ kết luận cuối"). `claims[]` mang
+            # `grounded_in` và toàn bộ đường truy vết retrieval - hữu ích để audit nhưng cùng loại với
+            # evidence graph, vốn đã có quyết định là không đưa ra UI. Nó đã nằm trong log ở mức INFO.
+            # `cost` cũng vậy: đó là số liệu vận hành, không phải nội dung điều dưỡng cần đọc.
+            payload["source_support"] = {
+                "explanation_vi": support.explanation_vi,
+                "explanation_citations": [c.model_dump(mode="json") for c in support.explanation_citations],
+                "summary": support.summary.model_dump(mode="json"),
+                "method": support.method.model_dump(mode="json"),
+            }
+        root_span.log(output=payload)
+        return payload
 
 
 def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSupport | None:

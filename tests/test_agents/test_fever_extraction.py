@@ -422,27 +422,38 @@ def test_risk_context_is_extractable_from_the_very_first_turn():
     assert {"is_pregnant", "chronic_conditions", "immunocompromised"} <= set(keys)
 
 
-def test_lookahead_covers_more_than_the_next_handful_of_clusters():
-    """Cửa sổ cũ là 5 cụm - quá hẹp so với thứ người bệnh kể vượt trước."""
+def test_lookahead_covers_every_remaining_step_not_just_the_next_few():
+    """2026-08-22: cửa sổ KHÔNG còn trần (`SAFETY_LOOKAHEAD_CLUSTERS = 0`).
+
+    Field thuộc về từng BƯỚC của quy trình, và người bệnh trả lời trước field của BẤT KỲ bước nào
+    thì phải ghi nhận được ngay - cửa sổ 5 rồi 12 cụm đều để lọt ca "kể luôn bệnh nền và thuốc đang
+    dùng ngay lượt mở" (Stage 4/5)."""
     cluster = CLUSTERS_BY_ID["Q1-01"]
 
     keys = _engine._safety_extra_keys(
         FEVER_PROTOCOL, "1", cluster, dict(ADULT_DEMOGRAPHICS), frozenset(),
     )
 
-    assert _engine.SAFETY_LOOKAHEAD_CLUSTERS > 5
+    assert _engine.SAFETY_LOOKAHEAD_CLUSTERS == 0, "0 = không trần"
     assert len(keys) > 20
+    # Field của stage CUỐI CÙNG phải có mặt ngay từ stage 1 - đó là toàn bộ điểm của thay đổi này.
+    assert "myalgia_retroorbital_pain" in keys   # Q5-07, stage 5
+    assert "lives_alone" in keys                 # Q4-08, stage 4
 
 
 def test_extraction_schema_stays_bounded_even_with_the_wider_lookahead():
-    """Nới cửa sổ đổi lấy prompt dài hơn, nên phải có trần đo được. Ngưỡng 60 ở đây là mốc chặn hồi
-    quy (số đo thật ~33-39 field/lượt), không phải con số thiêng."""
+    """Bỏ trần cửa sổ đổi lấy prompt dài hơn, nên vẫn phải có một mốc đo được.
+
+    Trần cũ 60 (số đo ~33-39 field/lượt); từ 2026-08-22 là ~74/101 field của fever. Mốc mới không
+    canh chi phí nữa - nó canh việc schema không bao giờ VƯỢT tổng số field có thật (triệu chứng của
+    trùng lặp khoá hoặc vòng lặp hỏng), và không mời model điền field của cụm đã bị skip."""
     for cluster_id in ("Q1-01", "Q3-04", "Q4-00"):
         cluster = CLUSTERS_BY_ID[cluster_id]
         keys = _engine._safety_extra_keys(
             FEVER_PROTOCOL, cluster.stage, cluster, dict(ADULT_DEMOGRAPHICS), frozenset(),
         )
-        assert len(keys) + len(cluster.fields) < 60, cluster_id
+        assert len(set(keys)) == len(keys), cluster_id
+        assert len(keys) + len(cluster.fields) <= len(FEVER_PROTOCOL.fields_by_key), cluster_id
 
 
 def test_field_whose_parent_was_denied_is_left_out_of_the_schema():

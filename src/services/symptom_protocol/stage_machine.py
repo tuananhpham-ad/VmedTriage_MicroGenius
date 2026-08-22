@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from src.services.symptom_protocol import protocol as protocol_mod
 from src.services.symptom_protocol.models import QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for_stage
 
@@ -110,8 +111,9 @@ def cluster_is_skipped(protocol: SymptomProtocol, stage: str, cluster: QuestionC
     trọng đúng các điều kiện đó: một nhóm chỉ còn cụm bị skip (vd `G3B-COG` = Q3-02, tự loại khi dưới
     16 tuổi) phải được coi là ĐÃ giải quyết, nếu không câu sàng lọc sẽ liệt kê dấu hiệu không áp dụng
     được cho người bệnh này."""
-    emergency_scan_stage, early_visit_scan_stage = protocol.gate_stages
-    if stage == early_visit_scan_stage and protocol.provisional_emergency_signal(answers):
+    # KHONG unpack `protocol.gate_stages` thanh dung 2 bien: tu 2026-08-22 co the co gate thu ba
+    # (stage `E` quet cap cuu pho quat) va ban unpack se `ValueError` ngay luot dau.
+    if stage == protocol_mod.early_visit_scan_stage(protocol) and protocol.provisional_emergency_signal(answers):
         return True
     return protocol.skip_rule(cluster, answers)
 

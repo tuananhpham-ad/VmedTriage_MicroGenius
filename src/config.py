@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     gemini_model_name: str = "gemini-3.5-flash"
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model_name: str = "claude-haiku-4-5-20251001"
+    # Rỗng = gọi thẳng api.anthropic.com. Có giá trị = key ở trên là token của một endpoint tương
+    # thích Anthropic API bên thứ 3 (proxy) - SDK dùng `auth_token`/Bearer thay vì `api_key`/x-api-key.
+    anthropic_base_url: str = os.getenv("ANTHROPIC_BASE_URL", "")
     openrouter_api_key: str = Field(
         default="", validation_alias=AliasChoices("OPENROUTER_API_KEY", "OPEN_ROUTER_API_KEY")
     )
@@ -228,6 +231,11 @@ class Settings(BaseSettings):
     vì với free tier thì RPD mới là giới hạn ràng buộc chứ không phải tiền.
     `none`   = tắt hẳn, tương đương `source_support_index_only`."""
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+
+    # Braintrust (eval/ tracing, xem eval/config.py). HOÀN TOÀN TUỲ CHỌN: thiếu key thì tracing
+    # phải im lặng trở thành no-op, KHÔNG được làm app hay script trong eval/ crash.
+    braintrust_api_key: str = os.getenv("BRAINTRUST_API_KEY", "")
+    braintrust_project: str = "vmedtriage-eval"
 
     # MCP external tools
     mcp_call_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)

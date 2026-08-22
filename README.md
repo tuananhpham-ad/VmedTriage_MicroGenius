@@ -62,6 +62,10 @@ make eval         # python eval/scripts/run_eval.py
 | `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` | Gửi email xác thực / reset mật khẩu; để trống `SMTP_HOST` khi dev sẽ ghi nội dung email ra log server | — |
 | `ENABLE_GRAPH_TRIAGE_AGENT` | Bật module `src/graph_triage/` (second opinion, không bao giờ ghi đè `TriageProposal.priority`) — mặc định `false` | — |
 | `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
+| `BRAINTRUST_API_KEY` | Key cho tracing/eval qua Braintrust (`eval/`) — dùng để log span trace của Track 1 (`TriagePipeline`) và Track 2 (`graph_triage`/`source_support`). Hoàn toàn tuỳ chọn: để trống thì tracing tự tắt thành no-op, app/script KHÔNG crash | — |
+| `BRAINTRUST_PROJECT` | Tên project Braintrust để log trace (mặc định `vmedtriage-eval`) | — |
+
+Production deploy không được dùng SQLite mặc định vì filesystem của web service có thể bị xoá khi redeploy. `render.yaml` hiện khai báo Render Postgres `vmedtriage-postgres` bằng gói `basic-256mb` và bind `DATABASE_URL` bằng `fromDatabase.connectionString`; khi `APP_ENV=production`, app sẽ từ chối khởi động nếu `DATABASE_URL` vẫn trỏ tới SQLite.
 
 ## API & luồng chính
 

@@ -10,8 +10,14 @@
 Đăng nhập được bằng tên đăng nhập hoặc email (`user0@example.com` / `nurse0@example.com`).
 
 ⚠️ Mật khẩu ở đây CỐ TÌNH yếu và KHÔNG qua `validate_strong_password` - script ghi thẳng hash vào DB,
-bỏ qua tầng validate của `RegisterRequest`. Chỉ dùng cho demo local. Script tự từ chối chạy khi
-`APP_ENV=production`. Tài khoản cũng được đánh dấu `email_verified=True` để bỏ qua bước nhập mã.
+bỏ qua tầng validate của `RegisterRequest`. Chỉ dùng cho demo. Tài khoản cũng được đánh dấu
+`email_verified=True` để bỏ qua bước nhập mã.
+
+Ở production, script CHỈ được phép đụng tới đúng 2 username trong `ALLOWED_PRODUCTION_USERNAMES`
+(quyết định 2026-08-22, theo yêu cầu seed 2 tài khoản demo cho VMedTriage ngay cả trên Render). Đây
+KHÔNG phải mở khoá seed tuỳ ý ở production - `DEMO_USERS` hiện chỉ có đúng user0/nurse0, và guard dưới
+đây sẽ raise nếu sau này có ai thêm entry khác vào `DEMO_USERS` mà quên cập nhật allowlist, để không
+âm thầm mở rộng phạm vi mật khẩu yếu trên DB thật.
 """
 
 from __future__ import annotations
@@ -58,11 +64,19 @@ DEMO_USERS = (
     },
 )
 
+ALLOWED_PRODUCTION_USERNAMES = frozenset({"user0", "nurse0"})
+"""Ngoại lệ CỨNG cho production - xem docstring module. Sửa DEMO_USERS thì phải sửa cả set này."""
+
 
 def seed() -> int:
     settings = get_settings()
-    if settings.app_env == "production":
-        print("Từ chối chạy: seed tài khoản demo với mật khẩu yếu không được phép ở production.")
+    demo_usernames = {spec["username"] for spec in DEMO_USERS}
+    if settings.app_env == "production" and not demo_usernames <= ALLOWED_PRODUCTION_USERNAMES:
+        print(
+            "Từ chối chạy: DEMO_USERS chứa username ngoài ALLOWED_PRODUCTION_USERNAMES "
+            f"({sorted(demo_usernames - ALLOWED_PRODUCTION_USERNAMES)}) - seed mật khẩu yếu tuỳ ý "
+            "không được phép ở production."
+        )
         return 1
 
     configure_database()

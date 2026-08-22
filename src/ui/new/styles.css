@@ -538,6 +538,8 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .record-head b { color:var(--muted-2); font-size:13px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; }
 .record-head span { color:var(--faint); font-size:12.5px; font-variant-numeric:tabular-nums; }
 .record-body { padding:6px 20px 18px; }
+.card-toggle { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; transition:transform .15s ease; }
+.card-toggle[aria-expanded="false"] { transform:rotate(-90deg); }
 /* Phiếu tóm tắt của điều dưỡng cuộn TRONG thẻ: một protocol có tới ~39 field nên thẻ này đẩy khối
    quyết định xử trí và phiếu ISBAR xuống quá xa. Cuộn cục bộ giữ chúng trong tầm mắt.
    `overscroll-behavior` để cuộn hết danh sách không kéo luôn cả trang. */
