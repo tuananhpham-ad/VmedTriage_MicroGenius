@@ -27,6 +27,7 @@ import re
 from typing import Any
 
 from src.config import get_settings
+from src.observability.braintrust_tracing import traced_span
 from src.source_support.claims import extract_claims
 from src.source_support.explain import NO_SOURCE_NOTE, write_explanation
 from src.source_support.index import SourceIndex
@@ -55,53 +56,99 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
     settings = get_settings()
     meter = CostMeter()
 
-    claims = extract_claims(decision, meter=meter)
-    if not claims:
-        return _empty(meter, note=NO_SOURCE_NOTE, reason="khong_tach_duoc_claim")
+    # Unit D (docs/eval/01_evaluation_units.md mục 5) - trích claim đi qua provider_router
+    # (role=ROLE_CLAIM_SPLITTER), còn embedding (text-embedding-3-small) và web-search fallback
+    # (Gemini grounding / Tavily) gọi THẲNG provider của chúng, KHÔNG qua provider_router - ghi rõ
+    # trong metadata để không lẫn với các bước có via_provider_router=True.
+    with traced_span(
+        "claim_extraction_retrieval",
+        input={"triage_label": triage_label},
+        metadata={
+            "unit": "D: claim extraction & retrieval",
+            "claim_extraction": {"via_provider_router": True, "role": "ROLE_CLAIM_SPLITTER"},
+            "embedding_direct_openai": {"via_provider_router": False, "model": "text-embedding-3-small"},
+            "web_search_fallback": {
+                "via_provider_router": False,
+                "provider": settings.source_support_search_provider,
+            },
+            "can_change_label": False,
+        },
+    ) as claim_retrieval_span:
+        claims = extract_claims(decision, meter=meter)
+        if not claims:
+            claim_retrieval_span.log(output={"claims_extracted": 0})
+            return _empty(meter, note=NO_SOURCE_NOTE, reason="khong_tach_duoc_claim")
 
-    index = index if index is not None else SourceIndex.load()
-    before = len(index)
-    evidences = [retrieve(claim, index, meter=meter) for claim in claims]
-    if len(index) > before:
-        index.save()
-
-    results: list[ClaimResult] = []
-    dropped = 0
-    for evidence, response in grade_all(evidences, meter=meter):
-        # Guard 0c: claim đã bị viết lệch khỏi lập luận gốc thì bỏ hẳn, không đưa sang bước diễn giải.
-        # Bỏ chứ không hạ verdict: một claim không phản ánh đúng lập luận thì kết quả đối chiếu của nó
-        # - dù là `supports` hay `unsupported` - đều đang nói về một mệnh đề khác với mệnh đề hệ thống
-        # thật sự dựa vào, nên nó không có nghĩa gì để hiển thị.
-        if not response.claim_matches_reasoning:
-            dropped += 1
-            logger.warning(
-                "source_support.claim_dropped reason=guard_0c claim=%r grounded_in=%r",
-                evidence.claim.claim_en[:80], evidence.claim.grounded_in[:80],
-            )
-            continue
-        results.append(
-            ClaimResult(
-                claim=evidence.claim,
-                verdict=response.verdict,
-                retrieval=evidence.retrieval,
-                sources=to_source_hits(evidence, response),
-            )
+        index = index if index is not None else SourceIndex.load()
+        before = len(index)
+        evidences = [retrieve(claim, index, meter=meter) for claim in claims]
+        if len(index) > before:
+            index.save()
+        claim_retrieval_span.log(
+            output={
+                "claims_extracted": len(claims),
+                "web_searches_performed": meter.web_searches,
+                "index_grew_by": len(index) - before,
+            }
         )
 
-    if not results:
-        # MỌI claim đều bị Guard 0c loại. Đây là kết thúc HỢP LỆ, không phải lỗi - nhưng nó phải để
-        # lại dấu vết: nếu chỉ có mấy dòng `claim_dropped` rồi im bặt thì người đọc log không phân
-        # biệt được "đã xong và không có gì để trích" với "treo giữa chừng" hay "văng ngoại lệ".
-        return _empty(meter, note=NO_SOURCE_NOTE, examined=len(claims), dropped=dropped,
-                      reason="moi_claim_bi_guard_0c_loai")
+    # Unit E (docs/eval/01_evaluation_units.md mục 6) - verdict.grade() + explain.write_explanation(),
+    # cả hai đi qua provider_router (role=ROLE_SOURCE_VERDICT / ROLE_SOURCE_EXPLAIN).
+    with traced_span(
+        "verdict_explanation",
+        input={"claims_to_grade": len(claims)},
+        metadata={
+            "unit": "E: verdict grading & explanation",
+            "via_provider_router": True,
+            "roles": ["ROLE_SOURCE_VERDICT", "ROLE_SOURCE_EXPLAIN"],
+            "can_change_label": False,
+        },
+    ) as verdict_span:
+        results: list[ClaimResult] = []
+        dropped = 0
+        for evidence, response in grade_all(evidences, meter=meter):
+            # Guard 0c: claim đã bị viết lệch khỏi lập luận gốc thì bỏ hẳn, không đưa sang bước diễn
+            # giải. Bỏ chứ không hạ verdict: một claim không phản ánh đúng lập luận thì kết quả đối
+            # chiếu của nó - dù là `supports` hay `unsupported` - đều đang nói về một mệnh đề khác
+            # với mệnh đề hệ thống thật sự dựa vào, nên nó không có nghĩa gì để hiển thị.
+            if not response.claim_matches_reasoning:
+                dropped += 1
+                logger.warning(
+                    "source_support.claim_dropped reason=guard_0c claim=%r grounded_in=%r",
+                    evidence.claim.claim_en[:80], evidence.claim.grounded_in[:80],
+                )
+                continue
+            results.append(
+                ClaimResult(
+                    claim=evidence.claim,
+                    verdict=response.verdict,
+                    retrieval=evidence.retrieval,
+                    sources=to_source_hits(evidence, response),
+                )
+            )
 
-    explanation, citations = write_explanation(
-        results,
-        triage_label=triage_label,
-        patient_label=_patient_label(decision),
-        patient_spans=_patient_spans(decision),
-        meter=meter,
-    )
+        if not results:
+            # MỌI claim đều bị Guard 0c loại. Đây là kết thúc HỢP LỆ, không phải lỗi - nhưng nó phải
+            # để lại dấu vết: nếu chỉ có mấy dòng `claim_dropped` rồi im bặt thì người đọc log không
+            # phân biệt được "đã xong và không có gì để trích" với "treo giữa chừng" hay "văng ngoại lệ".
+            verdict_span.log(output={"dropped_by_guard_0c": dropped, "results": 0})
+            return _empty(meter, note=NO_SOURCE_NOTE, examined=len(claims), dropped=dropped,
+                          reason="moi_claim_bi_guard_0c_loai")
+
+        explanation, citations = write_explanation(
+            results,
+            triage_label=triage_label,
+            patient_label=_patient_label(decision),
+            patient_spans=_patient_spans(decision),
+            meter=meter,
+        )
+        verdict_span.log(
+            output={
+                "dropped_by_guard_0c": dropped,
+                "citations": len(citations),
+                "explanation_chars": len(explanation),
+            }
+        )
 
     contradicted = [result.claim.claim_vi for result in results if result.verdict == "contradicts"]
     summary = SupportSummary(

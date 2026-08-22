@@ -88,7 +88,7 @@ async def send_message(session_id: str, payload: FeverMessageRequest) -> FeverSe
 async def confirm(session_id: str, payload: FeverConfirmRequest) -> FeverSessionResponse:
     """Xác nhận phiếu tóm tắt cuối phiên (Stage 6 CS) trước khi bàn giao HITL."""
     try:
-        session = fever_session.confirm_summary(session_id, payload.is_correct)
+        session = fever_session.confirm_summary(session_id, payload.is_correct, force=payload.force)
     except fever_session.SessionNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except ValueError as error:
