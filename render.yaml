@@ -9,13 +9,39 @@ services:
   - type: web
     name: vmedtriage
     runtime: python
-    plan: free
+    # Graph triage agent tải PhoBERT (~500MB) + fusion (~500MB) vào RAM cùng lúc, cộng thêm torch.
+    # Plan free (512MB) không đủ - cần ít nhất "standard" (2GB). Đổi lại trong dashboard nếu Render
+    # chưa hỗ trợ giá trị này trong render.yaml ở vùng/tài khoản của bạn.
+    plan: standard
     region: singapore
     branch: dev
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    # CHỈ cài dependency ở đây. Render Disk KHÔNG được mount trong lúc buildCommand chạy (nó chỉ gắn
+    # vào lúc container runtime khởi động) - ghi vào /opt/render/project/src/data ở bước build là ghi
+    # vào filesystem tạm rồi bị vứt, đĩa persistent thật sự vẫn trống. Vì vậy bước tải artifact/corpus
+    # phải nằm ở startCommand, không phải buildCommand.
+    buildCommand: pip install -r requirements.txt -r requirements-graph.txt
+    # scripts/download_graph_artifacts.py và build_source_corpus đều idempotent (bỏ qua phần đã có
+    # trên đĩa persistent) - từ lần khởi động thứ 2 trở đi chỉ mất vài giây để kiểm tra rồi bỏ qua.
+    # build_source_corpus dùng "|| true": một URL guideline chết không được phép chặn app khởi động,
+    # chỉ làm corpus thiếu vài tài liệu (xem log start để biết URL nào fail).
+    # seed_demo_users chỉ đụng đúng user0/nurse0 kể cả ở production (xem allowlist trong script) -
+    # idempotent, an toàn chạy lại mỗi lần khởi động. "|| true": một lần DB hiccup lúc seed không được
+    # phép chặn app khởi động, đây chỉ là tiện ích demo chứ không phải bước bắt buộc.
+    startCommand: >-
+      python scripts/download_graph_artifacts.py &&
+      (python -m scripts.build_source_corpus || true) &&
+      (python -m scripts.seed_demo_users || true) &&
+      uvicorn src.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
+    disk:
+      # Giữ lại runs/ (artifact graph triage) và data/source_index/ (corpus RAG source_support)
+      # giữa các lần deploy - không phải tải lại/nạp lại corpus mỗi lần build.
+      # runtime: python (native, không dùng Dockerfile) -> Render checkout repo tại
+      # /opt/render/project/src, nên mount đè đúng thư mục data/ ở đó.
+      name: vmedtriage-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 5
     envVars:
       - key: APP_ENV
         value: production
@@ -39,3 +65,67 @@ services:
         value: Qwen/Qwen3-8B
       - key: LLM_TEMPERATURE
         value: "0.0"
+
+      # ---- API key (bí mật) - dán giá trị trong Render dashboard, KHÔNG commit vào đây ----
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: NURSE_REGISTRATION_CODE
+        sync: false
+
+      # ---- SMTP (mã xác thực email, reset mật khẩu) ----
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+
+      # ---- RAG: Weaviate Cloud (persist case, best-effort) ----
+      - key: WEAVIATE_URL
+        sync: false
+      - key: WEAVIATE_API_KEY
+        sync: false
+
+      # ---- RAG: source_support (trích nguồn y văn cho nhãn đã chốt, src/source_support/) ----
+      - key: SOURCE_SUPPORT_ENABLED
+        value: "true"
+      - key: SOURCE_SUPPORT_SEARCH_PROVIDER
+        value: tavily
+      - key: SOURCE_SUPPORT_THRESHOLD
+        value: "0.55"
+      - key: SOURCE_SUPPORT_MAX_CLAIMS
+        value: "3"
+      - key: SOURCE_SUPPORT_INDEX_ONLY
+        value: "false"
+      - key: SOURCE_SUPPORT_ALLOWLIST
+        value: who.int,moh.gov.vn,kcb.vn,nhs.uk,nice.org.uk,cdc.gov,ncbi.nlm.nih.gov,cochranelibrary.com,msdmanuals.com,aafp.org,acep.org
+      - key: TAVILY_API_KEY
+        sync: false
+
+      # ---- Graph triage agent (src/graph_triage/) - ý kiến tham khảo thứ hai, không quyết định priority ----
+      - key: ENABLE_GRAPH_TRIAGE_AGENT
+        value: "true"
+      - key: GRAPH_TRIAGE_ARTIFACT_ROOT
+        value: /opt/render/project/src/data/runs
+      - key: GRAPH_TRIAGE_MAX_LENGTH
+        value: "256"
+      - key: FUSION_FULL_MODEL
+        value: danhnahh/fusion_full
+      - key: LOGREG_FULL_MODEL
+        value: danhnahh/logreg_full
+      - key: BERT_FULL_MODEL
+        value: danhnahh/bert_full

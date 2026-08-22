@@ -20,3 +20,6 @@ openai>=1.0,<3
 
 # torch-geometric chỉ cần cho HGT/fusion (Phần B). LogReg + PhoBERT chạy không cần nó.
 torch-geometric>=2.7,<3
+
+# Tải 3 artifact (logreg/bert/fusion) từ Hugging Face Hub về runs/ - xem scripts/download_graph_artifacts.py
+huggingface_hub>=0.24,<1
