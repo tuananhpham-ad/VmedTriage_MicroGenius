@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     role_order_source_verdict: str = ""
     role_order_source_explain: str = ""
 
+    # Bộ lọc phạm vi y tế rẻ (`non_clinical.classify_with_zero_shot`) đứng TRƯỚC LLM domain
+    # classifier - model NLI nhỏ qua HF Inference API, không sinh văn bản nên rẻ và nhanh hơn một
+    # lượt chat completion. Mặc định TẮT: đây là dịch vụ phụ trợ chưa qua eval, bật nhầm trong test
+    # sẽ gọi mạng thật vì `HUGGINGFACE_API_KEY` có thể đã có sẵn trong `.env` của máy dev.
+    enable_hf_zero_shot_domain_classifier: bool = False
+    huggingface_api_key: str = Field(
+        default="", validation_alias=AliasChoices("HUGGINGFACE_API_KEY", "HF_API_KEY")
+    )
+    hf_zero_shot_model_name: str = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
+    hf_zero_shot_timeout_seconds: float = Field(default=8.0, ge=0.5, le=60.0)
+
     # Công tắc ngắt cho các cơ chế hội thoại thêm vào ở P2-P3 (§9 P4 mục 5). Mặc định BẬT - đây là
     # đường quay lui, không phải nút bật tính năng.
     #

@@ -6,12 +6,14 @@ Lane phi lâm sàng không sinh red flag và không đổi `answers`; shadow mod
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pytest
 
 from src import paths
-from src.services.infra import provider_router
+from src.config import Settings
+from src.services.infra import hf_zero_shot, provider_router
 from src.services.symptom_protocol import controller_shadow, non_clinical
 from src.services.symptom_protocol.non_clinical import NonClinicalLane
 from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase
@@ -44,6 +46,7 @@ def test_a_low_content_message_gets_a_specific_retry_lane(message: str):
     [
         "Cho em hỏi xe buýt tuyến số 8 hiện tại còn chạy qua đường Nguyễn Trãi không",
         "xe bus tuyến này còn đi qua Nguyễn Trãi không",
+        "Cho mình hỏi cửa hàng có bán áo thun nam size L không vậy shop?",
     ],
 )
 def test_an_out_of_scope_question_gets_the_out_of_scope_lane(message: str):
@@ -124,6 +127,157 @@ def test_opening_out_of_scope_question_is_answered_without_starting_a_checklist(
     spy.assert_not_called()
 
 
+def test_opening_shop_question_is_out_of_scope_not_repeated_as_opening_question(monkeypatch):
+    spy = Mock(side_effect=AssertionError("Câu hỏi mua hàng không được gọi model"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(
+        session.session_id,
+        "Cho mình hỏi cửa hàng có bán áo thun nam size L không vậy shop?",
+    )
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "ngoài" in session.last_question.casefold() or "chưa hỗ trợ" in session.last_question.casefold()
+    assert "khó chịu thế nào" not in session.last_question.casefold()
+    spy.assert_not_called()
+
+
+def test_opening_unknown_non_medical_question_uses_model_domain_classifier(monkeypatch):
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
+        return provider_router.CompletionResult(
+            text=json.dumps({"medical_domain": False, "lane": "out_of_scope", "confidence": 0.96}),
+            provider="fake",
+            model="fake",
+        )
+
+    mock = Mock(side_effect=complete)
+    monkeypatch.setattr(provider_router, "complete", mock)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "Máy in báo lỗi kẹt giấy thì xử lý sao?")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "khó chịu thế nào" not in session.last_question.casefold()
+    assert "triệu chứng" in session.last_question.casefold()
+    assert mock.call_count == 1
+
+
+def test_domain_classifier_fail_open_keeps_the_opening_flow(monkeypatch):
+    calls = {"n": 0}
+
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("domain classifier timeout")
+        return provider_router.CompletionResult(text=json.dumps({}), provider="fake", model="fake")
+
+    monkeypatch.setattr(provider_router, "complete", Mock(side_effect=complete))
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "Tôi hơi mệt trong người")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.last_question
+    assert calls["n"] >= 2
+
+
+def test_low_confidence_domain_classifier_does_not_block_clinical_flow(monkeypatch):
+    calls = {"n": 0}
+
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return provider_router.CompletionResult(
+                text=json.dumps({"medical_domain": False, "lane": "out_of_scope", "confidence": 0.4}),
+                provider="fake",
+                model="fake",
+            )
+        return provider_router.CompletionResult(text=json.dumps({}), provider="fake", model="fake")
+
+    monkeypatch.setattr(provider_router, "complete", Mock(side_effect=complete))
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "Tôi thấy người không ổn")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert "khó chịu thế nào" in session.last_question.casefold()
+    assert calls["n"] >= 2
+
+
+def _zero_shot_settings(**overrides) -> Settings:
+    return Settings(_env_file=None, huggingface_api_key="hf_test_key", **overrides)
+
+
+def test_zero_shot_classifier_is_off_by_default(monkeypatch):
+    """Công tắc mặc định TẮT (§ config.py) - dịch vụ phụ trợ chưa eval không được tự bật, và test
+    không được gọi mạng thật chỉ vì máy dev có sẵn `HUGGINGFACE_API_KEY` trong `.env`."""
+    monkeypatch.setattr(
+        hf_zero_shot, "classify",
+        Mock(side_effect=AssertionError("bộ lọc tắt thì không được gọi HF Inference API")),
+    )
+
+    assert non_clinical.classify_with_zero_shot("cửa hàng có bán áo thun size L không").lane is NonClinicalLane.NONE
+
+
+def test_confident_zero_shot_result_skips_the_llm_domain_classifier(monkeypatch):
+    """Đúng lý do dùng bộ lọc rẻ: kết luận chắc chắn thì không cần gọi thêm một lượt LLM."""
+    settings = _zero_shot_settings(enable_hf_zero_shot_domain_classifier=True)
+    monkeypatch.setattr(non_clinical, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        hf_zero_shot, "classify",
+        Mock(
+            return_value=[
+                hf_zero_shot.ZeroShotResult(label="triệu chứng hoặc vấn đề sức khỏe cụ thể", score=0.1),
+                hf_zero_shot.ZeroShotResult(
+                    label="mua bán, cửa hàng, giao thông, hoặc chủ đề không liên quan y tế", score=0.9,
+                ),
+            ]
+        ),
+    )
+    spy = Mock(side_effect=AssertionError("kết quả zero-shot đủ tin cậy thì không được gọi LLM"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+
+    verdict = non_clinical.classify_with_model("cửa hàng có bán áo thun size L không")
+
+    assert verdict.lane is NonClinicalLane.OUT_OF_SCOPE
+    spy.assert_not_called()
+
+
+def test_inconclusive_zero_shot_falls_through_to_the_llm_domain_classifier(monkeypatch):
+    """Bộ lọc rẻ không chắc (tắt/lỗi/điểm thấp) -> vẫn phải rơi xuống LLM domain classifier như cũ,
+    không được bỏ sót ca chỉ vì dịch vụ phụ trợ không trả lời được."""
+    settings = _zero_shot_settings(enable_hf_zero_shot_domain_classifier=True)
+    monkeypatch.setattr(non_clinical, "get_settings", lambda: settings)
+    monkeypatch.setattr(hf_zero_shot, "classify", Mock(return_value=None))
+
+    def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
+        return provider_router.CompletionResult(
+            text=json.dumps({"medical_domain": False, "lane": "out_of_scope", "confidence": 0.96}),
+            provider="fake",
+            model="fake",
+        )
+
+    mock = Mock(side_effect=complete)
+    monkeypatch.setattr(provider_router, "complete", mock)
+
+    verdict = non_clinical.classify_with_model("máy in báo lỗi kẹt giấy thì xử lý sao")
+
+    assert verdict.lane is NonClinicalLane.OUT_OF_SCOPE
+    mock.assert_called_once()
+
+
 def test_opening_punctuation_only_reply_is_not_sent_to_the_checklist(monkeypatch):
     spy = Mock(side_effect=AssertionError("Tin chỉ có dấu câu không được gọi model"))
     monkeypatch.setattr(provider_router, "complete", spy)
@@ -153,6 +307,23 @@ def test_opening_no_symptoms_statement_does_not_start_emergency_screening(monkey
     assert session.protocol_name == ""
     assert session.current_cluster is None
     assert "sức khỏe" in session.last_question.casefold() or "triệu chứng" in session.last_question.casefold()
+    assert "Khó thở nặng" not in session.last_question
+    spy.assert_not_called()
+
+
+def test_opening_joking_gross_message_does_not_start_clinical_screening(monkeypatch):
+    spy = Mock(side_effect=AssertionError("Câu đùa ở opening không được gọi model"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "tôi muốn ăn cứt")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "triệu chứng" in session.last_question.casefold()
     assert "Khó thở nặng" not in session.last_question
     spy.assert_not_called()
 

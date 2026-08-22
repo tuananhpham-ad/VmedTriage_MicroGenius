@@ -35,10 +35,17 @@ phủ vô nghĩa (mẫu số phình lên bằng những phiên chưa bao giờ l
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
+
+from src.config import get_settings
+from src.services.infra import hf_zero_shot, provider_router
+from src.services.infra.json_output import parse_json_object
+
+logger = logging.getLogger("vmedtriage.non_clinical")
 
 
 class NonClinicalLane(str, Enum):
@@ -89,6 +96,8 @@ _META = (
 _OUT_OF_SCOPE = (
     "xe buyt", "xe bus", "tuyen so", "tuyen xe", "lo trinh", "tram xe", "ben xe",
     "duong nguyen trai", "nguyen trai", "giao thong", "di qua duong", "con chay qua",
+    "cua hang", "shop", "ban ao", "ao thun", "size", "size l", "con hang", "dat hang",
+    "gia bao nhieu", "bao nhieu tien", "mua hang", "san pham", "khuyen mai",
 )
 
 _NO_SYMPTOMS = (
@@ -105,6 +114,12 @@ _NO_SYMPTOMS = (
 )
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+MODEL_DOMAIN_CONFIDENCE_MIN = 0.75
+"""Ngưỡng để model được quyền chặn lượt opening khỏi luồng y tế.
+
+Thấp hơn ngưỡng này thì fail-open sang clinical: hỏi thừa một câu còn rẻ hơn bỏ sót một ca bệnh.
+"""
 
 # Từ khoá cho thấy tin nhắn CÓ nội dung lâm sàng - khi chúng xuất hiện, mọi lane phi lâm sàng bị huỷ.
 # Cố ý rộng và cố ý nghiêng về BỎ SÓT lane phi lâm sàng: định tuyến nhầm một câu tán gẫu vào đường
@@ -164,6 +179,126 @@ def classify(message: str) -> NonClinicalVerdict:
         if matched:
             return NonClinicalVerdict(lane=lane, matched=matched)
     return NonClinicalVerdict()
+
+
+ZERO_SHOT_CONFIDENCE_MIN = 0.55
+"""Ngưỡng thấp hơn `MODEL_DOMAIN_CONFIDENCE_MIN`: đây chỉ là bộ lọc SƠ BỘ, không chắc thì fail-open
+xuống LLM domain classifier (độ chính xác cao hơn) chứ không xuống thẳng luồng lâm sàng."""
+
+# Nhãn tiếng Việt cho model NLI đa ngôn ngữ (`hf_zero_shot_model_name`). Nhãn đầu tiên ánh xạ về
+# `None` = lâm sàng, đi tiếp luồng bình thường; các nhãn còn lại ánh xạ 1-1 với lane phi lâm sàng.
+_ZERO_SHOT_LABELS: tuple[tuple[str, NonClinicalLane | None], ...] = (
+    ("triệu chứng hoặc vấn đề sức khỏe cụ thể", None),
+    ("người dùng nói rõ hiện không có triệu chứng nào", NonClinicalLane.NO_SYMPTOMS),
+    ("hỏi về chính trợ lý hoặc hệ thống này", NonClinicalLane.META),
+    ("sinh hoạt, thuốc men, hoặc thói quen sống không kèm triệu chứng", NonClinicalLane.LIFESTYLE),
+    ("mua bán, cửa hàng, giao thông, hoặc chủ đề không liên quan y tế", NonClinicalLane.OUT_OF_SCOPE),
+)
+
+
+def classify_with_zero_shot(message: str) -> NonClinicalVerdict:
+    """Bộ lọc RẺ bằng model NLI nhỏ qua HF Inference API, đứng TRƯỚC `classify_with_model` (LLM sinh
+    văn bản đầy đủ). Cùng nguyên tắc fail-open của module này: tắt bằng cấu hình, thiếu key, lỗi
+    mạng, hoặc điểm số dưới ngưỡng đều trả `NONE` để caller rơi xuống LLM domain classifier - không
+    bao giờ tự ý kết luận ngoài phạm vi chỉ vì dịch vụ phụ trợ này sẵn sàng.
+    """
+    settings = get_settings()
+    if not settings.enable_hf_zero_shot_domain_classifier:
+        return NonClinicalVerdict()
+
+    label_to_lane = dict(_ZERO_SHOT_LABELS)
+    results = hf_zero_shot.classify(
+        message,
+        [label for label, _lane in _ZERO_SHOT_LABELS],
+        api_key=settings.huggingface_api_key,
+        model_name=settings.hf_zero_shot_model_name,
+        timeout_seconds=settings.hf_zero_shot_timeout_seconds,
+    )
+    if not results:
+        return NonClinicalVerdict()
+
+    top = max(results, key=lambda item: item.score)
+    if top.score < ZERO_SHOT_CONFIDENCE_MIN:
+        return NonClinicalVerdict()
+
+    lane = label_to_lane.get(top.label)
+    if lane is None:
+        return NonClinicalVerdict()
+    return NonClinicalVerdict(lane=lane, matched=(f"zeroshot:{top.label}:{top.score:.2f}",))
+
+
+_DOMAIN_SYSTEM_PROMPT = """Bạn là bộ phân loại phạm vi cho một trợ lý y tế.
+
+Nhiệm vụ duy nhất: đọc MỘT tin nhắn của người dùng và trả JSON.
+
+Trả về CHÍNH XÁC:
+{"medical_domain": true|false, "lane": "medical|out_of_scope|meta|lifestyle|no_symptoms", "confidence": 0.0}
+
+Định nghĩa:
+- medical_domain=true nếu tin nhắn có triệu chứng, bệnh, thuốc, sức khỏe, cấp cứu, người bệnh/người nhà, hoặc hỏi về chính trợ lý y tế.
+- medical_domain=false nếu là mua bán, shop, giao thông, trường lớp, kỹ thuật, giải trí, thời tiết, lịch hẹn ngoài y tế, hoặc chủ đề không liên quan sức khỏe.
+- Nếu không chắc, chọn medical_domain=true với confidence thấp.
+- Không trả lời câu hỏi của người dùng. Không chẩn đoán. Chỉ JSON."""
+
+
+def classify_with_model(
+    message: str,
+    *,
+    credential: provider_router.LLMCredential | None = None,
+) -> NonClinicalVerdict:
+    """Fallback bằng LLM cho out-of-scope dài đuôi.
+
+    L0 red-flag và `classify()` deterministic phải chạy trước hàm này. Hàm này chỉ được dùng khi
+    chưa có cụm lâm sàng đang chờ trả lời; nếu model lỗi hoặc không chắc, trả `NONE` để caller đi
+    tiếp luồng clinical thay vì bỏ sót ca bệnh.
+
+    Trước khi gọi LLM, thử `classify_with_zero_shot` (rẻ hơn nhiều vì không sinh văn bản). Chỉ khi
+    bộ lọc đó không kết luận được (tắt, thiếu key, lỗi mạng, hoặc điểm số thấp) mới rơi xuống LLM.
+    """
+    zero_shot = classify_with_zero_shot(message)
+    if zero_shot.is_non_clinical:
+        return zero_shot
+
+    try:
+        result = provider_router.complete(
+            [
+                {"role": "system", "content": _DOMAIN_SYSTEM_PROMPT},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.0,
+            credential=credential,
+            role=provider_router.ROLE_SYMPTOM_GROUP_ROUTER,
+        )
+        parsed = parse_json_object(result.text)
+    except Exception as error:
+        logger.warning("domain classifier failed: %s", error)
+        return NonClinicalVerdict()
+
+    if not isinstance(parsed, dict):
+        return NonClinicalVerdict()
+    confidence = _as_float(parsed.get("confidence"))
+    if confidence < MODEL_DOMAIN_CONFIDENCE_MIN:
+        return NonClinicalVerdict()
+    lane = str(parsed.get("lane") or "").strip().casefold()
+    medical = bool(parsed.get("medical_domain"))
+    if medical:
+        if lane == "meta":
+            return NonClinicalVerdict(lane=NonClinicalLane.META, matched=("model:meta",))
+        if lane == "lifestyle":
+            return NonClinicalVerdict(lane=NonClinicalLane.LIFESTYLE, matched=("model:lifestyle",))
+        if lane == "no_symptoms":
+            return NonClinicalVerdict(lane=NonClinicalLane.NO_SYMPTOMS, matched=("model:no_symptoms",))
+        return NonClinicalVerdict()
+    if lane in {"out_of_scope", "non_clinical"} or lane:
+        return NonClinicalVerdict(lane=NonClinicalLane.OUT_OF_SCOPE, matched=(f"model:{lane}",))
+    return NonClinicalVerdict(lane=NonClinicalLane.OUT_OF_SCOPE, matched=("model:out_of_scope",))
+
+
+def _as_float(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # --- Handler: văn bản TĨNH, không qua LLM --------------------------------------------------------

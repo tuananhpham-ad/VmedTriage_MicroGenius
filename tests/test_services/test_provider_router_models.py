@@ -307,6 +307,25 @@ def test_console_trace_prints_the_model_in_use(openrouter_only, monkeypatch, cap
     assert OPENROUTER_FREE_MODELS[0] in capsys.readouterr().out
 
 
+def test_console_trace_prints_the_llm_output(openrouter_only, monkeypatch, capsys):
+    _install_fake_provider(monkeypatch, {})
+    from src.services.infra import console_log
+
+    console_log.set_enabled(True)
+    try:
+        provider_router.complete(
+            [{"role": "user", "content": "chào"}],
+            role=provider_router.ROLE_FACT_EXTRACTOR,
+        )
+    finally:
+        console_log.set_enabled(None)
+
+    out = capsys.readouterr().out
+    assert "fact_extractor" in out
+    assert "OUT" in out
+    assert "trả lời từ" in out
+
+
 def test_describe_selection_names_model_and_backups(openrouter_only):
     described = provider_router.describe_selection()
 

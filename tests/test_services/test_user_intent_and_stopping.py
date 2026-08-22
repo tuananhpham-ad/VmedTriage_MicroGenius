@@ -321,6 +321,44 @@ def test_a_joking_non_answer_repeats_the_current_question_without_calling_model(
     spy.assert_not_called()
 
 
+def test_repeated_joking_non_answers_do_not_stack_retry_prefixes(monkeypatch):
+    spy = Mock(side_effect=AssertionError("Câu đùa không được đưa vào extractor"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(FEVER_PROTOCOL)
+    session = _fever_session(store)
+    original_question = session.last_question
+
+    store.submit_message(session.session_id, "hihi")
+    first_retry = session.last_question
+    store.submit_message(session.session_id, "haha")
+
+    assert original_question in session.last_question
+    assert first_retry not in session.last_question
+    assert session.last_question.count(original_question) == 1
+    spy.assert_not_called()
+
+
+def test_a_lifestyle_non_answer_mid_checklist_repeats_the_current_question_without_calling_model(monkeypatch):
+    spy = Mock(side_effect=AssertionError("Câu hỏi bia giữa checklist không được đưa vào extractor"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(FEVER_PROTOCOL)
+    session = _fever_session(store)
+    before_question = session.last_question
+    before_cluster = session.current_cluster
+    before_probe = session.pending_probe
+
+    store.submit_message(session.session_id, "tôi muốn uống bia")
+
+    assert session.current_cluster is before_cluster
+    assert session.pending_probe == before_probe
+    assert before_question in session.last_question
+    assert "đường thở" not in session.last_question.casefold()
+    assert session.llm_used_last_turn is False
+    spy.assert_not_called()
+
+
 def test_a_stop_request_does_not_lower_an_escalation(fake_llm):
     """§7.1 mục 6. Ý định người bệnh chỉ được DỪNG, không được hạ mức - phiên có dấu hiệu đỏ thật
     trong hồ sơ vẫn phải đóng bằng `RED_FLAG`, không phải bằng ý định."""
