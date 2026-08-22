@@ -1088,9 +1088,26 @@ class ProtocolSessionStore:
         summary["controller_shadow"] = SHADOW_STATS.as_dict() if flags.llm_controller_shadow_enabled() else None
         return summary
 
-    def confirm_summary(self, session_id: str, is_correct: bool) -> Session:
+    def confirm_summary(self, session_id: str, is_correct: bool, force: bool = False) -> Session:
         session = self._require(session_id)
         if session.state != SessionState.AWAITING_CONFIRMATION:
+            # `force`: bệnh nhân tự chốt "không còn gì để khai báo thêm" dù checklist chưa đủ (chưa
+            # tới AWAITING_CONFIRMATION). CHỈ áp dụng khi phiên còn đang thu thập — nhánh cấp cứu
+            # (EMERGENCY) và các trạng thái đã chốt khác giữ nguyên lỗi, vì escalation_lock không phải
+            # thứ một cú bấm của bệnh nhân được phép ghi đè (P0-6).
+            if force and session.state == SessionState.COLLECTING:
+                # Phải đi qua `_finish` như mọi lối kết thúc khác — nó là nơi DUY NHẤT chạy
+                # `rule_engine.evaluate` và gán `triage_level`. Bỏ qua bước này (bản trước) để lại
+                # `triage_level=None`, khiến `_triage_proposal` (symptom_case_bridge.py) trả về None:
+                # không có "Mức ưu tiên AI đề xuất" lẫn hai dòng nguồn đối chiếu trên phiếu điều dưỡng.
+                self._finish(session, "patient_forced_complete")
+                # `_finish` tự chuyển sang EMERGENCY nếu rule engine chốt đỏ ngay cả với dữ liệu chưa
+                # đầy đủ — GIỮ NGUYÊN nhánh đó, không ép về CONFIRMED: bệnh nhân không được phép tự
+                # xác nhận đè lên một kết quả cấp cứu (đúng nguyên tắc escalate ngay, không chờ duyệt).
+                if session.state != SessionState.EMERGENCY:
+                    session.state = SessionState.CONFIRMED
+                console_log.session_end(session.session_id, state=session.state.value, turns=session.turn_count, percent=100)
+                return session
             raise ValueError("Phiên chưa có phiếu tóm tắt để xác nhận, hoặc đã ở nhánh cấp cứu.")
         if is_correct:
             session.state = SessionState.CONFIRMED

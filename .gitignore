@@ -71,3 +71,8 @@ _guidance/*
 /runs/
 .eval_run/
 eval/
+docs/eval/
+tests/eval/
+# Added by Braintrust Wizard
+.env.braintrust
+.braintrust.json

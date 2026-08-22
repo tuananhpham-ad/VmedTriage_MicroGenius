@@ -227,8 +227,8 @@ export function renderNurseCase(root, { navigate, logout }) {
       <form id="review-form" class="review-grid">
         <div class="review-main">
           <section class="record-card" id="intake-summary">
-            <div class="record-head"><b>Phiếu tóm tắt · Nhóm: ${escapeHtml(symptomGroupLabels[structured.symptom_group] || "Chưa xác định")}</b><span>Tạo lúc ${formatDate(item.created_at)}</span></div>
-            <div class="record-body">
+            <div class="record-head"><b>Phiếu tóm tắt · Nhóm: ${escapeHtml(symptomGroupLabels[structured.symptom_group] || "Chưa xác định")}</b><span>Tạo lúc ${formatDate(item.created_at)}</span>${cardToggleButton()}</div>
+            <div class="record-body" data-card-body>
               ${editableField("summary.chief_complaint", "Triệu chứng chính", summary.chief_complaint || symptomGroupLabels[structured.symptom_group] || "", isDone)}
               ${editableField("summary.onset", "Khởi phát", summary.onset || "", isDone)}
               ${editableField("summary.severity", "Mức độ", summary.severity ?? "", isDone)}
@@ -240,11 +240,10 @@ export function renderNurseCase(root, { navigate, logout }) {
           </section>
 
           <section class="record-card" id="handoff-summary">
-            <div class="record-head"><b>Phiếu bàn giao (ISBAR)</b></div>
-            <div class="record-body"><p class="muted-copy">Đang tải…</p></div>
+            <div class="record-head"><b>Phiếu bàn giao (ISBAR)</b>${cardToggleButton()}</div>
+            <div class="record-body" data-card-body><p class="muted-copy">Đang tải…</p></div>
           </section>
 
-          ${graphDecisionBlock(item)}
           ${sourceSupportCard(item)}
 
           <section class="record-card">
@@ -265,6 +264,8 @@ export function renderNurseCase(root, { navigate, logout }) {
             <div class="ai-priority-value">${priorityDot(level)}<b>${priorityLabels[level] || level}</b></div>
             <p>Quyết định cuối cùng thuộc về nhân viên y tế.</p>
           </div>
+
+          ${graphDecisionBlock(item)}
 
           <label class="field">Phản hồi gửi bệnh nhân<textarea name="approved_response" rows="6" required ${isDone ? "disabled" : ""}>${escapeHtml(patientDraft(item, isDone))}</textarea></label>
           <label class="field">Ghi chú nội bộ <small>(không bắt buộc)</small><textarea name="nurse_notes" rows="2" ${isDone ? "disabled" : ""}></textarea></label>
@@ -322,6 +323,7 @@ export function renderNurseCase(root, { navigate, logout }) {
   bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseCase(root, { navigate, logout }) });
   bindRedFlagEditor(root);
   bindReviewActions(root, { navigate, logout, currentPriority: level });
+  bindCardToggles(root);
   loadHandoffSummary(root, item.case_id);
   startNurseChatPolling(root, { navigate, logout });
 }
@@ -428,10 +430,29 @@ async function review(form, action, context) {
  *
  *  Rơi về `missing_fields` (danh sách KEY thô) khi phiên chưa dựng được `summary_fields`: điều dưỡng
  *  đọc `urine_output` vẫn hiểu, khác hẳn bệnh nhân - nên nhánh dự phòng này giữ nguyên ở đây. */
+function cardToggleButton() {
+  return `<button class="card-toggle" type="button" data-card-toggle aria-expanded="true">${icon("chevronDown", 16)}</button>`;
+}
+
+function bindCardToggles(root) {
+  root.querySelectorAll("[data-card-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const body = button.closest(".record-card")?.querySelector("[data-card-body]");
+      if (!body) return;
+      const expanded = button.getAttribute("aria-expanded") !== "false";
+      button.setAttribute("aria-expanded", String(!expanded));
+      body.hidden = expanded;
+    });
+  });
+}
+
 function collectedFields(item, fallbackMissing) {
   const rows = item?.summary_fields || [];
   if (rows.length) {
-    return rows
+    // Trường thiếu đẩy xuống cuối phiếu: điều dưỡng đọc lướt các thông tin ĐÃ CÓ trước, tag "Thiếu
+    // thông tin" gom lại cuối danh sách để không xen giữa làm rối luồng đọc top-down.
+    return [...rows]
+      .sort((a, b) => Number(Boolean(a.is_missing)) - Number(Boolean(b.is_missing)))
       .map(
         (row) =>
           `<div class="field-row"><span class="label">${escapeHtml(row.label)}</span>${
@@ -473,9 +494,8 @@ function graphDecisionBlock(item) {
   return `<section class="advisory-card"><h3>Ý kiến tham khảo từ mô hình</h3><p class="advisory-note">Đây là ý kiến thứ hai, độc lập với đề xuất mức ưu tiên ở cột bên phải. Quyết định vẫn thuộc về bạn.</p><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-summary">${escapeHtml(decision.decision_summary || "")}</p>${review}<p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
 }
 /** Khối nguồn y văn ĐỌC-CHỈ của part 3 (src/source_support/), tách biệt khỏi ô nháp phản hồi bệnh
- *  nhân - trước đây trích dẫn chỉ lẫn vào text của `sourceSupportDraft()` nên điều dưỡng không có
- *  chỗ nào xem nguồn mà không đụng vào bản nháp có thể sửa. Card này KHÔNG được đưa vào form duyệt
- *  (không có `name=`), chỉ để đọc trước khi sửa ô phản hồi. */
+ *  nhân - trích dẫn không còn tự đổ vào bản nháp có thể sửa (xem `patientDraft`), chỉ hiện ở đây.
+ *  Card này KHÔNG được đưa vào form duyệt (không có `name=`), chỉ để đọc trước khi sửa ô phản hồi. */
 function sourceSupportCard(item) {
   const support = item.graph_decision?.source_support;
   if (!support?.explanation_vi) return "";
@@ -495,33 +515,18 @@ function sourceSupportCard(item) {
   return `<section class="advisory-card"><h3>Trích nguồn y văn (tham khảo)</h3><p class="advisory-note">${escapeHtml(support.method?.scope_note || "Nguồn tham khảo hỗ trợ mệnh đề lâm sàng tổng quát, không phải chẩn đoán cho ca này.")}</p><p class="advisory-summary">${escapeHtml(support.explanation_vi)}</p>${citations ? `<ul class="citation-list">${citations}</ul>` : ""}${contradictedNote}</section>`;
 }
 
-/** Khối nguồn y văn của part 3 (src/source_support/), dựng lại đúng như `explanation_vi` +
- *  `explanation_citations` - `explanation_vi` chỉ mang marker [n], phần liệt kê URL do phía hiển thị
- *  tự ghép (prompt bước 7 cấm model tự viết URL vào đoạn văn). */
-function sourceSupportDraft(item) {
-  const support = item.graph_decision?.source_support;
-  if (!support?.explanation_vi) return "";
-  const sources = (support.explanation_citations || [])
-    .map((cite) => {
-      const quote = String(cite.quote || "").split(/\s+/).join(" ").trim();
-      return `${cite.marker} ${cite.publisher || cite.title || "nguồn"} · ${cite.url}\n    "${quote}"`;
-    })
-    .join("\n");
-  return sources ? `${support.explanation_vi}\n\nNguồn tham khảo:\n${sources}` : support.explanation_vi;
-}
-
-/** Nội dung mặc định của ô "Phản hồi gửi bệnh nhân". ĐÂY LÀ BẢN NHÁP, KHÔNG PHẢI ĐƯỜNG GỬI: part 3
- *  chỉ đổ vào ô soạn thảo để điều dưỡng đọc, sửa rồi bấm duyệt. Không có đường nào ghi thẳng vào
- *  `patient_visible_response` - làm vậy sẽ khiến ca ESCALATED gửi thẳng cho bệnh nhân không qua ai.
+/** Nội dung mặc định của ô "Phản hồi gửi bệnh nhân". ĐÂY LÀ BẢN NHÁP, KHÔNG PHẢI ĐƯỜNG GỬI: điều
+ *  dưỡng đọc, sửa rồi bấm duyệt. Không có đường nào ghi thẳng vào `patient_visible_response` - làm
+ *  vậy sẽ khiến ca ESCALATED gửi thẳng cho bệnh nhân không qua ai.
  *
- *  Part 3 nằm TRÊN, nội dung cũ nằm DƯỚI: với ca red-flag, `patient_visible_response` đang giữ
- *  EMERGENCY_MESSAGE cố định (triage_pipeline._build_patient_safe_response) và câu đó không được mất. */
+ *  Phần suy luận/trích nguồn của agent KHÔNG còn đổ vào đây - hiển thị riêng ở `graphDecisionBlock`
+ *  (dưới card "Mức ưu tiên AI đề xuất") và `sourceSupportCard` (đọc-chỉ, cột chính), để điều dưỡng
+ *  không nhầm nội dung tham khảo với bản nháp gửi bệnh nhân. Với ca red-flag, `patient_visible_response`
+ *  giữ EMERGENCY_MESSAGE cố định (triage_pipeline._build_patient_safe_response) và câu đó không được mất. */
 function patientDraft(item, isDone) {
   const stored = item.patient_visible_response;
   if (isDone) return stored || "";
-  const draft = sourceSupportDraft(item);
-  const base = stored || defaultResponse(priority(item));
-  return draft ? `${draft}\n\n${base}` : base;
+  return stored || defaultResponse(priority(item));
 }
 
 function complaint(item) { return item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Triệu chứng chung"; }
