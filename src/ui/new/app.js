@@ -2,12 +2,13 @@ import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
 import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260819af";
 import { renderDisclaimer, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260819af";
-import { renderNurseCase, renderNurseQueue, stopQueuePolling } from "./features/nurse.js?v=design-20260819af";
+import { renderNurseCase, renderNurseQueue, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260819af";
 
 const app = document.querySelector("#app");
 
 export function navigate(view, options = {}) {
   stopQueuePolling();
+  stopNurseChatPolling();
   stopCasePolling();
   state.view = view;
   if (view === "access") renderAccess(app, { navigate, logout });

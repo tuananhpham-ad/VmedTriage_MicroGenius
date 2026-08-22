@@ -120,7 +120,7 @@ class GraphResolver:
             validate_provenance(graph, text)
             return graph
         if not self.allow_live_extraction:
-            raise ValueError("No exact patient-text match in the graph cache. Use a golden.csv patient text or pass --allow-live-extraction (this calls DeepSeek API).")
+            raise ValueError("No exact patient-text match in the graph cache. Use a golden.csv patient text or pass --allow-live-extraction (this calls the DeepSeek/Claude API).")
         from src.graph_triage.deepseek_extractor import DeepSeekExtractor
         graph = DeepSeekExtractor().extract(text)
         self.graph_by_text_hash[fingerprint] = graph

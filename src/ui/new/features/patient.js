@@ -1,6 +1,6 @@
 import { api, ApiError, apiStream } from "../api.js";
 import { accountMenu, bindAccountMenu } from "./account.js?v=design-20260819b";
-import { setActiveCase, state } from "../state.js";
+import { completedStatuses, setActiveCase, state } from "../state.js";
 import {
   appHeader,
   escapeHtml,
@@ -41,7 +41,7 @@ export function stopCasePolling() {
 /** Chỉ vẽ lại khi có thay đổi THẬT. Vẽ lại mỗi 10s vô điều kiện sẽ nháy màn hình và cuộn lại khung
  *  chat trong lúc người bệnh đang đọc. */
 function statusSignature(item) {
-  return [item?.status, item?.triage_proposal?.priority, item?.patient_visible_response, item?.red_flags?.length].join("|");
+  return [item?.status, item?.triage_proposal?.priority, item?.patient_visible_response, item?.red_flags?.length, item?.conversation?.length].join("|");
 }
 
 function startCasePolling(root, context, render) {
@@ -245,7 +245,9 @@ async function loadPatientHistory(root, { navigate, logout }) {
             state.currentPatientCase = await api(`/api/v1/cases/${button.dataset.historyCase}`);
             setActiveCase(state.currentPatientCase.case_id);
             state.patientMessages = initialMessages(state.currentPatientCase);
-            state.viewingPatientHistory = true;
+            // Ca ĐANG MỞ (kể cả đang chat trực tiếp với điều dưỡng, "needs_more_info") vẫn phải gõ
+            // được — chỉ khoá thành lịch sử chỉ-đọc khi ca đã thật sự kết thúc.
+            state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
             navigate("patient-chat");
           } catch (problem) { showToast(problem.message, true); }
         }),
@@ -289,7 +291,7 @@ function renderRecentCaseLink(root, item, { navigate }) {
       state.currentPatientCase = await api(`/api/v1/cases/${item.case_id}`);
       setActiveCase(state.currentPatientCase.case_id);
       state.patientMessages = initialMessages(state.currentPatientCase);
-      state.viewingPatientHistory = true;
+      state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
       navigate("patient-chat");
     } catch (problem) { showToast(problem.message, true); }
   });
@@ -299,7 +301,7 @@ function renderRecentCaseLink(root, item, { navigate }) {
 function openCurrentCaseHistory(navigate) {
   if (!state.currentPatientCase) return;
   state.patientMessages = initialMessages(state.currentPatientCase);
-  state.viewingPatientHistory = true;
+  state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
   navigate("patient-chat");
 }
 
@@ -335,6 +337,7 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
     state.currentPatientCase = null;
     state.patientMessages = [];
     state.summaryConfirmed = false;
+    state.patientForcedComplete = false;
     state.redFlagShownCaseId = null;
   }
   state.viewingPatientHistory = false;
@@ -361,13 +364,16 @@ export function renderPatientChat(root, { navigate, logout }) {
         <section class="chat-panel" aria-label="Hội thoại với trợ lý">
           <div class="capability-strip">${icon("info", 15)}<span>${AI_SCOPE_VI}</span></div>
           <div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div>
-          ${viewingHistory ? `<div class="chat-history-note">${icon("lock", 17)}<span>Đây là lịch sử trao đổi đã lưu của ca này. Bạn không thể gửi thêm tin nhắn tại đây.</span><button class="link-button" type="button" data-history-back>Quay lại lịch sử ca</button></div>` : `<div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div>
+          ${viewingHistory ? `<div class="chat-history-note">${icon("lock", 17)}<span>Đây là lịch sử trao đổi đã lưu của ca này. Bạn không thể gửi thêm tin nhắn tại đây.</span><button class="link-button" type="button" data-history-back>Quay lại lịch sử ca</button></div>`
+          : state.patientForcedComplete ? `<div class="chat-history-note">${icon("lock", 17)}<span>Bạn đã xác nhận khai báo xong triệu chứng. Thông tin đã được chuyển cho nhân viên y tế, bạn không thể gửi thêm tin nhắn tại đây.</span></div>`
+          : `<div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div>
           <form id="chat-form" class="chat-composer">
             <label class="sr-only" for="patient-message">Mô tả triệu chứng</label>
             <textarea id="patient-message" name="message" rows="1" maxlength="5000" placeholder="Mô tả triệu chứng của bạn..."${busy}></textarea>
             <button class="primary-button" type="submit"${busy}>${icon("send", 18)}<span>${state.patientBusy ? "Đang gửi…" : "Gửi"}</span></button>
             <p class="form-error" id="chat-error" role="alert"></p>
-          </form>`}
+          </form>
+          <button class="secondary-button btn-sm" type="button" id="declare-done-button"${busy}>${icon("check", 16)}<span>Tôi đã khai báo hết triệu chứng, không còn bất thường nào khác</span></button>`}
         </section>
 
         <aside class="chat-side">
@@ -399,10 +405,11 @@ export function renderPatientChat(root, { navigate, logout }) {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); }
   });
   root.querySelectorAll("[data-confirm]").forEach((button) => button.addEventListener("click", () => confirmSummary(root, { navigate, logout }, button.dataset.confirm === "yes")));
+  root.querySelector("#declare-done-button")?.addEventListener("click", () => declareDone(root, { navigate, logout }));
   root.querySelector("[data-goto-result]")?.addEventListener("click", () => navigate("patient-result"));
   // Không focus khi đang khoá: focus vào ô disabled là no-op ở mọi trình duyệt, nhưng vẫn kéo màn
   // hình về composer trên mobile giữa lúc người dùng đang đọc câu trả lời.
-  if (!state.patientBusy && !viewingHistory) root.querySelector("#patient-message").focus();
+  if (!state.patientBusy && !viewingHistory && !state.patientForcedComplete) root.querySelector("#patient-message")?.focus();
   scrollChat(root);
   if (!viewingHistory) startCasePolling(root, { navigate, logout }, renderPatientChat);
 }
@@ -535,6 +542,30 @@ async function confirmSummary(root, context, isCorrect) {
   }
 }
 
+// Bệnh nhân tự chốt "không còn gì để khai báo thêm" — có thể bấm bất cứ lúc nào, kể cả khi agent
+// chưa hỏi hết checklist. Đây là lối thoát chủ động của người dùng nên KHÔNG chờ agent xác nhận đủ
+// thông tin (`summary_ready`); dừng hội thoại ngay và chuyển ca cho nhân viên y tế với dữ liệu hiện
+// có — nhân viên y tế nhìn tag "Thiếu thông tin" trên phiếu tóm tắt để biết checklist chưa đầy đủ.
+async function declareDone(root, context) {
+  if (!window.confirm("Xác nhận bạn đã khai báo hết triệu chứng và không còn bất thường nào khác?")) return;
+  try {
+    // KHÔNG dùng `/api/v1/fever/sessions/{id}/confirm`: router đó là demo độc lập, không đụng tới
+    // case_store nên nurse queue không bao giờ thấy ca, và AI đề xuất/nguồn đối chiếu/trace
+    // Braintrust cũng không bao giờ sinh ra (xem docstring `force_complete_case` ở backend).
+    const data = await api(`/api/v1/cases/${state.caseId}/force-complete`, { method: "POST" });
+    state.currentPatientCase = await api(`/api/v1/cases/${data.case_id}`).catch(() => state.currentPatientCase);
+    state.summaryConfirmed = true;
+    state.patientForcedComplete = true;
+    state.patientMessages.push({
+      role: "system",
+      text: "Bạn đã xác nhận khai báo xong triệu chứng. Thông tin hiện tại đã được chuyển cho nhân viên y tế duyệt.",
+    });
+    renderPatientChat(root, context);
+  } catch (problem) {
+    showToast(problem.message || "Không gửi được xác nhận.", true);
+  }
+}
+
 /**
  * Chạy một lượt chat qua `/api/v1/chat/stream` và vẽ câu trả lời dần ra màn hình.
  *
@@ -652,7 +683,10 @@ export function renderRedFlag(root, { navigate }) {
       </div>
     </div>
   </section>`;
-  root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-result"));
+  // Quay lại đoạn chat đang dở thay vì màn kết quả riêng: đoạn hội thoại vẫn còn ý nghĩa (điều dưỡng
+  // có thể chat trực tiếp tiếp theo), và trạng thái "đang chờ/đã chuyển cấp cứu" đã có sẵn ở cột phải
+  // (`caseStatusCard` → `suspectedRedFlagCard`) nên không cần một màn hình riêng chỉ để chờ.
+  root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-chat"));
 }
 
 /** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải. */

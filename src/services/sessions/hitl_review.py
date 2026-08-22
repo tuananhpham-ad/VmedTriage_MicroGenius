@@ -280,7 +280,7 @@ class HumanReviewService:
         if not request.ask_more_question:
             raise ValueError("ask_more_question is required when asking for more information.")
 
-        triage_case.status = CaseStatus.COLLECTING_INFORMATION
+        triage_case.status = CaseStatus.NEEDS_MORE_INFO
         triage_case.patient_visible_response = request.ask_more_question
         triage_case.conversation.append(
             ConversationMessage(role=ActorRole.NURSE, content=request.ask_more_question)

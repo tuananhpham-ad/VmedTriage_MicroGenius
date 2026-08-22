@@ -32,7 +32,10 @@ export const pendingStatuses = new Set([
   "needs_more_info",
 ]);
 
-export const completedStatuses = new Set(["approved", "rejected", "escalated", "withdrawn"]);
+// "escalated" KHÔNG nằm ở đây: đó là trạng thái hệ thống tự gán ngay khi phát hiện red-flag (bệnh
+// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt — xem
+// `needsNurseAttention` trong nurse.js, nơi "escalated" được coi là CẦN xử lý, không phải đã xong.
+export const completedStatuses = new Set(["approved", "rejected", "withdrawn"]);
 
 function readStoredUser() {
   try {

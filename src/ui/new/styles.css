@@ -538,6 +538,8 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .record-head b { color:var(--muted-2); font-size:13px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; }
 .record-head span { color:var(--faint); font-size:12.5px; font-variant-numeric:tabular-nums; }
 .record-body { padding:6px 20px 18px; }
+.card-toggle { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; transition:transform .15s ease; }
+.card-toggle[aria-expanded="false"] { transform:rotate(-90deg); }
 /* Phiếu tóm tắt của điều dưỡng cuộn TRONG thẻ: một protocol có tới ~39 field nên thẻ này đẩy khối
    quyết định xử trí và phiếu ISBAR xuống quá xa. Cuộn cục bộ giữ chúng trong tầm mắt.
    `overscroll-behavior` để cuộn hết danh sách không kéo luôn cả trang. */
@@ -615,6 +617,11 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .advisory-summary { margin:0 0 8px; color:var(--muted-2); font-size:14px; line-height:1.55; }
 .advisory-review { margin:0 0 8px; color:var(--red-deep); font-size:13px; font-weight:600; }
 .advisory-disclaimer { margin:0; color:var(--faint); font-size:12px; font-style:italic; }
+.citation-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.citation-list li { font-size:13px; line-height:1.5; }
+.citation-list .marker { font-weight:600; color:var(--muted-2); }
+.citation-list a { color:var(--accent, #2563eb); word-break:break-all; }
+.citation-list blockquote { margin:4px 0 0; padding-left:10px; border-left:2px solid var(--line); color:var(--muted); font-style:italic; font-size:12.5px; }
 
 /* ── W-00 trang chủ bệnh nhân ──────────────────────────────────────────────────────────────── */
 .home-stack { display:flex; flex-direction:column; gap:20px; }

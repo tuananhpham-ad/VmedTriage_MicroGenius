@@ -62,6 +62,8 @@ make eval         # python eval/scripts/run_eval.py
 | `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` | Gửi email xác thực / reset mật khẩu; để trống `SMTP_HOST` khi dev sẽ ghi nội dung email ra log server | — |
 | `GRAPH_TRIAGE_MODE` | `off` (mặc định), `c6` (GPT direct OR Fusion OR documented-rule emergency; sau đó chạy Part 3 nếu bật) hoặc `ensemble` (LogReg + PhoBERT + Fusion + LLM để second opinion) | — |
 | `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
+| `BRAINTRUST_API_KEY` | Key cho tracing/eval qua Braintrust (`eval/`) — dùng để log span trace của Track 1 (`TriagePipeline`) và Track 2 (`graph_triage`/`source_support`). Hoàn toàn tuỳ chọn: để trống thì tracing tự tắt thành no-op, app/script KHÔNG crash | — |
+| `BRAINTRUST_PROJECT` | Tên project Braintrust để log trace (mặc định `vmedtriage-eval`) | — |
 
 ## API & luồng chính
 

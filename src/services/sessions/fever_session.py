@@ -55,5 +55,5 @@ def submit_message(session_id: str, message: str) -> FeverSession:
     return session_store.submit_message(session_id, message)
 
 
-def confirm_summary(session_id: str, is_correct: bool) -> FeverSession:
-    return session_store.confirm_summary(session_id, is_correct)
+def confirm_summary(session_id: str, is_correct: bool, force: bool = False) -> FeverSession:
+    return session_store.confirm_summary(session_id, is_correct, force=force)

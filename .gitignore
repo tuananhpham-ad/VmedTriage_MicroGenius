@@ -80,4 +80,5 @@ eval/scripts/*
 /eval_result.txt
 /eval_result_probabilities.txt
 /result_model
-
+docs/eval/
+tests/eval/
