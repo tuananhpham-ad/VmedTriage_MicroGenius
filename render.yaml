@@ -8,7 +8,7 @@ databases:
 services:
   - type: web
     name: vmedtriage
-    runtim    runtime: python
+    runtime: python
     # Graph triage agent tải PhoBERT (~500MB) + fusion (~500MB) vào RAM cùng lúc, cộng thêm torch.
     # Plan free (512MB) không đủ - cần ít nhất "standard" (2GB). Đổi lại trong dashboard nếu Render
     # chưa hỗ trợ giá trị này trong render.yaml ở vùng/tài khoản của bạn.
