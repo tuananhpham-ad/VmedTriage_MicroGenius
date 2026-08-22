@@ -130,9 +130,9 @@ def _build_case(scenario: dict) -> TriageCase:
 
 def seed() -> None:
     settings = get_settings()
-    if not settings.enable_graph_triage_agent:
-        print("!! ENABLE_GRAPH_TRIAGE_AGENT đang tắt -> bật tạm cho lần chạy này.")
-        settings.enable_graph_triage_agent = True
+    if settings.graph_triage_mode != "ensemble":
+        print("!! GRAPH_TRIAGE_MODE không phải ensemble -> chuyển tạm sang ensemble cho demo.")
+        settings.graph_triage_mode = "ensemble"
 
     for scenario in SCENARIOS:
         triage_case = _build_case(scenario)
@@ -163,9 +163,9 @@ def main() -> None:
     if debug:
         print(">> chế độ --debug: in cả xác suất từng model, evidence graph và phiếu tóm tắt gửi đi\n")
     settings = get_settings()
-    if not settings.enable_graph_triage_agent:
-        print("!! ENABLE_GRAPH_TRIAGE_AGENT đang tắt -> bật cho tiến trình này.")
-        settings.enable_graph_triage_agent = True
+    if settings.graph_triage_mode != "ensemble":
+        print("!! GRAPH_TRIAGE_MODE không phải ensemble -> chuyển tạm sang ensemble cho demo.")
+        settings.graph_triage_mode = "ensemble"
     if no_seed:
         print(">> --no-seed: không dựng ca demo, tự chat trên giao diện.")
     else:

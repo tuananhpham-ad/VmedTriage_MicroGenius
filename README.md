@@ -60,7 +60,7 @@ make eval         # python eval/scripts/run_eval.py
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | API key cho provider tương ứng (chỉ cần key của provider đang dùng) | tuỳ provider |
 | `WEAVIATE_URL` / `WEAVIATE_API_KEY` | Lưu trữ case dạng vector (best-effort, pipeline vẫn chạy nếu để trống) | — |
 | `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` | Gửi email xác thực / reset mật khẩu; để trống `SMTP_HOST` khi dev sẽ ghi nội dung email ra log server | — |
-| `ENABLE_GRAPH_TRIAGE_AGENT` | Bật module `src/graph_triage/` (second opinion, không bao giờ ghi đè `TriageProposal.priority`) — mặc định `false` | — |
+| `GRAPH_TRIAGE_MODE` | `off` (mặc định), `c6` (GPT direct OR Fusion OR documented-rule emergency; sau đó chạy Part 3 nếu bật) hoặc `ensemble` (LogReg + PhoBERT + Fusion + LLM để second opinion) | — |
 | `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
 
 ## API & luồng chính

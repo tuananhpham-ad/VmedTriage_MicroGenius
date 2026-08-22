@@ -1,8 +1,14 @@
 import json
+from unittest.mock import Mock
 
 import pytest
 
+from src.api import routes
+from src.config import get_settings
+from src.models.schemas import CaseStatus, TriageCase, TriagePriority, TriageProposal
 from src.services.infra import provider_router
+from src.services.stores.approval_store import approval_store
+from src.services.stores.case_store import case_store
 
 
 class _EchoExtractor:
@@ -62,6 +68,90 @@ async def test_chat_empty_message(client, patient_headers):
 async def test_agent_status(client):
     response = await client.get("/api/v1/status")
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_documented_emergency_does_not_call_advisory_graph_model(monkeypatch):
+    """With C6 disabled, escalated cases retain the prior no-graph behavior."""
+    graph_decide = Mock()
+    monkeypatch.setattr(routes.graph_triage_service, "decide_for_case", graph_decide)
+    monkeypatch.setattr(get_settings(), "graph_triage_mode", "ensemble")
+
+    case = TriageCase(status=CaseStatus.ESCALATED, summary_ready=True)
+    await routes._attach_graph_decision(case, previous=None)
+
+    graph_decide.assert_not_called()
+    assert case.graph_decision is None
+
+
+@pytest.mark.asyncio
+async def test_safety_gate_allows_c6_for_escalated_case(monkeypatch):
+    graph_decide = Mock(return_value={"triage_label": "cap_cuu", "safety_gate": {}})
+    monkeypatch.setattr(routes.graph_triage_service, "decide_for_case", graph_decide)
+    monkeypatch.setattr(get_settings(), "graph_triage_mode", "c6")
+
+    case = TriageCase(status=CaseStatus.ESCALATED, summary_ready=True)
+    await routes._attach_graph_decision(case, previous=None)
+
+    graph_decide.assert_called_once_with(case)
+    assert case.graph_decision == {"triage_label": "cap_cuu", "safety_gate": {}}
+
+
+def test_c6_priority_mapping_only_raises():
+    case = TriageCase(
+        triage_proposal=TriageProposal(priority=TriagePriority.SELF_CARE, reason="rule baseline"),
+    )
+
+    assert routes._raise_priority_from_c6(case, {"triage_label": "cap_cuu"}) == (
+        TriagePriority.SELF_CARE,
+        TriagePriority.EMERGENCY,
+    )
+    assert case.triage_proposal.priority is TriagePriority.EMERGENCY
+    assert routes._raise_priority_from_c6(case, {"triage_label": "theo_doi_tai_nha"}) is None
+    assert case.triage_proposal.priority is TriagePriority.EMERGENCY
+
+
+@pytest.mark.asyncio
+async def test_safety_gate_does_not_change_approved_case(client):
+    case = TriageCase(
+        case_id="c6-approved-case",
+        status=CaseStatus.APPROVED,
+        triage_proposal=TriageProposal(priority=TriagePriority.SELF_CARE, reason="nurse decision"),
+    )
+    case_store.save(case)
+
+    routes._persist_safety_gate_result(
+        case.case_id,
+        {"triage_label": "cap_cuu", "safety_gate": {}, "escalated_by": ["direct"]},
+    )
+
+    restored = case_store.get(case.case_id)
+    assert restored is not None
+    assert restored.graph_decision is None
+    assert restored.triage_proposal.priority is TriagePriority.SELF_CARE
+    assert approval_store.audit_for_case(case.case_id)[-1].action == "completed_after_approval"
+
+
+@pytest.mark.asyncio
+async def test_safety_gate_persists_and_raises_pending_case(client):
+    case = TriageCase(
+        case_id="c6-pending-case",
+        status=CaseStatus.ESCALATED,
+        triage_proposal=TriageProposal(priority=TriagePriority.SELF_CARE, reason="rule baseline"),
+    )
+    case_store.save(case)
+    decision = {"triage_label": "cap_cuu", "safety_gate": {}, "escalated_by": ["documented_rule"]}
+
+    routes._persist_safety_gate_result(case.case_id, decision)
+
+    restored = case_store.get(case.case_id)
+    assert restored is not None
+    assert restored.graph_decision == decision
+    assert restored.triage_proposal.priority is TriagePriority.EMERGENCY
+    audit = approval_store.audit_for_case(case.case_id)
+    assert audit[-1].action == "raise_priority_from_c6"
+    assert audit[-1].old_value == TriagePriority.SELF_CARE.value
+    assert audit[-1].new_value == TriagePriority.EMERGENCY.value
 
 
 @pytest.mark.asyncio

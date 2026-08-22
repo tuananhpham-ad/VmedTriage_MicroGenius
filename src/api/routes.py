@@ -36,7 +36,7 @@ from src.models.schemas import (
     TriageCase,
     TriagePriority,
 )
-from src.services.engines.priority_labels import PRIORITY_RANK
+from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY, PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
 from src.services.infra.auth import (
     EmailNotVerifiedError,
@@ -47,6 +47,7 @@ from src.services.infra.auth import (
 )
 from src.services.sessions import red_flag_sla, summary_render, symptom_case_bridge, symptom_session
 from src.services.sessions.hitl_review import human_review_service
+from src.services.stores.approval_store import AuditLogEntry, approval_store
 from src.services.stores.case_store import case_store
 from src.services.symptom_protocol import registry
 from src.services.symptom_protocol.session import EmptyMessageError, SessionNotFoundError
@@ -56,7 +57,7 @@ from src.tool.registry import tool_registry
 logger = logging.getLogger("vmedtriage.api")
 
 router = APIRouter()
-
+_safety_gate_tasks: set[asyncio.Task[None]] = set()
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(request: RegisterRequest, db: Session = Depends(get_db_session)) -> UserResponse:
@@ -232,8 +233,25 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
 
 async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
-    await _attach_graph_decision(triage_case, previous)
-    case_store.save(triage_case)
+    if _should_background_safety_gate(triage_case, previous):
+        # Rule-engine priority is saved before scheduling network-dependent C6 work. The patient
+        # gets the fixed red-flag response and the nurse queue sees the case immediately.
+        case_store.save(triage_case)
+        _schedule_safety_gate(triage_case.case_id)
+    else:
+        await _attach_graph_decision(triage_case, previous)
+        changed = (
+            _raise_priority_from_c6(triage_case, triage_case.graph_decision)
+            if (
+                get_settings().graph_triage_mode == "c6"
+                and triage_case.graph_decision is not None
+                and "safety_gate" in triage_case.graph_decision
+            )
+            else None
+        )
+        case_store.save(triage_case)
+        if changed is not None:
+            _log_priority_raise(triage_case.case_id, triage_case.graph_decision, changed)
     return _patient_chat_response(triage_case)
 
 
@@ -312,7 +330,7 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
 
 
 async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:
-    """Gắn ý kiến tham khảo thứ hai từ `src/graph_triage/` khi phiếu vừa chốt.
+    """Gắn C6/ý kiến graph từ `src/graph_triage/` khi phiếu vừa chốt.
 
     `to_triage_case` là hàm THUẦN, dựng lại `TriageCase` từ đầu mỗi lượt và không biết gì về trường
     này - nên phải mang kết quả cũ sang bằng tay, nếu không nó biến mất ngay lượt chat kế tiếp.
@@ -321,15 +339,137 @@ async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase |
     lời gọi LLM quyết định. Thất bại (`None`) thì lượt sau thử lại - lỗi mạng thoáng qua đáng được
     thử lại, còn lỗi cố định (thiếu thư viện/artifact/API key) đã bị `service._get_agent` nhớ lại nên
     không dựng model lần hai.
+
+    Khi safety gate tắt, case `ESCALATED` giữ nguyên hành vi cũ là không gọi graph. Khi gate bật,
+    `_finish_chat_turn` chạy C6 nền cho case này để rule-engine priority không chờ API ngoài.
     """
     if previous is not None and previous.graph_decision is not None:
-        triage_case.graph_decision = previous.graph_decision
+        has_c6_result = "safety_gate" in previous.graph_decision
+        if (get_settings().graph_triage_mode == "c6") == has_c6_result:
+            triage_case.graph_decision = previous.graph_decision
+            return
+    if (
+        triage_case.status is CaseStatus.ESCALATED
+        and get_settings().graph_triage_mode != "c6"
+    ):
         return
     if not triage_case.summary_ready:
         return
     # `decide_for_case` không bao giờ raise (best-effort), nhưng nó đồng bộ và nặng - đẩy sang
     # threadpool để không chặn event loop của các request khác.
     triage_case.graph_decision = await run_in_threadpool(graph_triage_service.decide_for_case, triage_case)
+
+
+def _should_background_safety_gate(triage_case: TriageCase, previous: TriageCase | None) -> bool:
+    """Return whether an escalated case needs new C6 work after its response is sent."""
+    return bool(
+        get_settings().graph_triage_mode == "c6"
+        and triage_case.status is CaseStatus.ESCALATED
+        and triage_case.summary_ready
+        and (
+            previous is None
+            or previous.graph_decision is None
+            or "safety_gate" not in previous.graph_decision
+        )
+    )
+
+
+def _schedule_safety_gate(case_id: str) -> None:
+    """Keep the background task strongly referenced and log an unexpected task-level failure."""
+    task = asyncio.create_task(_complete_safety_gate(case_id))
+    _safety_gate_tasks.add(task)
+    task.add_done_callback(_finish_safety_gate_task)
+
+
+def _finish_safety_gate_task(task: asyncio.Task[None]) -> None:
+    """Consume task exceptions; otherwise asyncio only reports them after the request is gone."""
+    _safety_gate_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("graph_triage.safety_gate_task_failed")
+
+
+async def _complete_safety_gate(case_id: str) -> None:
+    """Run C6 off the request path, then merge its result into the newest saved case."""
+    triage_case = await run_in_threadpool(case_store.get, case_id)
+    if triage_case is None:
+        logger.warning("graph_triage.safety_gate_case_missing case_id=%s", case_id)
+        return
+    decision = await run_in_threadpool(graph_triage_service.decide_for_case, triage_case)
+    if decision is not None:
+        await run_in_threadpool(_persist_safety_gate_result, case_id, decision)
+
+
+def _persist_safety_gate_result(case_id: str, decision: dict) -> None:
+    """Persist C6 result and raise queue priority only while a nurse has not approved it."""
+    changed: tuple[TriagePriority, TriagePriority] | None = None
+
+    def apply(triage_case: TriageCase) -> None:
+        nonlocal changed
+        triage_case.graph_decision = decision
+        changed = _raise_priority_from_c6(triage_case, decision)
+
+    updated_case = case_store.update_if_unapproved(case_id, apply)
+    if updated_case is None:
+        latest = case_store.get(case_id)
+        if latest is None:
+            logger.warning("graph_triage.safety_gate_case_missing case_id=%s", case_id)
+            return
+        logger.warning("graph_triage.safety_gate_after_approval case_id=%s", case_id)
+        approval_store.log(
+            AuditLogEntry(
+                case_id=case_id,
+                actor="graph_triage_safety_gate",
+                action="completed_after_approval",
+                reason="C6 result intentionally did not alter an approved case.",
+            )
+        )
+        return
+    if changed is not None:
+        _log_priority_raise(case_id, decision, changed)
+
+
+def _log_priority_raise(
+    case_id: str,
+    decision: dict,
+    changed: tuple[TriagePriority, TriagePriority],
+) -> None:
+    """Write the same structured audit entry for foreground and background C6 promotions."""
+    previous, raised = changed
+    sources = ",".join(decision.get("escalated_by", [])) or "c6_final_label"
+    logger.info(
+        "graph_triage.safety_gate_priority_raised case_id=%s from=%s to=%s sources=%s",
+        case_id,
+        previous.value,
+        raised.value,
+        sources,
+    )
+    approval_store.log(
+        AuditLogEntry(
+            case_id=case_id,
+            actor="graph_triage_safety_gate",
+            action="raise_priority_from_c6",
+            old_value=previous.value,
+            new_value=raised.value,
+            reason=f"C6 sources: {sources}",
+        )
+    )
+
+
+def _raise_priority_from_c6(
+    triage_case: TriageCase, decision: dict,
+) -> tuple[TriagePriority, TriagePriority] | None:
+    """Raise a proposal from the C6 label; equal and lower labels leave it untouched."""
+    proposal = triage_case.triage_proposal
+    target = C6_TRIAGE_LABEL_TO_PRIORITY.get(decision.get("triage_label"))
+    if proposal is None or target is None or PRIORITY_RANK[target] >= PRIORITY_RANK[proposal.priority]:
+        return None
+    previous = proposal.priority
+    proposal.priority = target
+    return previous, target
 
 
 @router.get("/status")
@@ -493,8 +633,11 @@ def _patient_chat_response(triage_case: TriageCase) -> ChatResponse:
 
 
 def _patient_case_view(triage_case: TriageCase) -> TriageCase:
-    """Redact internal rule output until a nurse has made a final decision."""
+    """Redact internal rule/model output from every patient-facing case view."""
     patient_case = triage_case.model_copy(deep=True)
+    # `graph_decision` now includes C6 branch/audit information when the safety gate is enabled.
+    # It belongs to the nurse queue, not to a patient response — including the ESCALATED state.
+    patient_case.graph_decision = None
     if patient_case.status not in _FINAL_PATIENT_STATUSES:
         patient_case.red_flags = []
         patient_case.triage_proposal = None

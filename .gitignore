@@ -71,3 +71,13 @@ _guidance/*
 /runs/
 .eval_run/
 eval/
+!eval/
+eval/*
+!eval/scripts/
+eval/scripts/*
+!eval/scripts/run_graph_triage_eval.py
+!eval/scripts/run_graph_triage_infer.py
+/eval_result.txt
+/eval_result_probabilities.txt
+/result_model
+

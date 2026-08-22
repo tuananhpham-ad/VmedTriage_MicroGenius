@@ -17,8 +17,10 @@ BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
 3. BEST-EFFORT. DeepSeek hoặc OpenAI lỗi thì case vẫn phải vào hàng đợi điều dưỡng như thường. Theo
    đúng cách `TriagePipeline._persist_to_weaviate` xử lý Weaviate: bắt hết, log, đi tiếp.
 
-4. KHÔNG QUYẾT ĐỊNH. Trả về dict để lưu vào `TriageCase.graph_decision`. Người gọi TUYỆT ĐỐI không
-   được gán giá trị này vào `TriageProposal.priority` hay `RedFlagFinding`.
+4. MODE TƯỜNG MINH. `graph_triage_mode="ensemble"` chạy ba model cũ để điều dưỡng tham khảo;
+   `"c6"` dùng đúng combiner đã benchmark: GPT direct OR Fusion OR documented-rule emergency.
+   C6 có thể nâng (không bao giờ hạ) priority sau khi case đã vào hàng đợi. Rule engine của symptom
+   protocol vẫn tạo priority tức thời và HITL vẫn bắt buộc.
 """
 
 from __future__ import annotations
@@ -32,6 +34,11 @@ from src.config import get_settings
 from src.graph_triage.summary_text import build_summary_text
 from src.models.schemas import TriageCase
 from src.paths import RUNS_DIR
+from src.services.engines.priority_labels import (
+    C6_TRIAGE_LABEL_TO_PRIORITY,
+    PRIORITY_RANK,
+    c6_label_for_priority,
+)
 from src.source_support import pipeline as source_support
 from src.source_support.schemas import SourceSupport
 
@@ -40,6 +47,19 @@ logger = logging.getLogger("vmedtriage.graph_triage")
 _lock = threading.Lock()
 _agent: Any | None = None
 _unavailable_reason: str | None = None
+
+# C6 deliberately does not construct `DecisionAgent`/`ToolCallingDecisionAgent`: it needs only
+# the trained Fusion branch (plus the two independent safety branches below). Keep its singleton
+# separate so selecting C6 cannot instantiate LogReg, standalone PhoBERT or the Part-2 aggregate LLM.
+_c6_fusion_lock = threading.Lock()
+_c6_fusion_gate: Any | None = None
+_c6_fusion_unavailable_reason: str | None = None
+
+_C6_DECISION_SUMMARY = (
+    "C6 đã đánh giá an toàn từ phiếu tóm tắt. Kết quả chỉ có thể nâng mức ưu tiên; "
+    "điều dưỡng vẫn phải duyệt quyết định cuối."
+)
+_C6_DISCLAIMER = "Đánh giá an toàn hỗ trợ, không thay thế đánh giá của nhân viên y tế."
 
 
 def _artifact_root() -> Path:
@@ -100,17 +120,254 @@ def _get_agent() -> Any | None:
     return _agent
 
 
+class _C6FusionGate:
+    """The Fusion-only C6 branch: summary text -> live/cached graph -> Fusion label."""
+
+    def __init__(self, *, graph_resolver: Any, fusion: Any, labels: tuple[str, ...]):
+        self._graph_resolver = graph_resolver
+        self._fusion = fusion
+        self._labels = labels
+
+    def predict_label(self, summary_text: str) -> str:
+        graph = self._graph_resolver.resolve(summary_text)
+        probabilities, _mean_gate = self._fusion.predict(summary_text, graph)
+        label = self._labels[int(probabilities.argmax())]
+        if label not in C6_TRIAGE_LABEL_TO_PRIORITY:
+            raise ValueError(f"Fusion returned an unknown triage label: {label!r}")
+        return label
+
+
+def _build_c6_fusion_gate() -> _C6FusionGate:
+    """Build only the Fusion artifact required by the evaluated C6 combiner.
+
+    Imports remain lazy because this branch requires graph inference dependencies. Fusion itself
+    contains its own text encoder; that is distinct from loading the standalone PhoBERT classifier
+    used by the legacy `ensemble` mode.
+    """
+    import torch
+
+    from src.graph_triage.agent.decision import FusionPredictor, GraphResolver
+    from src.graph_triage.labels import TRIAGE_LABELS
+
+    root = _artifact_root()
+    fusion_dir = root / "fusion_full"
+    if not fusion_dir.is_dir():
+        raise FileNotFoundError(
+            f"Fusion artifact was not found at {fusion_dir}. "
+            "C6 requires runs/fusion_full/ (model.pt and text_encoder/)."
+        )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    gate = _C6FusionGate(
+        graph_resolver=GraphResolver(None, allow_live_extraction=True),
+        fusion=FusionPredictor(fusion_dir, device),
+        labels=tuple(TRIAGE_LABELS),
+    )
+    logger.info("graph_triage.c6_fusion_ready device=%s root=%s", device.type, root)
+    return gate
+
+
+def _get_c6_fusion_gate() -> _C6FusionGate | None:
+    """Get the Fusion-only singleton; cache an unavailable dependency/artifact once per process."""
+    global _c6_fusion_gate, _c6_fusion_unavailable_reason
+    if _c6_fusion_gate is not None or _c6_fusion_unavailable_reason is not None:
+        return _c6_fusion_gate
+    with _c6_fusion_lock:
+        if _c6_fusion_gate is None and _c6_fusion_unavailable_reason is None:
+            try:
+                _c6_fusion_gate = _build_c6_fusion_gate()
+            except Exception as error:
+                _c6_fusion_unavailable_reason = f"{type(error).__name__}: {error}"
+                logger.warning("graph_triage.c6_fusion_unavailable reason=%s", _c6_fusion_unavailable_reason)
+    return _c6_fusion_gate
+
+
+def _fusion_label_for(summary_text: str) -> str:
+    """Run the independent Fusion branch of C6 or expose its stable unavailable reason."""
+    gate = _get_c6_fusion_gate()
+    if gate is None:
+        raise RuntimeError(_c6_fusion_unavailable_reason or "C6 Fusion is unavailable")
+    return gate.predict_label(summary_text)
+
+
+def _direct_decision_for(summary_text: str) -> dict[str, Any]:
+    """Run the independent direct C6 branch; imports stay lazy for the normal web startup."""
+    from src.graph_triage.agent.direct_decision import decide_direct
+
+    return decide_direct(summary_text, get_settings().graph_triage_safety_model)
+
+
+def _documented_rule_for(summary_text: str) -> dict[str, Any]:
+    """Run the evidence-grounded documented rule branch of C6."""
+    from src.graph_triage.agent.rule_gate import extract_and_evaluate
+    from src.services.infra.provider_router import LLMCredential
+
+    settings = get_settings()
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+    return extract_and_evaluate(
+        summary_text,
+        LLMCredential(
+            provider="openai",
+            api_key=settings.openai_api_key,
+            model=settings.graph_triage_safety_model,
+        ),
+    )
+
+
+def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[str, Any]:
+    """Apply the non-lowering C6 emergency combiner and retain a compact audit trail."""
+    updated = dict(decision)
+    escalated_by: list[str] = []
+    audit: dict[str, Any] = {}
+    direct_decision: dict[str, Any] | None = None
+
+    try:
+        direct_decision = _direct_decision_for(summary_text)
+        audit["direct"] = {"available": True, "triage_label": direct_decision["triage_label"]}
+        if direct_decision["triage_label"] == "cap_cuu":
+            escalated_by.append("direct")
+    except Exception as error:
+        logger.debug("graph_triage.c6_direct_unavailable error=%s: %s", type(error).__name__, error)
+        audit["direct"] = {"available": False, "error": type(error).__name__}
+
+    # This is the second arm of the C6 benchmark formula. Fusion only votes for emergency;
+    # non-emergency Fusion output must not replace the GPT-direct label.
+    try:
+        fusion_label = _fusion_label_for(summary_text)
+        audit["fusion"] = {"available": True, "triage_label": fusion_label}
+        if fusion_label == "cap_cuu":
+            escalated_by.append("fusion")
+    except Exception as error:
+        logger.debug("graph_triage.c6_fusion_unavailable error=%s: %s", type(error).__name__, error)
+        audit["fusion"] = {"available": False, "error": type(error).__name__}
+
+    try:
+        documented_rule = _documented_rule_for(summary_text)
+        audit["documented_rule"] = {
+            "available": bool(documented_rule.get("available")),
+            "emergency": bool(documented_rule.get("emergency")),
+            "protocol": documented_rule.get("protocol"),
+            "triggered_rules": documented_rule.get("triggered_rules", []),
+            "reason_codes": documented_rule.get("reason_codes", []),
+        }
+        if documented_rule.get("emergency"):
+            escalated_by.append("documented_rule")
+    except Exception as error:
+        logger.debug("graph_triage.c6_rule_unavailable error=%s: %s", type(error).__name__, error)
+        audit["documented_rule"] = {"available": False, "error": type(error).__name__}
+
+    if escalated_by and updated["triage_label"] != "cap_cuu":
+        updated["triage_label"] = "cap_cuu"
+        updated["requires_human_review"] = True
+        updated["escalated_by"] = escalated_by
+        logger.info("graph_triage.c6_raised sources=%s", "/".join(escalated_by))
+    if direct_decision is not None:
+        # Part 3 needs an explicit, input-grounded rationale.  The direct branch supplies it without
+        # loading the legacy graph/three-model ensemble; its spans were checked in `decide_direct`.
+        updated["decision_summary"] = direct_decision["decision_summary"]
+        updated["evidence"] = direct_decision["evidence"]
+    updated["safety_gate"] = audit
+    return updated
+
+
+def _c6_only_decision(triage_case: TriageCase, summary_text: str) -> dict[str, Any] | None:
+    """Run the evaluated C6 combiner without constructing the legacy aggregate agent.
+
+    A documented non-emergency result alone never supplies a triage label.  It is useful only as
+    corroborating audit information; a GPT-direct label or emergency from any C6 arm is required
+    before a result can affect the nurse queue.
+    """
+    decision = _apply_c6_safety_gate(
+        {
+            "triage_label": "theo_doi_tai_nha",
+            "decision_summary": _C6_DECISION_SUMMARY,
+            "requires_human_review": True,
+            "disclaimer": _C6_DISCLAIMER,
+        },
+        summary_text,
+    )
+    direct = decision["safety_gate"]["direct"]
+    if decision["triage_label"] != "cap_cuu":
+        if not direct.get("available"):
+            return None
+        decision["triage_label"] = direct["triage_label"]
+    decision["triage_label"] = _effective_c6_label(triage_case, decision["triage_label"])
+    return decision
+
+
+def _effective_c6_label(triage_case: TriageCase, c6_label: str) -> str:
+    """Return the non-lowered final label that Part 3 and the nurse UI must see.
+
+    The C6 label is advisory until compared with the priority synchronously set by the deterministic
+    rule engine.  If C6 is lower, preserve the rule-engine label before source support runs, rather
+    than citing an urgency that is no longer the one in the nurse queue.
+    """
+    proposal = triage_case.triage_proposal
+    c6_priority = C6_TRIAGE_LABEL_TO_PRIORITY.get(c6_label)
+    if proposal is None or c6_priority is None:
+        return c6_label
+    if PRIORITY_RANK[c6_priority] < PRIORITY_RANK[proposal.priority]:
+        return c6_label
+    return c6_label_for_priority(proposal.priority) or c6_label
+
+
+def _compact_payload(
+    decision: dict[str, Any],
+    *,
+    model: str,
+    support: SourceSupport | None = None,
+) -> dict:
+    """Keep the nurse-facing graph decision intentionally small."""
+    payload = {
+        "triage_label": decision["triage_label"],
+        "decision_summary": decision["decision_summary"],
+        "requires_human_review": source_support.merge_human_review(
+            decision["requires_human_review"], support,
+        ),
+        "disclaimer": decision["disclaimer"],
+        "model": model,
+    }
+    if "escalated_by" in decision:
+        payload["escalated_by"] = decision["escalated_by"]
+    if "safety_gate" in decision:
+        payload["safety_gate"] = decision["safety_gate"]
+    if support is not None:
+        payload["source_support"] = {
+            "explanation_vi": support.explanation_vi,
+            "explanation_citations": [c.model_dump(mode="json") for c in support.explanation_citations],
+            "summary": support.summary.model_dump(mode="json"),
+            "method": support.method.model_dump(mode="json"),
+        }
+    return payload
+
+
 def decide_for_case(triage_case: TriageCase) -> dict | None:
     """Chạy agent quyết định cho một case đã chốt phiếu. `None` = không có gì để lưu.
 
     Không bao giờ raise: người gọi nằm trên đường phản hồi của bệnh nhân.
     """
-    if not get_settings().enable_graph_triage_agent:
+    settings = get_settings()
+    if settings.graph_triage_mode == "off":
         return None
     summary_text = build_summary_text(triage_case)
     if not summary_text:
         logger.info("graph_triage.skipped case_id=%s reason=empty_summary", triage_case.case_id)
         return None
+    if settings.graph_triage_mode == "c6":
+        decision = _c6_only_decision(triage_case, summary_text)
+        if decision is None:
+            return None
+        logger.info(
+            "graph_triage.c6_decided case_id=%s label=%s sources=%s",
+            triage_case.case_id,
+            decision["triage_label"],
+            ",".join(decision.get("escalated_by", [])) or "direct_label",
+        )
+        support = _source_support_for(triage_case, decision)
+        return _compact_payload(decision, model=settings.graph_triage_safety_model, support=support)
+
+    # `ensemble` is the only remaining enabled mode here.  It intentionally keeps the existing
+    # heavy three-model behaviour for research/second-opinion comparisons.
     agent = _get_agent()
     if agent is None:
         return None
@@ -121,7 +378,7 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
             "graph_triage.failed case_id=%s error=%s: %s", triage_case.case_id, type(error).__name__, error
         )
         return None
-    decision = result["llm_decision"]
+    decision = dict(result["llm_decision"])
     analysis = result["model_analysis"]
     logger.info(
         "graph_triage.decided case_id=%s label=%s human_review=%s model=%s models=%s disagreement=%s",
@@ -152,26 +409,7 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
 
     # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
     # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
-    payload = {
-        "triage_label": decision["triage_label"],
-        "decision_summary": decision["decision_summary"],
-        # Cờ GỘP: part 3 chỉ được BẬT THÊM, không bao giờ hạ cờ mà agent quyết định đã dựng lên.
-        "requires_human_review": source_support.merge_human_review(decision["requires_human_review"], support),
-        "disclaimer": decision["disclaimer"],
-        "model": result["tool_audit"]["model"],
-    }
-    if support is not None:
-        # CHỈ phần hiển thị, đúng tinh thần mục A5 ("chỉ giữ kết luận cuối"). `claims[]` mang
-        # `grounded_in` và toàn bộ đường truy vết retrieval - hữu ích để audit nhưng cùng loại với
-        # evidence graph, vốn đã có quyết định là không đưa ra UI. Nó đã nằm trong log ở mức INFO.
-        # `cost` cũng vậy: đó là số liệu vận hành, không phải nội dung điều dưỡng cần đọc.
-        payload["source_support"] = {
-            "explanation_vi": support.explanation_vi,
-            "explanation_citations": [c.model_dump(mode="json") for c in support.explanation_citations],
-            "summary": support.summary.model_dump(mode="json"),
-            "method": support.method.model_dump(mode="json"),
-        }
-    return payload
+    return _compact_payload(decision, model=result["tool_audit"]["model"], support=support)
 
 
 def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSupport | None:
@@ -195,7 +433,10 @@ def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSuppor
 
 def reset_agent_cache() -> None:
     """Chỉ dùng cho test: quên singleton và lý do tắt."""
-    global _agent, _unavailable_reason
+    global _agent, _unavailable_reason, _c6_fusion_gate, _c6_fusion_unavailable_reason
     with _lock:
         _agent = None
         _unavailable_reason = None
+    with _c6_fusion_lock:
+        _c6_fusion_gate = None
+        _c6_fusion_unavailable_reason = None

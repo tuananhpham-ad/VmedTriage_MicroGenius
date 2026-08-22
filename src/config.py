@@ -170,18 +170,22 @@ class Settings(BaseSettings):
     nurse_queue_high_priority: str = "high"
     nurse_queue_standard_priority: str = "standard"
 
-    # Agent quyết định chạy trên artifact đã train (src/graph_triage/). Mặc định TẮT: nó cần
-    # requirements-graph.txt (torch ~2.5 GB) và gọi thêm DeepSeek + OpenAI mỗi khi phiếu chốt.
-    # Kết quả CHỈ là ý kiến tham khảo thứ hai cho điều dưỡng, không bao giờ ghi vào
-    # TriageProposal.priority - ProtocolTriageEngine/RedFlagSafetyLayer vẫn quyết định duy nhất.
-    enable_graph_triage_agent: bool = False
+    # Chọn đúng MỘT nhánh bổ sung cho rule engine của symptom protocol:
+    # - off: không gọi model graph/C6;
+    # - c6: GPT direct OR Fusion OR documented-rule emergency; Fusion cần torch, graph extraction
+    #   và fusion_full/, nhưng không nạp standalone LogReg/PhoBERT hay LLM quyết định tổng;
+    # - ensemble: LogReg + PhoBERT + Fusion + graph extraction + LLM, chỉ để điều dưỡng tham khảo.
+    # Dù ở mode nào, rule engine vẫn xếp priority tức thời và mọi quyết định cuối vẫn qua HITL.
+    graph_triage_mode: Literal["off", "c6", "ensemble"] = "off"
+    graph_triage_safety_model: str = "gpt-4o-mini"
+    """Model cho direct classifier và fact extraction của C6."""
     graph_triage_artifact_root: str = ""
-    """Thư mục chứa `logreg_full/` và `bert_full/`. Bỏ trống thì dùng `<repo>/runs`."""
+    """Thư mục chứa artifact graph, gồm `fusion_full/` cho C6. Bỏ trống thì dùng `<repo>/runs`."""
     graph_triage_max_length: int = Field(default=256, ge=1, le=512)
 
     # Trích nguồn y văn cho nhãn đã chốt (src/source_support/, "part 3"). Mặc định TẮT: nó chạy sau
-    # agent quyết định nên chỉ có nghĩa khi ENABLE_GRAPH_TRIAGE_AGENT đã bật, và nó gửi source_span
-    # (trích nguyên văn báo cáo bệnh nhân) sang provider LLM - xem cổng chặn PHI trong README của gói.
+    # Part 3 chạy sau C6 hoặc ensemble, và gửi evidence/source_span sang provider LLM - xem cổng
+    # chặn PHI trong README của gói.
     # Tầng này KHÔNG BAO GIỜ đổi triage_label; đường duy nhất nó tác động tới ca là bật thêm cờ
     # requires_human_review.
     source_support_enabled: bool = False

@@ -325,18 +325,26 @@ function needsNurseAttention(item) { return pendingStatuses.has(item.status) || 
 
 function priority(item) { return item.triage_proposal?.priority || "Manual review"; }
 
-// Nhãn của agent quyết định (src/graph_triage/) dùng bộ 3 mức riêng, KHÔNG phải TriagePriority của
-// rule engine. Cố tình không ánh xạ sang TriagePriority: hai thang này không được lẫn vào nhau.
+// Nhãn của agent quyết định (src/graph_triage/) dùng bộ 3 mức riêng. Khi safety gate C6 bật, backend
+// chỉ được nâng `triage_proposal.priority` theo nhãn này; nurse vẫn là người duyệt cuối.
 const graphLabels = { theo_doi_tai_nha: "Theo dõi tại nhà", kham_som: "Khám sớm", cap_cuu: "Cấp cứu" };
 
-/** Ý kiến tham khảo THỨ HAI. Chỉ hiện kết luận cuối của LLM - không hiện xác suất từng model, không
- *  hiện evidence graph. Không được đưa giá trị này vào ô "Mức ưu tiên" của form duyệt. */
+/** Chỉ hiện kết luận cuối — không hiện xác suất hay evidence graph. Với C6, mức ưu tiên bên cạnh có
+ *  thể đã được nâng bởi backend, nhưng điều dưỡng vẫn là người duyệt nội dung và mức cuối cùng. */
 function graphDecisionBlock(item) {
   const decision = item.graph_decision;
   if (!decision) return "";
   const label = graphLabels[decision.triage_label] || decision.triage_label || "Không xác định";
   const review = decision.requires_human_review ? `<p class="advisory-review">Mô hình đề nghị bắt buộc có người xem lại.</p>` : "";
-  return `<section class="advisory-card"><h3>Ý kiến tham khảo từ mô hình</h3><p class="advisory-note">Đây là ý kiến thứ hai, độc lập với đề xuất mức ưu tiên ở cột bên phải. Quyết định vẫn thuộc về bạn.</p><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-summary">${escapeHtml(decision.decision_summary || "")}</p>${review}<p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
+  const c6Enabled = Boolean(decision.safety_gate);
+  const title = c6Enabled ? "Đánh giá an toàn C6" : "Ý kiến tham khảo từ mô hình";
+  const note = c6Enabled
+    ? "C6 chỉ có thể nâng mức ưu tiên ở cột bên phải; không tự hạ mức hoặc gửi nội dung cho bệnh nhân. Quyết định cuối vẫn thuộc về bạn."
+    : "Đây là ý kiến thứ hai, độc lập với đề xuất mức ưu tiên ở cột bên phải. Quyết định vẫn thuộc về bạn.";
+  const raisedBy = Array.isArray(decision.escalated_by) && decision.escalated_by.length
+    ? `<p class="advisory-review">Đã nâng lên Cấp cứu bởi: ${escapeHtml(decision.escalated_by.join(", "))}.</p>`
+    : "";
+  return `<section class="advisory-card"><h3>${title}</h3><p class="advisory-note">${note}</p><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-summary">${escapeHtml(decision.decision_summary || "")}</p>${raisedBy}${review}<p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
 }
 /** Khối nguồn y văn của part 3 (src/source_support/), dựng lại đúng như `explanation_vi` +
  *  `explanation_citations` - `explanation_vi` chỉ mang marker [n], phần liệt kê URL do phía hiển thị
