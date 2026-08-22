@@ -29,8 +29,8 @@ services:
     # phép chặn app khởi động, đây chỉ là tiện ích demo chứ không phải bước bắt buộc.
     startCommand: >-
       python scripts/download_graph_artifacts.py &&
-      python -m scripts.build_source_corpus &&
-      python -m scripts.seed_demo_users &&
+      (python -m scripts.build_source_corpus && echo "[startup] build_source_corpus: OK" || echo "[startup] build_source_corpus: FAILED (bo qua)") &&
+      (python -m scripts.seed_demo_users && echo "[startup] seed_demo_users: OK" || echo "[startup] seed_demo_users: FAILED (bo qua)") &&
       uvicorn src.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
