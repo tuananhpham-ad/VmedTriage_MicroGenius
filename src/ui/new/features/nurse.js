@@ -9,6 +9,7 @@ import {
   formatDate,
   icon,
   identityBlock,
+  paragraphs,
   priorityClass,
   priorityDot,
   priorityLabels,
@@ -537,7 +538,7 @@ function conversation(items = []) {
   return items
     .map((item) => {
       const role = item.role === "patient" ? "patient" : item.role === "agent" ? "agent" : "system";
-      return `<div class="bubble is-${role}">${escapeHtml(item.content)}</div>`;
+      return `<div class="bubble is-${role}">${paragraphs(item.content)}</div>`;
     })
     .join("");
 }
@@ -694,7 +695,7 @@ function isbarValue(value) {
 function narrativeMarkup(data) {
   const fields = data.field_summary || {};
   const narrative = data.narrative
-    ? `<div class="field-row is-block"><span class="label">Tóm tắt văn xuôi</span><span class="value">${escapeHtml(data.narrative)}</span></div>`
+    ? `<div class="field-row is-block"><span class="label">Tóm tắt văn xuôi</span><div class="value prose">${paragraphs(data.narrative)}</div></div>`
     : "";
   const denied = (fields.denied || []).length
     ? `<div class="field-row"><span class="label">Người bệnh phủ nhận</span><span class="value">${escapeHtml(fields.denied.join(", "))}</span></div>`

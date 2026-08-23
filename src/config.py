@@ -186,6 +186,12 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
     nurse_registration_code: str = os.getenv("NURSE_REGISTRATION_CODE", "")
+    demo_login_enabled: bool = os.getenv("DEMO_LOGIN_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    """Cho phép POST /auth/demo-login tạo tài khoản dùng thử `test-<role>-<datetime>`.
+
+    Bật mặc định vì demo/nghiệm thu cần vào được cả hai vai trò mà không phải đăng ký email thật.
+    Tài khoản demo bỏ qua bước xác thực email VÀ bỏ qua mã đăng ký nhân viên y tế, nên môi trường
+    production thật phải đặt DEMO_LOGIN_ENABLED=false."""
     password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     password_reset_base_url: str = os.getenv("PASSWORD_RESET_BASE_URL", "http://localhost:8000")
     email_verification_code_expire_minutes: int = Field(default=30, ge=5, le=60)

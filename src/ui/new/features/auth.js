@@ -265,6 +265,7 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
                 <button class="primary-button" type="submit"><span>${isRegister ? "Tạo tài khoản" : "Đăng nhập hệ thống"}</span>${!isRegister ? icon("chevronRight", 18) : ""}</button>
                 <p class="auth-switch">${isRegister ? 'Đã có tài khoản? <button type="button" data-mode="login">Đăng nhập</button>' : 'Chưa có tài khoản? <button type="button" data-mode="register">Đăng ký</button>'}</p>
               </form>
+              ${demoAccessPanel()}
               ${!isRegister ? `<a class="auth-emergency-link" href="tel:115">${icon("phone", 16)}<span>Trường hợp khẩn cấp, gọi ngay 115</span></a>` : ""}
             </div>
           </div>
@@ -288,9 +289,64 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
       }),
     );
     bindLegalDialog(root);
+    bindDemoAccess(root, { onAuthenticated });
     form.addEventListener("submit", (event) => submitAuth(event, { isRegister, selectedRole, navigate, onAuthenticated }));
   };
   draw();
+}
+
+/**
+ * Khối "dùng thử theo vai trò" của màn đăng nhập.
+ *
+ * Có để demo và nghiệm thu đi thẳng vào ĐÚNG vai trò cần xem mà không phải dựng tài khoản thật:
+ * luồng đăng ký thật đòi mã xác thực gửi qua email, còn vai trò nhân viên y tế còn đòi thêm mã đăng
+ * ký nội bộ - hai cửa đó biến "cho tôi xem màn duyệt ca" thành mười phút chuẩn bị.
+ *
+ * Mỗi lần bấm là MỘT tài khoản `test-<vai trò>-<ngày giờ>` mới trong DB, không dùng lại tài khoản
+ * cũ: hai người demo cùng lúc mà chung tài khoản thì ca của người này hiện trong lịch sử người kia.
+ * Server tắt được khối này bằng DEMO_LOGIN_ENABLED=false (khi đó nút trả 403 và hiện thông báo).
+ */
+function demoAccessPanel() {
+  const options = [
+    ["patient", "user", "Bệnh nhân/người nhà", "Khai báo triệu chứng và theo dõi phản hồi đã duyệt."],
+    ["nurse", "shieldCheck", "Nhân viên y tế", "Xem hàng đợi ca và duyệt phản hồi cho người bệnh."],
+  ];
+  return `<section class="demo-access" aria-labelledby="demo-access-title">
+    <div class="demo-access-head">${icon("pulse", 18)}<span><strong id="demo-access-title">Trải nghiệm theo vai trò</strong><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span></div>
+    <div class="demo-access-options">
+      ${options
+        .map(
+          ([role, glyph, title, note]) =>
+            `<button class="demo-access-option" type="button" data-demo-role="${role}">${icon(glyph, 20)}<span><b>${title}</b><small>${note}</small></span><span class="demo-access-cta">Dùng thử</span></button>`,
+        )
+        .join("")}
+    </div>
+    <p class="demo-access-note">Mỗi lần dùng thử tạo một tài khoản riêng dạng <code>test-&lt;vai trò&gt;-&lt;ngày giờ&gt;</code>. Dữ liệu nhập ở đây là dữ liệu thử nghiệm, không phải hồ sơ y tế thật.</p>
+  </section>`;
+}
+
+function bindDemoAccess(root, { onAuthenticated }) {
+  const buttons = [...root.querySelectorAll("[data-demo-role]")];
+  buttons.forEach((button) =>
+    button.addEventListener("click", async () => {
+      const cta = button.querySelector(".demo-access-cta");
+      const label = cta.textContent;
+      // Khoá CẢ HAI nút chứ không riêng nút vừa bấm: mỗi lần bấm sinh một tài khoản mới trong DB,
+      // nên bấm nhầm hai lần là để lại một tài khoản rác không ai đăng nhập vào.
+      buttons.forEach((item) => { item.disabled = true; });
+      cta.textContent = "Đang tạo…";
+      try {
+        const session = await api("/api/v1/auth/demo-login", { method: "POST", body: JSON.stringify({ role: button.dataset.demoRole }) });
+        saveSession(session.access_token, session.user);
+        showToast(`Đang dùng thử với tài khoản ${session.user.username}`);
+        await onAuthenticated(session);
+      } catch (problem) {
+        showToast(problem.message || "Không tạo được tài khoản dùng thử.", true);
+        buttons.forEach((item) => { item.disabled = false; });
+        cta.textContent = label;
+      }
+    }),
+  );
 }
 
 function loginFields(showPassword) {

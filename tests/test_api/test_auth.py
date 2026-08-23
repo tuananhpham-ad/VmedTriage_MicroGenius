@@ -218,3 +218,39 @@ async def test_case_summary_is_restricted_to_authenticated_nurse(client, patient
     assert (await client.get(path, headers=patient_headers)).status_code == 403
     # Nhân viên y tế đi qua middleware; route mới trả 404 vì case không tồn tại.
     assert (await client.get(path, headers=nurse_headers)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_demo_login_creates_a_new_test_account_per_call(client):
+    """Mỗi lần bấm "Dùng thử" phải là một tài khoản riêng, nếu không hai người demo dùng chung lịch sử ca."""
+    first = await client.post("/api/v1/auth/demo-login", json={"role": "patient"})
+    second = await client.post("/api/v1/auth/demo-login", json={"role": "nurse"})
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    first_user = first.json()["user"]
+    second_user = second.json()["user"]
+    assert first_user["username"].startswith("test-patient-")
+    assert second_user["username"].startswith("test-nurse-")
+    assert first_user["username"] != second_user["username"]
+    assert first_user["role"] == "patient"
+    assert second_user["role"] == "nurse"
+
+
+@pytest.mark.asyncio
+async def test_demo_login_token_reaches_role_protected_routes(client):
+    """Token demo phải dùng được ngay: tài khoản demo bỏ qua xác thực email và mã đăng ký điều dưỡng."""
+    response = await client.post("/api/v1/auth/demo-login", json={"role": "nurse"})
+    token = response.json()["access_token"]
+
+    queue = await client.get("/api/v1/nurse/queue", headers={"Authorization": f"Bearer {token}"})
+    assert queue.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_demo_login_is_refused_when_disabled(client, monkeypatch):
+    from src.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_login_enabled", False)
+    response = await client.post("/api/v1/auth/demo-login", json={"role": "patient"})
+    assert response.status_code == 403

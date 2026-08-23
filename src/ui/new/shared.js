@@ -38,6 +38,62 @@ export function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+/**
+ * Chuyển một đoạn văn thô thành HTML đọc được: đoạn, tiêu đề "…:" và gạch đầu dòng.
+ *
+ * Tồn tại vì hai nguồn văn bản của hệ thống đều trả về CHUỖI THÔ, không phải HTML: văn xuôi của
+ * phiếu tóm tắt (một khối 6-8 câu liền mạch) và lời thoại của trợ lý. Đổ thẳng chuỗi đó vào một
+ * `<span>` thì được đúng thứ đang thấy trên màn duyệt ca - một bức tường chữ không có chỗ nghỉ mắt,
+ * mà điều dưỡng lại phải dò trong đó xem field nào có, field nào chưa hỏi.
+ *
+ * Câu dài mới bị cắt thành nhiều đoạn (`minLengthToSplit`): một câu trả lời hai chữ của người bệnh
+ * không cần chia đoạn, và chia thì bong bóng chat trông rời rạc.
+ *
+ * Escape nằm BÊN TRONG hàm này - gọi `paragraphs(escapeHtml(text))` là sai (dấu `&` sẽ bị escape
+ * hai lần), luôn truyền chuỗi thô vào.
+ */
+export function paragraphs(text = "", { groupSize = 2, minLengthToSplit = 200 } = {}) {
+  const source = String(text).replace(/\r\n/g, "\n").trim();
+  if (!source) return "";
+  return source
+    .split(/\n{2,}/)
+    .map((block) => renderTextBlock(block, groupSize, minLengthToSplit))
+    .join("");
+}
+
+function renderTextBlock(block, groupSize, minLengthToSplit) {
+  const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+  const parts = [];
+  let bullets = [];
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    parts.push(`<ul class="prose-list">${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+    bullets = [];
+  };
+  for (const line of lines) {
+    const bullet = /^[-*•+]\s+(.+)$/.exec(line);
+    if (bullet) { bullets.push(bullet[1]); continue; }
+    flushBullets();
+    // "Triệu chứng ghi nhận:" là NHÃN của danh sách bên dưới, không phải một câu - để nó lẫn vào
+    // đoạn văn thì mất luôn ranh giới giữa "người bệnh có" và "người bệnh phủ nhận".
+    if (line.endsWith(":")) parts.push(`<p class="prose-heading">${escapeHtml(line)}</p>`);
+    else parts.push(...splitIntoParagraphs(line, groupSize, minLengthToSplit).map((item) => `<p>${escapeHtml(item)}</p>`));
+  }
+  flushBullets();
+  return parts.join("");
+}
+
+function splitIntoParagraphs(line, groupSize, minLengthToSplit) {
+  if (line.length <= minLengthToSplit) return [line];
+  const sentences = line.match(/[^.!?…]+(?:[.!?…]+|$)/g) || [line];
+  const chunks = [];
+  for (let index = 0; index < sentences.length; index += groupSize) {
+    const chunk = sentences.slice(index, index + groupSize).join("").trim();
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks.length ? chunks : [line];
+}
+
 export function shortCaseId(id) {
   return id ? id.slice(0, 8).toUpperCase() : "Chưa có";
 }

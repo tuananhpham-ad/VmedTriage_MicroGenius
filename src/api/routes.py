@@ -16,6 +16,7 @@ from src.database import get_db_session
 from src.graph_triage import service as graph_triage_service
 from src.models.auth import (
     ChangePasswordRequest,
+    DemoLoginRequest,
     EmailVerificationConfirmRequest,
     LoginRequest,
     MessageResponse,
@@ -41,6 +42,7 @@ from src.models.schemas import (
 from src.services.engines.priority_labels import PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
 from src.services.infra.auth import (
+    DemoLoginDisabledError,
     EmailNotVerifiedError,
     InvalidCredentialsError,
     NurseRegistrationDeniedError,
@@ -119,6 +121,27 @@ def register_alias(request: RegisterRequest, db: Session = Depends(get_db_sessio
 def login_alias(request: LoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
     """Alias của POST /login theo đặc tả Feature #3 (POST /auth/login). Giữ /login để tương thích ngược."""
     return login(request, db)
+
+
+@router.post("/auth/demo-login", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def demo_login(request: DemoLoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Cấp một tài khoản dùng thử MỚI cho vai trò được chọn và đăng nhập luôn.
+
+    Dùng cho demo/nghiệm thu: mỗi lần bấm là một tài khoản `test-<role>-<yyyymmdd-hhmmss>` riêng
+    trong DB, nên phiên của hai người demo không lẫn vào nhau. Tắt bằng DEMO_LOGIN_ENABLED=false."""
+    try:
+        user = auth_service.create_demo_user(db, request.role)
+    except DemoLoginDisabledError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except UserAlreadyExistsError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    logger.info("DEMO LOGIN: tạo tài khoản dùng thử %s (role=%s)", user.username, user.role.value)
+    access_token, expires_in = auth_service.create_access_token(user)
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.post("/auth/email-verification/confirm", response_model=MessageResponse)

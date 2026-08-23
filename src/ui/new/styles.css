@@ -358,9 +358,16 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .capability-strip .ico { margin-top:1px; }
 .chat-panel .banner { flex:none; margin:0; border-radius:0; border-width:0 0 1px; border-left-width:3px; }
 .chat-log { display:flex; flex:1; flex-direction:column; gap:14px; overflow-y:auto; padding:22px 24px; }
-.bubble { max-width:min(62%, 560px); border-radius:14px; padding:13px 16px; font-size:15.5px; line-height:1.55; text-wrap:pretty; }
+/* `text-align: justify` chỉ tác động lên bong bóng NHIỀU DÒNG: một tin nhắn ngắn nằm gọn trong một
+   dòng thì dòng đó cũng là dòng cuối, mà dòng cuối không bị kéo giãn (`text-align-last: left`). Nhờ
+   vậy câu "vâng" không bị dàn ra hết bề ngang, còn đoạn hỏi dài của trợ lý thì có hai lề thẳng. */
+.bubble {
+  max-width:min(62%, 560px); border-radius:14px; padding:13px 16px; font-size:15.5px;
+  line-height:1.55; text-wrap:pretty; text-align:justify; text-align-last:left; hyphens:auto;
+}
 .bubble.is-agent, .bubble.is-streaming { align-self:flex-start; border:1px solid var(--line); border-radius:14px 14px 14px 4px; color:var(--ink-2); background:var(--surface-soft); }
 .bubble.is-patient { align-self:flex-end; border-radius:14px 14px 4px 14px; color:#fff; background:var(--blue); }
+.bubble.is-system, .bubble.is-error, .bubble.is-pending { text-align:center; text-align-last:center; }
 .bubble.is-system { align-self:center; display:flex; align-items:center; gap:7px; max-width:90%; border:1px solid var(--blue-line); border-radius:var(--r-pill); padding:6px 13px; color:var(--blue-deep); background:var(--blue-soft); font-size:12.5px; font-weight:500; }
 .bubble.is-pending { align-self:flex-start; display:flex; align-items:center; gap:9px; border:1px solid var(--line); border-radius:14px 14px 14px 4px; color:var(--muted); background:var(--surface-soft); font-size:14px; }
 .bubble.is-error { align-self:center; max-width:90%; border:1px solid var(--red-line); color:var(--red-deep); background:var(--red-soft); font-size:13.5px; text-align:center; }
@@ -912,7 +919,71 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
 .isbar-block h4 { margin: 0 0 6px; font-size: .82rem; letter-spacing: .04em; text-transform: uppercase; opacity: .7; }
 /* Văn xuôi dài nên xuống dòng riêng thay vì ép vào cột giá trị hẹp. */
 .field-row.is-block { display: block; }
-.field-row.is-block .value { display: block; margin-top: 4px; line-height: 1.55; }
+/* `text-align: justify` ghi đè `text-align: right` mà `.field-row > .value` áp cho MỌI dòng giá trị.
+   Căn phải hợp lý với một giá trị ngắn ("39 độ C") nằm cạnh nhãn của nó, nhưng áp lên một đoạn văn
+   5 dòng thì lề trái răng cưa và mắt không tìm được điểm bắt đầu dòng - đó là thứ làm khối tóm tắt
+   trông vỡ.
+
+   `text-align-last: left` là nửa còn lại và không được bỏ: justify mà không có nó sẽ kéo giãn cả
+   DÒNG CUỐI, nên một dòng cuối 3 chữ bị dàn ra hết chiều rộng khung. */
+.field-row.is-block .value {
+  display: block; margin-top: 4px; line-height: 1.55;
+  text-align: justify; text-align-last: left; hyphens: auto;
+}
 /* Field an toàn còn `unknown` - "chưa ai hỏi" khác hẳn "người bệnh nói không", và đây là chỗ điều
    dưỡng nhìn đầu tiên, nên nó phải nổi lên chứ không lẫn vào các dòng khác. */
 .field-row.is-missing .value { color: #8a5a10; }
+
+/* --- Khối văn xuôi (`paragraphs()` trong shared.js) ------------------------------------------- */
+/* Văn xuôi của phiếu tóm tắt và lời thoại của trợ lý đều là chuỗi thô nhiều câu. Trước đây chúng
+   được đổ vào một `<span>` duy nhất, nên một tóm tắt 6 câu ra thành một khối chữ liền không có chỗ
+   ngắt - đây là lớp trình bày cho bản đã chia đoạn.
+
+   `text-align: justify` + `text-align-last: left` đi CÙNG NHAU: justify cho hai lề thẳng, còn
+   `text-align-last` giữ dòng cuối không bị kéo giãn ra hết chiều ngang. Bỏ vế thứ hai là thấy ngay
+   dòng cuối 3 chữ dàn kín khung. */
+.prose { text-align:justify; text-align-last:left; hyphens:auto; text-wrap:pretty; }
+.prose p { margin:0; line-height:1.62; }
+.prose p + p, .prose p + .prose-list, .prose-list + p, .prose-heading { margin-top:9px; }
+.prose .prose-heading { font-weight:600; color:var(--muted-2); text-align:left; text-align-last:left; }
+.prose .prose-heading + .prose-list { margin-top:5px; }
+.prose-list { margin:0; padding-left:20px; text-align:left; text-align-last:left; }
+.prose-list li { margin:3px 0; line-height:1.55; }
+/* Văn xuôi trong phiếu bàn giao: đây là khối chữ dài nhất của màn duyệt ca nên nó cần cỡ chữ và
+   khoảng thở riêng, không dùng chung với các dòng giá trị ngắn cạnh nhãn. */
+.field-row.is-block .value.prose { display:block; margin-top:6px; font-weight:400; font-size:14.8px; color:var(--ink-2); }
+
+/* Bong bóng chat cũng đi qua `paragraphs()`: một lượt trả lời dài của trợ lý được chia đoạn thay vì
+   dồn thành khối. Bản thân `.bubble` đã justify sẵn - ở đây chỉ lo khoảng cách giữa các đoạn. */
+.bubble p { margin:0; }
+.bubble p + p, .bubble p + .prose-list, .bubble .prose-list + p { margin-top:8px; }
+.bubble .prose-list { padding-left:18px; }
+.bubble.is-patient .prose-heading { color:inherit; }
+
+/* Hướng dẫn xử trí đã duyệt: mỗi bước là một đoạn 2-3 dòng, căn đều hai lề cho khớp với phần còn
+   lại của trang. Số thứ tự nằm ngoài `<span>` nên không bị kéo giãn theo. */
+.instruction-list li > span { text-align:justify; text-align-last:left; hyphens:auto; }
+
+/* --- Đăng nhập dùng thử theo vai trò (POST /auth/demo-login) ---------------------------------- */
+/* Cố ý KHÔNG dùng màu chính của nút "Đăng nhập hệ thống": đây là lối vào dữ liệu thử nghiệm, nó
+   phải đọc được là phụ so với đăng nhập thật, chứ không cạnh tranh với nút chính. */
+.demo-access { margin-top:18px; padding:15px 16px 13px; border:1px dashed var(--line-strong); border-radius:var(--r-card); background:var(--surface-soft); }
+.demo-access-head { display:flex; align-items:flex-start; gap:10px; }
+.demo-access-head > .ico { flex:none; margin-top:2px; color:var(--blue); }
+.demo-access-head span { display:flex; flex-direction:column; gap:2px; }
+.demo-access-head strong { font-size:14.5px; }
+.demo-access-head small, .demo-access-note { color:var(--muted); font-size:12.5px; line-height:1.5; }
+.demo-access-options { display:grid; gap:8px; margin-top:12px; }
+.demo-access-option { display:flex; align-items:center; gap:11px; width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r-btn); background:var(--surface); text-align:left; transition:border-color .15s, background .15s; }
+.demo-access-option:hover:not(:disabled) { border-color:var(--blue-line); background:var(--blue-soft); }
+.demo-access-option:disabled { opacity:.6; }
+.demo-access-option > .ico { flex:none; color:var(--blue); }
+.demo-access-option > span:not(.demo-access-cta) { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+.demo-access-option b { font-size:14px; font-weight:600; }
+.demo-access-option small { color:var(--muted); font-size:12.5px; line-height:1.45; }
+.demo-access-cta { flex:none; padding:5px 11px; border-radius:var(--r-pill); border:1px solid var(--blue-line); color:var(--blue-deep); background:var(--blue-soft); font-size:12.5px; font-weight:600; }
+.demo-access-note { margin:11px 0 0; }
+.demo-access-note code { padding:1px 5px; border-radius:5px; background:var(--surface-mute); font-size:12px; }
+@media (min-width:640px) {
+  .demo-access-options { grid-template-columns:1fr 1fr; }
+}

@@ -7,6 +7,7 @@ import {
   formatDate,
   icon,
   identityBlock,
+  paragraphs,
   priorityClass,
   priorityDot,
   priorityLabels,
@@ -510,7 +511,10 @@ function messageMarkup(message) {
   if (message.role === "system") {
     return `<div class="bubble is-system">${icon("check", 14)}<span>${escapeHtml(message.text)}</span></div>`;
   }
-  return `<div class="bubble is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`;
+  // Bong bóng đang stream giữ nguyên văn bản thô: con trỏ nhấp nháy là `::after` của chính div này,
+  // mà chèn `<p>` vào giữa sẽ đẩy nó xuống dòng riêng sau mỗi mẩu chữ mới về.
+  if (message.role === "streaming") return `<div class="bubble is-streaming">${escapeHtml(message.text)}</div>`;
+  return `<div class="bubble is-${escapeHtml(message.role)}">${paragraphs(message.text)}</div>`;
 }
 
 // Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`) ngày 2026-08-14:
