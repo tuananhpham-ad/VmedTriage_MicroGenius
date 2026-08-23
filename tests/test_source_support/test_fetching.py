@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.config import get_settings
 from src.source_support.fetching import (
     domain_allowed,
     extract_text,
@@ -17,7 +18,7 @@ from src.source_support.fetching import (
     publisher_of,
 )
 
-ALLOWLIST = parse_allowlist("who.int,nhs.uk,cdc.gov,msdmanuals.com")
+ALLOWLIST = parse_allowlist("who.int,nhs.uk,cdc.gov,msdmanuals.com,ncbi.nlm.nih.gov")
 
 
 # --- Guard 1 -----------------------------------------------------------------------------------
@@ -166,3 +167,137 @@ def test_guard2_rejects_absurdly_long_extractions(monkeypatch) -> None:
     result = fetching.fetch_document("https://www.nhs.uk/x", allowlist=ALLOWLIST)
     assert not hasattr(result, "text")
     assert "không phải văn bản" in result.reason
+
+
+# --- PubMed: trang web chặn bot, EFetch API là kênh lấy nội dung -------------------------------
+
+
+_ABSTRACT_TEXT = (
+    "1. Crit Care Med. 2011 Nov;39(11):2550-3. doi: 10.1097/CCM.\n\n"
+    "Encephalopathy in acute liver failure resulting from acetaminophen intoxication.\n\n"
+    + ("Nội dung abstract đủ dài để qua Guard 2. " * 20)
+)
+
+
+class _EfetchResponse:
+    def __init__(self, *, status_code: int = 200, text: str = _ABSTRACT_TEXT):
+        self.status_code = status_code
+        self.text = text
+
+
+def test_pubmed_article_url_routes_to_efetch_not_generic_get(monkeypatch) -> None:
+    import httpx
+
+    from src.source_support import fetching
+
+    captured: dict = {}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return _EfetchResponse()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    fetching.fetch_document("https://pubmed.ncbi.nlm.nih.gov/21705899/", allowlist=ALLOWLIST)
+
+    assert captured["url"] == fetching._EFETCH_URL
+    assert captured["params"]["id"] == "21705899"
+
+
+def test_pubmed_efetch_success_returns_document_with_original_url(monkeypatch) -> None:
+    import httpx
+
+    from src.source_support import fetching
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _EfetchResponse())
+
+    url = "https://pubmed.ncbi.nlm.nih.gov/21705899/"
+    result = fetching.fetch_document(url, allowlist=ALLOWLIST)
+
+    assert result.url == url  # KHÔNG phải URL efetch
+    assert result.text == _ABSTRACT_TEXT
+    assert result.title == "Encephalopathy in acute liver failure resulting from acetaminophen intoxication."
+    assert result.publisher == "ncbi.nlm.nih.gov"
+
+
+def test_pubmed_efetch_non_200_is_fetch_failure(monkeypatch) -> None:
+    import httpx
+
+    from src.source_support import fetching
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _EfetchResponse(status_code=404))
+
+    result = fetching.fetch_document("https://pubmed.ncbi.nlm.nih.gov/1/", allowlist=ALLOWLIST)
+    assert not hasattr(result, "text")
+    assert "efetch" in result.reason
+
+
+def test_pubmed_efetch_too_short_is_fetch_failure(monkeypatch) -> None:
+    import httpx
+
+    from src.source_support import fetching
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _EfetchResponse(text="quá ngắn"))
+
+    result = fetching.fetch_document("https://pubmed.ncbi.nlm.nih.gov/1/", allowlist=ALLOWLIST)
+    assert not hasattr(result, "text")
+    assert f"<{fetching.MIN_TEXT_CHARS}" in result.reason
+
+
+def test_pubmed_api_key_included_when_configured(monkeypatch) -> None:
+    import httpx
+
+    from src.source_support import fetching
+
+    settings = get_settings()
+    captured: list[dict] = []
+
+    def fake_get(url, **kwargs):
+        captured.append(kwargs.get("params") or {})
+        return _EfetchResponse()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    monkeypatch.setattr(settings, "ncbi_api_key", "")
+    fetching.fetch_document("https://pubmed.ncbi.nlm.nih.gov/1/", allowlist=ALLOWLIST)
+    monkeypatch.setattr(settings, "ncbi_api_key", "test-key")
+    fetching.fetch_document("https://pubmed.ncbi.nlm.nih.gov/1/", allowlist=ALLOWLIST)
+
+    assert "api_key" not in captured[0]
+    assert captured[1]["api_key"] == "test-key"
+
+
+def test_non_pubmed_url_unaffected(monkeypatch) -> None:
+    """Regression: URL không phải PubMed vẫn đi qua đường generic `httpx.get(url, ...)` như cũ."""
+    import httpx
+
+    from src.source_support import fetching
+
+    body = "<html><body><p>" + ("Nội dung lâm sàng đủ dài. " * 60) + "</p></body></html>"
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(content_type="text/html", text=body))
+
+    result = fetching.fetch_document("https://www.nhs.uk/x", allowlist=ALLOWLIST)
+    assert hasattr(result, "text")
+
+
+def test_pubmed_title_from_abstract_handles_single_paragraph() -> None:
+    from src.source_support.fetching import _pubmed_title_from_abstract
+
+    assert _pubmed_title_from_abstract("chỉ một đoạn duy nhất, không có dòng trống") == ""
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_pmid"),
+    [
+        ("https://pubmed.ncbi.nlm.nih.gov/21705899/", "21705899"),
+        ("https://pubmed.ncbi.nlm.nih.gov/21705899", "21705899"),
+        ("https://pubmed.ncbi.nlm.nih.gov/", None),
+        ("https://www.nhs.uk/conditions/x", None),
+        ("https://pubmed.ncbi.nlm.nih.gov.evil.com/21705899/", None),
+    ],
+)
+def test_pubmed_pmid_extraction(url: str, expected_pmid: str | None) -> None:
+    from src.source_support.fetching import _pubmed_pmid
+
+    assert _pubmed_pmid(url) == expected_pmid

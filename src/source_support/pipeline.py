@@ -50,9 +50,9 @@ DEFAULT_PATIENT_LABEL = "người bệnh"
 def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | None = None) -> SourceSupport:
     """Chạy đủ bảy bước cho một quyết định. Raise khi guard chặn hoặc model hỏng - xem ràng buộc 3.
 
-    `decision` là `result["llm_decision"]` lấy BÊN TRONG `service.decide_for_case`, trước chỗ nó thu
-    hẹp còn 5 khoá: `evidence` và `risk_modifiers` bị bỏ ở ranh giới đó, mà bước 1 lẫn Guard 0b đều
-    cần chúng."""
+    `decision` là kết quả đầy đủ của C6 direct branch hoặc `result["llm_decision"]` của ensemble,
+    lấy BÊN TRONG `service.decide_for_case` trước chỗ nó thu hẹp để trả UI. Bước 1 và Guard 0b cần
+    `evidence`; C6 direct branch cũng trả evidence có span đã được kiểm với phiếu tóm tắt."""
     settings = get_settings()
     meter = CostMeter()
 

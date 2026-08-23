@@ -54,9 +54,9 @@ def main() -> None:
     show_graph = "--graph" in sys.argv
     logging.basicConfig(level=logging.WARNING, format="%(levelname)-7s %(name)s | %(message)s")
     settings = get_settings()
-    if not settings.enable_graph_triage_agent:
-        print("!! ENABLE_GRAPH_TRIAGE_AGENT đang tắt -> bật tạm cho lần chạy này.")
-        settings.enable_graph_triage_agent = True
+    if settings.graph_triage_mode != "ensemble":
+        print("!! GRAPH_TRIAGE_MODE không phải ensemble -> chuyển tạm sang ensemble cho trace.")
+        settings.graph_triage_mode = "ensemble"
 
     _rule("CHẶNG 1  -  hội thoại: người dùng nhập, agent trích xuất field")
     session = symptom_session.session_store.start_session()

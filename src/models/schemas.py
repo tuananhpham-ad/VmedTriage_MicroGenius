@@ -288,9 +288,9 @@ class TriageCase(BaseModel):
         default=None,
         description=(
             "Kết luận cuối của agent quyết định trong src/graph_triage/ (LogReg + PhoBERT + evidence "
-            "graph -> LLM). Ý kiến tham khảo THỨ HAI cho điều dưỡng. TUYỆT ĐỐI không được gán vào "
-            "TriageProposal.priority hay RedFlagFinding - ProtocolTriageEngine/RedFlagSafetyLayer "
-            "vẫn là nguồn quyết định mức ưu tiên duy nhất."
+            "graph -> LLM). Mặc định là ý kiến tham khảo. Khi C6 safety gate được bật, backend chỉ "
+            "được dùng nhãn này để NÂNG (không hạ) TriageProposal.priority; rule engine vẫn tạo "
+            "priority tức thời và HITL luôn bắt buộc."
         ),
     )
     quality_flag: ConversationQualityFlag = Field(

@@ -5,9 +5,11 @@ xuất qua DeepSeek -> LLM chọn một mức trong 3 nhãn, kèm evidence có p
 
 Port từ repo nghiên cứu `triage_baselines` (`D:\\Vin\\graph\\graph`).
 
-RANH GIỚI: kết quả của package này là Ý KIẾN THAM KHẢO THỨ HAI cho điều dưỡng. Nó KHÔNG BAO GIỜ được
-gán vào `TriageProposal.priority` hay ghi đè `RedFlagFinding` - `ProtocolTriageEngine` và
-`RedFlagSafetyLayer` vẫn là nguồn quyết định mức ưu tiên duy nhất.
+RANH GIỚI: `graph_triage_mode="ensemble"` là ý kiến tham khảo thứ hai cho điều dưỡng. Ở mode
+`"c6"`, C6 được phép NÂNG (không hạ) `TriageProposal.priority` sau khi `symptom_protocol.rule_engine`
+đã tạo priority tức thời. C6 dùng đúng combiner benchmark: GPT direct OR Fusion OR documented-rule
+emergency; nó không nạp LogReg, PhoBERT độc lập hay LLM quyết định tổng của mode ensemble. C6 không đổi red flag và không
+bao giờ tự duyệt hay gửi nội dung cho bệnh nhân.
 
 Điểm vào của luồng web là `service.decide_for_case`; `agent/run.py` và `agent/run_llm.py` là CLI để
 thử tay. Mọi thứ cần torch nằm sau import lazy - xem docstring của `service.py`.
