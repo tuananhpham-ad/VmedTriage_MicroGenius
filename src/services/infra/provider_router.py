@@ -194,6 +194,14 @@ ROLE_SOURCE_EXPLAIN = "source_explain"
 của cả tầng - văn xuôi trôi chảy kèm link NHS đọc rất có thẩm quyền kể cả khi nhãn sai - nhưng đầu ra
 của nó bị guard 5 kiểm bằng so chuỗi, không bằng prompt."""
 
+ROLE_CHITCHAT = "chitchat"
+"""Viết câu trả lời cho lượt PHI LÂM SÀNG (chào hỏi, hỏi về hệ thống, chuyện ngoài y tế).
+
+Nhiệm vụ hẹp nhất trong sáu vai trò và cũng rẻ nhất: không trích xuất field, không đọc snapshot,
+không đụng tới quyết định nào - nên đây là ứng viên số một để ghim một model rẻ qua
+`ROLE_ORDER_CHITCHAT`. Fallback: văn bản TĨNH của `non_clinical.reply_for`, tức là hành vi trước khi
+có vai trò này."""
+
 ROLES: tuple[str, ...] = (
     ROLE_FACT_EXTRACTOR,
     ROLE_SYNTHESIS,
@@ -201,6 +209,7 @@ ROLES: tuple[str, ...] = (
     ROLE_CLAIM_SPLITTER,
     ROLE_SOURCE_VERDICT,
     ROLE_SOURCE_EXPLAIN,
+    ROLE_CHITCHAT,
 )
 
 _ROLE_ORDER_ATTRS: dict[str, str] = {
@@ -210,6 +219,7 @@ _ROLE_ORDER_ATTRS: dict[str, str] = {
     ROLE_CLAIM_SPLITTER: "role_order_claim_splitter",
     ROLE_SOURCE_VERDICT: "role_order_source_verdict",
     ROLE_SOURCE_EXPLAIN: "role_order_source_explain",
+    ROLE_CHITCHAT: "role_order_chitchat",
 }
 
 

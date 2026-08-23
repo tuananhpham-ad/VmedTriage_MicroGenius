@@ -30,29 +30,29 @@ class Settings(BaseSettings):
     )
 
     # App
-    app_name: str = "AI20K Agent"
+    app_name: str = os.getenv("APP_NAME", "AI20K Agent")
     app_env: Literal["development", "production", "test"] = "development"
     app_port: int = Field(default=8000, ge=1, le=65535)
-    app_host: str = "0.0.0.0"
+    app_host: str = os.getenv("APP_HOST", "0.0.0.0")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
 
     # LLM
     llm_provider: Literal["auto", "openai", "deepseek", "gemini", "anthropic", "openrouter"] = "auto"
-    llm_provider_order: str = "gemini,deepseek,openai,anthropic,openrouter"
+    llm_provider_order: str = os.getenv("LLM_PROVIDER_ORDER", "gemini,deepseek,openai,anthropic,openrouter")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_model_name: str = "gpt-4o-mini"
+    openai_model_name: str = os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
-    deepseek_model_name: str = "deepseek-chat"
-    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model_name: str = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-chat")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     # Đã kiểm 2026-08-15: `gemini-1.5-flash` (default cũ) và `gemini-2.5-flash` đều trả HTTP 404 -
     # Google đã gỡ khỏi API cho key mới. Provider gemini vì thế luôn hỏng rồi mới rơi về deepseek,
     # tốn 2 lời gọi vứt đi mỗi lượt chat. Dùng bản có số hiệu cố định chứ KHÔNG dùng
     # `gemini-flash-latest`: alias đó đổi model dưới chân mình, một hệ y tế cần tái lập được.
-    gemini_model_name: str = "gemini-3.5-flash"
+    gemini_model_name: str = os.getenv("GEMINI_MODEL_NAME", "gemini-3.5-flash")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    anthropic_model_name: str = "claude-haiku-4-5-20251001"
+    anthropic_model_name: str = os.getenv("ANTHROPIC_MODEL_NAME", "claude-haiku-4-5-20251001")
     # Rỗng = gọi thẳng api.anthropic.com. Có giá trị = key ở trên là token của một endpoint tương
     # thích Anthropic API bên thứ 3 (proxy) - SDK dùng `auth_token`/Bearer thay vì `api_key`/x-api-key.
     anthropic_base_url: str = os.getenv("ANTHROPIC_BASE_URL", "")
@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     )
     # Rỗng = xoay vòng trên `OPENROUTER_FREE_MODELS`. Đặt tên model ở đây thì model đó được thử
     # TRƯỚC, danh sách free vẫn là phương án dự phòng phía sau.
-    openrouter_model_name: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_free_models: str = ",".join(OPENROUTER_FREE_MODELS)
+    openrouter_model_name: str = os.getenv("OPENROUTER_MODEL_NAME", "")
+    openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_free_models: str = os.getenv("OPENROUTER_FREE_MODELS", ",".join(OPENROUTER_FREE_MODELS))
     # Trần số model OpenRouter được thử trong MỘT lần gọi. Có trần vì mỗi model lỗi tốn một vòng
     # HTTP: duyệt hết danh sách khi OpenRouter đang sập sẽ treo request hàng chục giây.
     openrouter_max_model_attempts: int = Field(default=4, ge=1, le=20)
@@ -73,23 +73,24 @@ class Settings(BaseSettings):
     # cái quan trọng hơn - một model timeout 30s thì đếm số lượt không cứu được gì.
     llm_max_total_attempts: int = Field(default=6, ge=1, le=50)
     llm_total_budget_seconds: float = Field(default=45.0, ge=5.0, le=600.0)
-    model_name: str = ""
+    model_name: str = os.getenv("MODEL_NAME", "")
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    supported_model_name: str = "Qwen/Qwen3-8B"
+    supported_model_name: str = os.getenv("SUPPORTED_MODEL_NAME", "Qwen/Qwen3-8B")
 
     # Định tuyến model theo VAI TRÒ (`provider_router.RoleProfile`). Rỗng = dùng `llm_provider_order`
     # chung, tức mặc định KHÔNG đổi hành vi gì. Có giá trị ngay cả khi không bao giờ có SLM: nó tách
     # được cấu hình model của bước trích xuất khỏi bước diễn đạt câu hỏi - hai việc có yêu cầu chất
     # lượng rất khác nhau (sai ở trích xuất là sai hồ sơ lâm sàng; sai ở diễn đạt là câu văn khô).
-    role_order_fact_extractor: str = ""
-    role_order_synthesis: str = ""
-    role_order_symptom_group_router: str = ""
+    role_order_fact_extractor: str = os.getenv("ROLE_ORDER_FACT_EXTRACTOR", "")
+    role_order_synthesis: str = os.getenv("ROLE_ORDER_SYNTHESIS", "")
+    role_order_symptom_group_router: str = os.getenv("ROLE_ORDER_SYMPTOM_GROUP_ROUTER", "")
     # `source_support` (part 3) - mỗi bước định tuyến RIÊNG: bước nào trượt cổng lọc chất lượng thì
     # chỉ bước đó quay về OpenAI, các bước còn lại vẫn chạy provider rẻ. Bỏ trống = kế thừa thứ tự
     # toàn cục, tức cài đặt này không tự nó đổi hành vi gì.
-    role_order_claim_splitter: str = ""
-    role_order_source_verdict: str = ""
-    role_order_source_explain: str = ""
+    role_order_claim_splitter: str = os.getenv("ROLE_ORDER_CLAIM_SPLITTER", "")
+    role_order_source_verdict: str = os.getenv("ROLE_ORDER_SOURCE_VERDICT", "")
+    role_order_source_explain: str = os.getenv("ROLE_ORDER_SOURCE_EXPLAIN", "")
+    role_order_chitchat: str = os.getenv("ROLE_ORDER_CHITCHAT", "")
 
     # Bộ lọc phạm vi y tế rẻ (`non_clinical.classify_with_zero_shot`) đứng TRƯỚC LLM domain
     # classifier - model NLI nhỏ qua HF Inference API, không sinh văn bản nên rẻ và nhanh hơn một
@@ -145,31 +146,85 @@ class Settings(BaseSettings):
     `red_flag_branches.merge_findings`). Vì vậy công tắc này không vi phạm quy tắc "không có công
     tắc cho tầng an toàn" ở trên."""
 
+    # Lane phi lâm sàng (§4.10) — classifier bằng model + LLM trả lời chitchat
+    enable_hf_zero_shot_domain_classifier: bool = (
+        os.getenv("ENABLE_HF_ZERO_SHOT_DOMAIN_CLASSIFIER", "").strip().lower() in {"1", "true", "yes"}
+    )
+    """Tầng phân loại y-tế/phi-y-tế bằng model NLI zero-shot. **Mặc định TẮT.**
+
+    Biến này đã nằm trong `.env` từ trước nhưng chưa có dòng code nào đọc - đây là chỗ nối nó vào.
+
+    Công tắc này KHÔNG phải công tắc cho tầng an toàn: model đứng SAU `non_clinical.classify` thuần
+    code và chỉ được hỏi khi tầng đó không quyết được. Tắt nó đi, hệ thống chạy đúng như hôm nay."""
+    hf_zero_shot_model_name: str = os.getenv(
+        "HF_ZERO_SHOT_MODEL_NAME", "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli",
+    )
+    """Model NLI đa ngữ. Đa ngữ là điểm mấu chốt: danh sách cụm từ trong `non_clinical` đều là tiếng
+    Việt không dấu, nên "hello" / "how are you" không có cửa nào được nhận ra."""
+    hf_zero_shot_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    """Điểm tối thiểu để CHẤP NHẬN phán quyết phi lâm sàng của model.
+
+    Dưới ngưỡng thì coi như model không biết, và "không biết" ở lane này phải rơi về **đường lâm
+    sàng**: định tuyến nhầm một câu tán gẫu vào bộ câu hỏi chỉ tốn một câu hỏi thừa, còn định tuyến
+    nhầm một triệu chứng vào chitchat là bỏ một ca."""
+
+    chitchat_llm_enabled: bool = os.getenv("CHITCHAT_LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+    """LLM viết câu trả lời cho lượt phi lâm sàng thay vì đọc văn bản tĩnh. Mặc định BẬT.
+
+    Bật được vì nó không nằm trên đường an toàn: guard bằng code kiểm từng câu model viết ra, và mọi
+    đường thất bại (model chết, guard từ chối, tắt cờ) đều rơi về đúng văn bản tĩnh đang chạy hôm
+    nay - tức là hành vi tệ nhất của nó bằng hành vi tốt nhất của bản trước."""
+
+    # Memory (§4.9 / _guidance/features/F04_memory.md)
+    context_compaction_token_budget: int = Field(default=2400, ge=400, le=32000)
+    """M2 - ngưỡng NÉN, đếm bằng token của phần hội thoại thô, KHÔNG đếm bằng số lượt.
+
+    Đếm theo lượt là sai đơn vị: một phiên 20 lượt "vâng"/"không" nhẹ hơn nhiều một phiên 6 lượt mà
+    người bệnh kể ba đoạn dài, mà chính phiên thứ hai mới là phiên làm tràn context."""
+    context_compaction_keep_turns: int = Field(default=6, ge=2, le=40)
+    """Số lượt THÔ gần nhất luôn được giữ nguyên văn. Trùng với `intake_agent._format_history` limit:
+    đó là cửa sổ mà model thật sự đọc, nên giữ ít hơn là cắt vào phần đang dùng."""
+
+    long_memory_enabled: bool = os.getenv("LONG_MEMORY_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    """M3 - hỏi thăm phiên trước khi mở hội thoại mới. **Mặc định TẮT.**
+
+    Tắt không phải vì code chưa xong mà vì điều kiện 3 của §3 `F04_memory.md`: đây là PHI, và bệnh
+    nhân phải biết hệ thống nhớ gì, trong bao lâu. Câu trả lời đó thuộc về PM, không thuộc về kỹ
+    thuật - nên công tắc nằm ở env, và bật nó là một quyết định có người ký, không phải một mặc định
+    lọt vào production kèm một lần deploy.
+
+    Bật hay tắt KHÔNG đổi gì trong snapshot: dữ kiện lịch sử không bao giờ đi vào `Session.answers`
+    (bất biến 9). Cờ này chỉ quyết định agent có ĐƯỢC HỎI THĂM hay không."""
+    long_memory_recent_conversations: int = Field(default=3, ge=1, le=10)
+    """Số phiên gần nhất được lấy để hỏi thăm."""
+
     # Database
-    database_url: str = "sqlite:///./data/app.db"
+    database_url: str = os.getenv("DATABASE_URL", "")
 
     # Authentication
-    jwt_secret_key: str = Field(default="development-only-change-before-production", min_length=32)
+    jwt_secret_key: str = Field(
+        default=os.getenv("JWT_SECRET_KEY", "development-only-change-before-production"), min_length=32
+    )
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
-    nurse_registration_code: str = ""
+    nurse_registration_code: str = os.getenv("NURSE_REGISTRATION_CODE", "")
     password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
-    password_reset_base_url: str = "http://localhost:8000"
+    password_reset_base_url: str = os.getenv("PASSWORD_RESET_BASE_URL", "http://localhost:8000")
     email_verification_code_expire_minutes: int = Field(default=10, ge=5, le=60)
 
     # Leave SMTP_HOST empty during development to write email contents to the server log.
-    smtp_host: str = ""
+    smtp_host: str = os.getenv("SMTP_HOST", "")
     smtp_port: int = Field(default=587, ge=1, le=65535)
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from_email: str = ""
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
     smtp_use_tls: bool = True
 
     # Weaviate Cloud (optional best-effort case persistence; pipeline degrades gracefully if unset)
-    weaviate_url: str = ""
-    weaviate_api_key: str = ""
-    weaviate_cases_collection: str = "TriageCases"
-    weaviate_knowledge_collection: str = "TriageKnowledge"
+    weaviate_url: str = os.getenv("WEAVIATE_URL", "")
+    weaviate_api_key: str = os.getenv("WEAVIATE_API_KEY", "")
+    weaviate_cases_collection: str = os.getenv("WEAVIATE_CASES_COLLECTION", "TriageCases")
+    weaviate_knowledge_collection: str = os.getenv("WEAVIATE_KNOWLEDGE_COLLECTION", "TriageKnowledge")
     weaviate_query_limit: int = Field(default=5, ge=1, le=50)
 
     # Console trace: in từng bước hỏi-đáp ra terminal để quan sát khi dev.
@@ -180,16 +235,16 @@ class Settings(BaseSettings):
     # VMedTriage workflow
     semantic_mapping_confidence_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
     manual_review_confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
-    default_symptom_group: str = "general"
-    nurse_queue_high_priority: str = "high"
-    nurse_queue_standard_priority: str = "standard"
+    default_symptom_group: str = os.getenv("DEFAULT_SYMPTOM_GROUP", "general")
+    nurse_queue_high_priority: str = os.getenv("NURSE_QUEUE_HIGH_PRIORITY", "high")
+    nurse_queue_standard_priority: str = os.getenv("NURSE_QUEUE_STANDARD_PRIORITY", "standard")
 
     # Agent quyết định chạy trên artifact đã train (src/graph_triage/). Mặc định TẮT: nó cần
     # requirements-graph.txt (torch ~2.5 GB) và gọi thêm DeepSeek + OpenAI mỗi khi phiếu chốt.
     # Kết quả CHỈ là ý kiến tham khảo thứ hai cho điều dưỡng, không bao giờ ghi vào
     # TriageProposal.priority - ProtocolTriageEngine/RedFlagSafetyLayer vẫn quyết định duy nhất.
     enable_graph_triage_agent: bool = False
-    graph_triage_artifact_root: str = ""
+    graph_triage_artifact_root: str = os.getenv("GRAPH_TRIAGE_ARTIFACT_ROOT", "")
     """Thư mục chứa `logreg_full/` và `bert_full/`. Bỏ trống thì dùng `<repo>/runs`."""
     graph_triage_max_length: int = Field(default=256, ge=1, le=512)
 
@@ -218,9 +273,10 @@ class Settings(BaseSettings):
     source_support_index_only: bool = False
     """Bỏ hẳn bước search + nạp trang. Cần cho các lượt đo hit-rate lặp lại và cho môi trường không có
     TAVILY_API_KEY."""
-    source_support_allowlist: str = (
+    source_support_allowlist: str = os.getenv(
+        "SOURCE_SUPPORT_ALLOWLIST",
         "who.int,moh.gov.vn,kcb.vn,nhs.uk,nice.org.uk,cdc.gov,ncbi.nlm.nih.gov,"
-        "cochranelibrary.com,msdmanuals.com,aafp.org,acep.org"
+        "cochranelibrary.com,msdmanuals.com,aafp.org,acep.org",
     )
     """Danh sách domain y khoa được phép trích. Guard 1 kiểm theo NHÃN TÊN MIỀN, không phải theo chuỗi
     con, nên `nhs.uk.evil.com` không lọt."""
@@ -246,17 +302,17 @@ class Settings(BaseSettings):
     # Braintrust (eval/ tracing, xem eval/config.py). HOÀN TOÀN TUỲ CHỌN: thiếu key thì tracing
     # phải im lặng trở thành no-op, KHÔNG được làm app hay script trong eval/ crash.
     braintrust_api_key: str = os.getenv("BRAINTRUST_API_KEY", "")
-    braintrust_project: str = "vmedtriage-eval"
+    braintrust_project: str = os.getenv("BRAINTRUST_PROJECT", "vmedtriage-eval")
 
     # MCP external tools
     mcp_call_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
     mcp_require_human_approval_for_side_effects: bool = True
-    mcp_clinical_guideline_server_url: str = ""
-    mcp_terminology_server_url: str = ""
-    mcp_fhir_server_url: str = ""
-    mcp_cds_hooks_server_url: str = ""
-    mcp_notification_server_url: str = ""
-    mcp_audit_server_url: str = ""
+    mcp_clinical_guideline_server_url: str = os.getenv("MCP_CLINICAL_GUIDELINE_SERVER_URL", "")
+    mcp_terminology_server_url: str = os.getenv("MCP_TERMINOLOGY_SERVER_URL", "")
+    mcp_fhir_server_url: str = os.getenv("MCP_FHIR_SERVER_URL", "")
+    mcp_cds_hooks_server_url: str = os.getenv("MCP_CDS_HOOKS_SERVER_URL", "")
+    mcp_notification_server_url: str = os.getenv("MCP_NOTIFICATION_SERVER_URL", "")
+    mcp_audit_server_url: str = os.getenv("MCP_AUDIT_SERVER_URL", "")
 
 
 # 5 nhóm triệu chứng phổ biến dùng cho tính năng khai báo triệu chứng (dữ liệu mẫu do đội dự án

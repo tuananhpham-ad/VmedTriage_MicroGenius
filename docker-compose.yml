@@ -6,14 +6,15 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      # Image dung chung voi Cloud Run nen container lang nghe $PORT (mac dinh 8080).
+      - "8000:8080"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

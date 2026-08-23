@@ -76,3 +76,6 @@ tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
+
+# Bien moi truong deploy (chua secret)
+deploy/azure/env

@@ -1,0 +1,27 @@
+{
+  "properties": {
+    "category": "Cost",
+    "amount": 5,
+    "timeGrain": "Monthly",
+    "timePeriod": {
+      "startDate": "2026-08-01T00:00:00Z",
+      "endDate": "2027-08-01T00:00:00Z"
+    },
+    "notifications": {
+      "canhbao50": {
+        "enabled": true,
+        "operator": "GreaterThan",
+        "threshold": 50,
+        "contactEmails": ["23020010@vnu.edu.vn"],
+        "thresholdType": "Actual"
+      },
+      "canhbao90": {
+        "enabled": true,
+        "operator": "GreaterThan",
+        "threshold": 90,
+        "contactEmails": ["23020010@vnu.edu.vn"],
+        "thresholdType": "Actual"
+      }
+    }
+  }
+}

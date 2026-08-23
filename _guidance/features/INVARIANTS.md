@@ -74,7 +74,11 @@ Nội dung theo bệnh nằm **ngoài** package: `src/services/checklists/`, `sr
 | Hai output summary: `summary_text` (LLM) + `summary_json` phẳng -> ISBAR | `sessions/narrative.py`, `sessions/summary_render.py` |
 | Nhánh red-flag thứ ba (model) + `red_flag_agreement` (OR, không trừ được) | `red_flag_branches.py` |
 | Memory M1: khoá composite `(conversation_id, user_id)`, sống qua restart | `services/stores/conversation_store.py`, `models/case_record.ConversationRow` |
-| Lane phi lâm sàng (lifestyle / meta) | `non_clinical.py` |
+| Memory M2: nén lượt cũ theo ngưỡng TOKEN, snapshot luôn thắng | `symptom_protocol/compaction.py` |
+| Memory M3: hỏi thăm phiên trước — câu TĨNH, cờ `LONG_MEMORY_ENABLED` mặc định tắt | `sessions/history_recall.py`, `ConversationRow.nurse_summary_json` |
+| Lane phi lâm sàng (chitchat / lifestyle / meta / out-of-scope) — sàn keyword khớp theo ranh giới từ | `non_clinical.py` |
+| Tầng 2 của lane: classifier NLI zero-shot ĐA NGỮ, chỉ được hỏi khi sàn keyword không quyết được | `lane_model.py`, cờ `ENABLE_HF_ZERO_SHOT_DOMAIN_CLASSIFIER` |
+| LLM viết câu trả lời phi lâm sàng + guard (cấm chẩn đoán/lời khuyên/**trấn an**), hỏng thì rơi về câu tĩnh | `chitchat.py`, `output_guard.check_chitchat` |
 | Controller shadow mode — model đề xuất, không tác động gì | `controller_shadow.py` |
 | Script đọc log -> bảng metric | `eval/scripts/experience_report.py` |
 

@@ -30,6 +30,7 @@ tra theo mã sẽ trả `None` và lượt sau trích xuất theo sai schema.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -46,6 +47,36 @@ logger = logging.getLogger("vmedtriage.conversation_store")
 GUEST_USER_ID = 0
 """Phiên chưa đăng nhập. Không dùng `None` vì đây là một nửa của khoá chính, và một khoá chính
 nullable là khoá không dùng được."""
+
+
+@dataclass(frozen=True, slots=True)
+class PastConversation:
+    """Một phiên ĐÃ ĐÓNG của cùng người dùng, nhìn từ phiên MỚI (M3).
+
+    **Bất biến số một của M3 nằm ở chính hình dạng lớp này**: không có trường `answers`, không có
+    `TriState`, không có gì mang hình dạng snapshot. `previous fever = true` không có đường nào biến
+    thành `current fever = true` vì thứ đi ra khỏi kho lịch sử không cùng hình dạng với thứ đi vào
+    snapshot - đó là một bảo đảm của kiểu dữ liệu, không phải một câu `if` ai đó có thể quên.
+
+    `chief_complaint` là NHÃN người bệnh đã kể lần trước, dùng để hỏi thăm. Nó KHÔNG phải chẩn đoán
+    và không được dùng để chọn protocol cho phiên mới - phiên mới vẫn tự định tuyến từ lời kể mới."""
+
+    conversation_id: str
+    updated_at: datetime
+    chief_complaint: str = ""
+    proposed_priority: str = ""
+    narrative: str = ""
+
+
+def _past_conversation(row: ConversationRow) -> PastConversation:
+    summary = row.nurse_summary_json or {}
+    return PastConversation(
+        conversation_id=row.conversation_id,
+        updated_at=row.updated_at,
+        chief_complaint=str(summary.get("chief_complaint") or "").strip(),
+        proposed_priority=str(summary.get("proposed_priority") or "").strip(),
+        narrative=str(summary.get("narrative") or "").strip(),
+    )
 
 
 def dump_session(session: Session) -> dict:
@@ -71,6 +102,11 @@ def dump_session(session: Session) -> dict:
         "pending_probe": [group.id for group in session.pending_probe],
         "current_cluster": _dump_cluster(session.current_cluster),
         "conversation": list(session.conversation),
+        # M2: ranh giới "đã nén / còn thô" + bản tóm tắt. Phải persist cùng nhau, nếu không phiên
+        # khôi phục sẽ gửi lại cho model đúng những lượt vừa được nén (mất trắng lần nén) hoặc bỏ
+        # qua chúng mà không có bản tóm tắt thay thế (mất trắng bối cảnh).
+        "conversation_summary": session.conversation_summary,
+        "summarized_turns": session.summarized_turns,
         "turn_count": session.turn_count,
         "last_question": session.last_question,
         "llm_used_last_turn": session.llm_used_last_turn,
@@ -122,6 +158,12 @@ def load_session(payload: dict) -> Session:
     session.pending_probe = _load_probe(protocol_name, payload.get("pending_probe") or [])
     session.current_cluster = _load_cluster(payload.get("current_cluster"))
     session.conversation = list(payload.get("conversation") or [])
+    session.conversation_summary = payload.get("conversation_summary") or ""
+    # `min` chứ không tin thẳng vào payload: một bản ghi cũ/hỏng có `summarized_turns` lớn hơn số
+    # lượt thật sẽ khiến `history_view` cắt sạch hội thoại và gửi cho model một cửa sổ RỖNG.
+    session.summarized_turns = min(
+        max(int(payload.get("summarized_turns") or 0), 0), len(session.conversation),
+    )
     session.turn_count = int(payload.get("turn_count") or 0)
     session.last_question = payload.get("last_question") or ""
     session.llm_used_last_turn = bool(payload.get("llm_used_last_turn"))
@@ -204,6 +246,53 @@ class SqliteConversationStore:
                 return [load_session(row.payload) for row in rows]
         except Exception as error:
             logger.warning("conversation history failed user=%s: %s", user_id, error)
+            return []
+
+    def save_nurse_summary(
+        self, conversation_id: str, *, user_id: int, summary: dict | None,
+    ) -> None:
+        """Ghi phiếu bàn giao của phiên ĐÃ ĐÓNG vào cột `nurse_summary_json` (M3).
+
+        Tách khỏi `save` chứ không nhét thêm một tham số: `save` chạy sau MỌI lượt, còn phiếu chỉ tồn
+        tại khi phiên đã đóng - gộp lại nghĩa là mọi lượt đều phải mang theo một tham số mà 95% số
+        lượt không có gì để điền.
+
+        Không tạo hàng mới: phiếu luôn thuộc về một phiên `save` đã ghi trước đó. Không tìm thấy hàng
+        thì đó là dấu hiệu `user_id` bị truyền sai, và tạo hàng mới sẽ giấu đúng lỗi ấy đi."""
+        try:
+            with session_scope() as db:
+                row = db.get(ConversationRow, (conversation_id, user_id))
+                if row is None:
+                    logger.warning("nurse summary skipped: no row id=%s user=%s", conversation_id, user_id)
+                    return
+                row.nurse_summary_json = summary
+                row.updated_at = datetime.now(timezone.utc)
+        except Exception as error:
+            logger.warning("nurse summary persist failed id=%s: %s", conversation_id, error)
+
+    def recent_summaries_for_user(self, user_id: int, *, limit: int = 3) -> list[PastConversation]:
+        """`limit` phiếu gần nhất ĐÃ ĐÓNG của chính người dùng đó - đường đọc của M3.
+
+        Chỉ lấy hàng CÓ `nurse_summary_json`: phiên còn dở chưa có gì để hỏi thăm, và hỏi thăm về một
+        phiên người bệnh bỏ ngang giữa chừng là nhắc lại đúng lần họ đã bỏ đi.
+
+        Trả `PastConversation` (5 trường, chỉ đọc) chứ không trả `Session`: mỗi thứ trả về ở đây là
+        một thứ tầng gọi CÓ THỂ nhét nhầm vào snapshot phiên mới, nên mặt tiếp xúc càng hẹp càng tốt
+        (bất biến 9). Không có `answers` trong đây, nên không có gì để nhét."""
+        try:
+            with session_scope() as db:
+                rows = db.scalars(
+                    select(ConversationRow)
+                    .where(
+                        ConversationRow.user_id == user_id,
+                        ConversationRow.nurse_summary_json.is_not(None),
+                    )
+                    .order_by(ConversationRow.updated_at.desc())
+                    .limit(limit)
+                ).all()
+                return [_past_conversation(row) for row in rows]
+        except Exception as error:
+            logger.warning("conversation summaries failed user=%s: %s", user_id, error)
             return []
 
 

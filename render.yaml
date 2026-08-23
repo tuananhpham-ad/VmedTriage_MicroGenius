@@ -1,28 +1,46 @@
-databases:
-  - name: vmedtriage-postgres
-    plan: basic-256mb
-    region: singapore
-    databaseName: vmedtriage
-    user: vmedtriage
+# Cấu hình Render cho bản public FREE.
+#
+# Không khai `databases:` ở đây: Render free Postgres HẾT HẠN sau 30 ngày rồi bị xoá, còn gói trả
+# phí thì đi ngược mục tiêu $0. Database dùng Neon (0.5 GB, free vĩnh viễn) - dán chuỗi kết nối vào
+# secret DATABASE_URL trong dashboard.
+#
+# Không khai `disk:`: Render Disk chỉ gắn được cho instance trả phí. Hệ quả là data/source_index/
+# (corpus RAG của source_support) bị xoá mỗi lần deploy và dựng lại lúc khởi động - vài chục giây,
+# chấp nhận được. Dữ liệu người dùng KHÔNG nằm ở đây mà ở Neon nên không mất gì.
 
 services:
   - type: web
     name: vmedtriage
     runtime: python
+    # Free = 512 MB RAM, ngủ sau 15 phút không có request, 750 giờ/tháng cho cả workspace.
+    # 512 MB KHÔNG đủ cho graph triage (PhoBERT ~500 MB + fusion ~500 MB + torch cùng lúc) - vì vậy
+    # ENABLE_GRAPH_TRIAGE_AGENT=false ở dưới. Muốn bật lại thì phải đổi sang instance >= 2 GB.
     plan: free
     region: singapore
     branch: dev
+    # Chỉ cài requirements.txt. requirements-graph.txt (torch ~2.5 GB + transformers) bị bỏ ra vì
+    # graph triage đang tắt - cài vào chỉ tốn build minutes và dung lượng.
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    # build_source_corpus dùng "|| true": một URL guideline chết không được phép chặn app khởi
+    # động, chỉ làm corpus thiếu vài tài liệu. seed_demo_users chỉ đụng user0/nurse0 kể cả ở
+    # production (xem allowlist trong script) - idempotent, an toàn chạy lại mỗi lần khởi động.
+    startCommand: >-
+      (python -m scripts.build_source_corpus && echo "[startup] build_source_corpus: OK" || echo "[startup] build_source_corpus: FAILED (bo qua)") &&
+      (python -m scripts.seed_demo_users && echo "[startup] seed_demo_users: OK" || echo "[startup] seed_demo_users: FAILED (bo qua)") &&
+      uvicorn src.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
       - key: APP_ENV
         value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: vmedtriage-postgres
-          property: connectionString
+
+      # ---- URL công khai của service. Thiếu PASSWORD_RESET_BASE_URL thì link đặt lại mật khẩu
+      # ---- gửi cho người dùng trỏ về http://localhost:8000 và bấm vào là hỏng.
+      - key: PASSWORD_RESET_BASE_URL
+        value: https://vmedtriage.onrender.com
+      - key: CORS_ORIGINS
+        value: https://vmedtriage.onrender.com
+
       - key: LLM_PROVIDER
         value: auto
       - key: LLM_PROVIDER_ORDER
@@ -39,3 +57,73 @@ services:
         value: Qwen/Qwen3-8B
       - key: LLM_TEMPERATURE
         value: "0.0"
+
+      # ---- Bí mật - dán giá trị trong Render dashboard, KHÔNG commit vào đây ----
+      # DATABASE_URL: chuỗi kết nối Neon, dạng
+      #   postgresql://<user>:<pass>@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+      # Giữ nguyên ?sslmode=require. App từ chối khởi động ở production nếu đây vẫn là SQLite.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: NURSE_REGISTRATION_CODE
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # ---- SMTP (mã xác thực email, reset mật khẩu) ----
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+
+      # ---- RAG: Weaviate Cloud (persist case, best-effort) ----
+      - key: WEAVIATE_URL
+        sync: false
+      - key: WEAVIATE_API_KEY
+        sync: false
+
+      # ---- RAG: source_support (trích nguồn y văn cho nhãn đã chốt, src/source_support/) ----
+      - key: SOURCE_SUPPORT_ENABLED
+        value: "true"
+      - key: SOURCE_SUPPORT_SEARCH_PROVIDER
+        value: tavily
+      - key: SOURCE_SUPPORT_THRESHOLD
+        value: "0.55"
+      - key: SOURCE_SUPPORT_MAX_CLAIMS
+        value: "3"
+      - key: SOURCE_SUPPORT_INDEX_ONLY
+        value: "false"
+      - key: SOURCE_SUPPORT_ALLOWLIST
+        value: who.int,moh.gov.vn,kcb.vn,nhs.uk,nice.org.uk,cdc.gov,ncbi.nlm.nih.gov,cochranelibrary.com,msdmanuals.com,aafp.org,acep.org
+      - key: TAVILY_API_KEY
+        sync: false
+
+      # ---- Memory (F04) ----
+      # M3 (ky uc xuyen phien) TAT tren production cho toi khi PM tra loi consent + retention bang
+      # van ban - xem _guidance/features/F04_memory.md muc 3 dieu kien 3. Bat = doi thanh "true".
+      # M2 (nen context) khong co cong tac: no chay mac dinh va khong doi hanh vi lam sang nao.
+      - key: LONG_MEMORY_ENABLED
+        value: "false"
+
+      # ---- Graph triage agent (src/graph_triage/) ----
+      # TẮT trên plan free: 512 MB không đủ nạp PhoBERT + fusion. Đây là "ý kiến tham khảo thứ hai",
+      # không bao giờ quyết định TriageProposal.priority, nên tắt không ảnh hưởng luồng chính.
+      # Bật lại: đổi instance sang >= 2 GB, thêm requirements-graph.txt vào buildCommand, thêm
+      # "python scripts/download_graph_artifacts.py &&" vào đầu startCommand, rồi đặt lại true.
+      - key: ENABLE_GRAPH_TRIAGE_AGENT
+        value: "false"

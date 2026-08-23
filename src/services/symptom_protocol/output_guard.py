@@ -126,6 +126,63 @@ def check(
     return _record(GuardResult(ok=not violations, violations=violations))
 
 
+VIOLATION_REASSURANCE = "reassurance"
+"""Câu trấn an: "không sao đâu", "bạn yên tâm", "không nguy hiểm".
+
+Đây là vi phạm RIÊNG của lane phi lâm sàng và là vi phạm dễ bị bỏ qua nhất, vì nó không trông giống
+một lỗi - nó trông giống sự tử tế. Nhưng "không sao đâu" là một KẾT LUẬN lâm sàng mặc áo thân thiện:
+hệ thống chưa hỏi gì, chưa có snapshot nào, và vẫn nói người bệnh ổn.
+
+`non_clinical` docstring đã ghi điều này thành ràng buộc 3 từ đầu; ở đây nó được thi hành bằng code
+thay vì bằng một dòng trong prompt."""
+
+_REASSURANCE: tuple[str, ...] = (
+    "không sao đâu", "không sao cả", "chắc không sao", "bạn yên tâm", "cứ yên tâm",
+    "không nguy hiểm", "không đáng lo", "không có gì đáng lo", "bình thường thôi",
+    "không cần lo", "chuyện nhỏ", "ổn mà", "bạn ổn",
+)
+
+VIOLATION_TOO_LONG = "too_long"
+
+_CHITCHAT_MAX_CHARS = 400
+"""Trần độ dài câu trả lời phi lâm sàng. Một lượt tán gẫu dài 5 đoạn là dấu hiệu model đang tự nghĩ
+ra nội dung, và nội dung nó nghĩ ra thì không ai kiểm."""
+
+
+def check_chitchat(text: str) -> GuardResult:
+    """Câu trả lời cho lượt PHI LÂM SÀNG có được phép gửi cho người bệnh không (§4.10).
+
+    Khác `check()` ở ba điểm, và cả ba đều vì lane này không có cụm câu hỏi nào để đối chiếu:
+
+    1. **Không có ngoại lệ theo `script_hint`.** `check()` cho phép tên bệnh xuất hiện nếu chính cụm
+       đang hỏi đã nhắc tới nó (câu hỏi phơi nhiễm). Ở đây không có cụm nào, nên mọi tên bệnh đều là
+       model tự nghĩ ra.
+    2. **Bắt buộc có dấu hỏi.** Trả lời rồi im lặng nghĩa là phiên đứng yên và người bệnh phải tự
+       nghĩ ra việc tiếp theo. Mọi câu của lane này phải kéo về hướng lâm sàng.
+    3. **Cấm trấn an** - xem `VIOLATION_REASSURANCE`.
+    """
+    violations: list[str] = []
+    stripped = (text or "").strip()
+    if not stripped:
+        return _record(GuardResult(ok=False, violations=[VIOLATION_EMPTY]))
+
+    lowered = stripped.casefold()
+    if "?" not in stripped:
+        violations.append(VIOLATION_NOT_A_QUESTION)
+    if any(name in lowered for name in DISEASE_NAMES):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if any(phrase in lowered for phrase in _TREATMENT_ADVICE):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if any(phrase in lowered for phrase in _REASSURANCE):
+        violations.append(VIOLATION_REASSURANCE)
+    if _UNSAFE_MARKDOWN.search(stripped):
+        violations.append(VIOLATION_UNSAFE_MARKDOWN)
+    if len(stripped) > _CHITCHAT_MAX_CHARS:
+        violations.append(VIOLATION_TOO_LONG)
+
+    return _record(GuardResult(ok=not violations, violations=violations))
+
+
 VIOLATION_INVENTED_DENIAL = "invented_denial"
 """Bản văn xuôi nói người bệnh PHỦ NHẬN một field đang là `unknown` - chưa ai hỏi tới.
 
