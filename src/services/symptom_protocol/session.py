@@ -30,11 +30,14 @@ from src.services.infra import console_log, provider_router
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra.provider_router import LLMCredential
 from src.services.symptom_protocol import (
+    chitchat,
+    compaction,
     controller,
     controller_shadow,
     coverage,
     dialogue,
     flags,
+    lane_model,
     non_clinical,
     red_flag_branches,
     registry,
@@ -102,6 +105,15 @@ class Session:
     đóng được nhóm nào ngoài đúng danh sách vừa đọc lên cho người bệnh."""
     current_cluster: QuestionCluster | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
+    """Bản ghi THÔ, đủ mọi lượt - kể cả phần đã được nén (§4.9 M2). Không cắt bớt ở đây: đây là thứ
+    điều dưỡng đọc lại và là nguồn của `HandoffSummary.raw_conversation`. Phần được nén là KHUNG NHÌN
+    gửi cho model (`compaction.history_view`), không phải bản ghi."""
+    conversation_summary: str = ""
+    """M2 - bản tóm tắt các lượt cũ đã bị nén. **Không bao giờ được ghi ngược vào `answers`**: nó là
+    văn xuôi không có `evidence_span`, còn snapshot thì có. Bất đồng thì snapshot thắng."""
+    summarized_turns: int = 0
+    """Số lượt ĐẦU của `conversation` đã nằm trong `conversation_summary`. Con số này là ranh giới
+    giữa "đã nén" và "còn thô" - giữ nó thay vì cắt list để bản ghi thô không bị mất."""
     turn_count: int = 0
     last_question: str = ""
     llm_used_last_turn: bool = False
@@ -296,11 +308,22 @@ class ProtocolSessionStore:
       protocol đó, không có lượt mở - caller đã tuyên bố đây là ca gì."""
 
     def __init__(
-        self, default_protocol: SymptomProtocol | None = None, *, persist: object | None = None,
+        self,
+        default_protocol: SymptomProtocol | None = None,
+        *,
+        persist: object | None = None,
+        recall: object | None = None,
     ) -> None:
         self.protocol = default_protocol
         self._sessions: dict[str, Session] = {}
         self._persist = persist
+        self._recall = recall
+        """Hàm `(user_id) -> str` trả câu hỏi thăm phiên trước, hoặc `None` = tắt M3 (§4.9).
+
+        Tiêm vào vì đúng lý do như `persist`, cộng một lý do bắt buộc: `history_recall` đọc
+        `conversation_store`, mà `conversation_store` import chính module này để dựng lại `Session`.
+        Import thẳng ở đây là một vòng import - còn tiêm vào thì không, và chỗ nối hai đầu là
+        `services/sessions/symptom_session.py`, nơi đã biết cả hai."""
         """Kho bền (§4.9 M1). `None` = chỉ in-memory, đúng hành vi cũ.
 
         Tiêm vào chứ không import thẳng `conversation_store`: hàng trăm test dựng store này mà không
@@ -339,10 +362,39 @@ class ProtocolSessionStore:
         return restored
 
     def _remember(self, session: Session) -> None:
-        """Ghi lại phiên sau MỘT lượt đã được nhận. Không bao giờ ném - `conversation_store.save` đã
-        nuốt lỗi, và mất một lần persist không được làm hỏng lượt người bệnh đang trả lời."""
+        """Chốt sổ sau MỘT lượt đã được nhận: nén context nếu cần (M2) rồi ghi lại (M1).
+
+        Nén ĐỨNG TRƯỚC ghi, và ở cùng một chỗ, vì hai việc trả lời cùng một câu hỏi - "một lượt vừa
+        được nhận thì phải làm gì" - và tách chúng ra là tạo hai danh sách 8 điểm gọi phải nhớ đồng
+        bộ với nhau.
+
+        Nén KHÔNG phụ thuộc `self._persist`: một store thuần in-memory (mọi test) vẫn phải nén, vì
+        ngưỡng context là ngưỡng của model chứ không phải của database.
+
+        Không bao giờ ném - `compaction.maybe_compact` và `conversation_store.save` đều đã nuốt lỗi,
+        và mất một lần nén/persist không được làm hỏng lượt người bệnh đang trả lời."""
+        compaction.maybe_compact(session, credential=session.credential)
         if self._persist is not None:
             self._persist.save(session, user_id=session.user_id)
+
+    def _with_recall(self, user_id: int, question: str) -> str:
+        """Ghép câu hỏi thăm phiên trước (M3) vào TRƯỚC câu mở, nếu có.
+
+        Hỏi thăm rồi mới hỏi bệnh, không phải ngược lại: đảo thứ tự thì câu hỏi thăm đứng sau một câu
+        hỏi mở và người bệnh chỉ trả lời câu cuối cùng họ đọc.
+
+        Câu hỏi thăm KHÔNG đặt kỳ vọng phải trả lời: người bệnh bỏ qua nó để kể luôn chuyện hôm nay
+        là hành vi đúng, và lượt mở vẫn trích xuất bình thường vì nó vốn đọc lời kể tự do.
+
+        Không bao giờ ném - lỗi ở tầng hỏi thăm không được chặn người bệnh bắt đầu kể bệnh."""
+        if self._recall is None or not question:
+            return question
+        try:
+            greeting = (self._recall(user_id) or "").strip()
+        except Exception as error:
+            logger.warning("history recall skipped user=%s: %s", user_id, error)
+            return question
+        return f"{greeting}\n\n{question}" if greeting else question
 
     def _require(self, session_id: str) -> Session:
         session = self.get(session_id)
@@ -351,14 +403,24 @@ class ProtocolSessionStore:
         return session
 
     def start_session(
-        self, credential: LLMCredential | None = None, *, protocol_name: str | None = None,
+        self,
+        credential: LLMCredential | None = None,
+        *,
+        protocol_name: str | None = None,
+        user_id: int = 0,
     ) -> Session:
+        """`user_id` phải truyền NGAY từ lượt mở, không gán sau.
+
+        Hai thứ cần nó trước khi phiên phát ra câu đầu tiên: khoá persist `(conversation_id, user_id)`
+        (M1) và câu hỏi thăm phiên trước (M3) - mà câu hỏi thăm thì chỉ có đúng một chỗ để xuất hiện,
+        là câu mở. Gán `session.user_id` sau khi `start_session` trả về là muộn hơn cả hai."""
         pinned = protocol_name or (self.protocol.name if self.protocol is not None else None)
         if pinned is None:
-            return self._start_open_session(credential)
+            return self._start_open_session(credential, user_id=user_id)
 
         protocol = registry.protocol_for(pinned)
         session = self.create(credential or protocol.default_credential)
+        session.user_id = user_id
         session.protocol_name = protocol.name
         session.protocol_pinned = True
         session.phase = SessionPhase.COLLECTING
@@ -386,7 +448,9 @@ class ProtocolSessionStore:
         # Đó đúng là cảm giác biểu mẫu mà việc gộp sinh ra để xoá. Từ lượt thứ hai trở đi `run_turn`
         # có LLM viết lại thành câu liền mạch nên gộp mới có lãi.
         session.current_cluster = cluster
-        session.last_question = cluster.script_hint if cluster is not None else ""
+        session.last_question = self._with_recall(
+            user_id, cluster.script_hint if cluster is not None else "",
+        )
         if session.last_question:
             session.conversation.append({"role": "assistant", "content": session.last_question})
 
@@ -395,13 +459,14 @@ class ProtocolSessionStore:
         console_log.agent_question(session.session_id, session.last_question, llm_used=False)
         return session
 
-    def _start_open_session(self, credential: LLMCredential | None) -> Session:
+    def _start_open_session(self, credential: LLMCredential | None, *, user_id: int = 0) -> Session:
         """Phiên bắt đầu bằng lượt mở: chưa có protocol, chưa có stage, chưa có cụm nào."""
         session = self.create(credential)
+        session.user_id = user_id
         session.phase = SessionPhase.OPENING
         session.stage = ""
         session.current_cluster = None
-        session.last_question = registry.OPENING_QUESTION
+        session.last_question = self._with_recall(user_id, registry.OPENING_QUESTION)
         session.conversation.append({"role": "assistant", "content": session.last_question})
         stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
 
@@ -463,7 +528,7 @@ class ProtocolSessionStore:
         # cảm ơn KÈM câu trả lời, không phải một lượt tán gẫu - cắt nó ra khỏi luồng lâm sàng sẽ làm
         # mất chính dữ kiện người bệnh vừa nói.
         lane = (
-            non_clinical.classify(cleaned)
+            self._route_non_clinical(cleaned)
             if session.current_cluster is None or session.phase is SessionPhase.OPENING
             else non_clinical.NonClinicalVerdict()
         )
@@ -527,7 +592,7 @@ class ProtocolSessionStore:
             protocol_name=session.protocol_name,
             asked_ids=session.closed_ids_for_current_protocol(),
             retry_count=session.retry_count_by_cluster.get(session.cluster_key(cluster.id), 0),
-            conversation=list(session.conversation),
+            conversation=compaction.history_view(session),
             credential=session.credential,
             on_token=on_token,
             # Phiên đã ghim protocol thì KHÔNG truyền hàm chọn - caller tuyên bố đây là ca gì, hệ
@@ -665,7 +730,7 @@ class ProtocolSessionStore:
             answers=session.answers,
             select_protocol=registry.select_protocol,
             protocol_for=registry.protocol_for,
-            conversation=list(session.conversation),
+            conversation=compaction.history_view(session),
             credential=session.credential,
             on_token=on_token,
         )
@@ -793,10 +858,28 @@ class ProtocolSessionStore:
             },
         )
 
+    @staticmethod
+    def _route_non_clinical(message: str) -> non_clinical.NonClinicalVerdict:
+        """Sàn keyword trước, model sau — và model CHỈ được hỏi khi sàn không quyết được.
+
+        Hai tầng chứ không phải một, vì chúng giỏi hai việc khác nhau: keyword chính xác tuyệt đối
+        trên những gì nó biết và mù hoàn toàn với phần còn lại; model phủ được phần đuôi dài (kể cả
+        tiếng nước ngoài - nó đa ngữ) nhưng không bao giờ chắc chắn 100%.
+
+        Thứ tự này là thứ giữ cho tầng model không đụng được vào an toàn: tin nhắn đã có dấu hiệu
+        lâm sàng thì `keyword_verdict.is_undecided` là `False`, và model không hề được gọi."""
+        keyword = non_clinical.classify(message)
+        return lane_model.classify(message, keyword_verdict=keyword)
+
     def _answer_non_clinical(
         self, session: Session, message: str, lane: non_clinical.NonClinicalVerdict,
     ) -> Session:
-        """Lượt phi lâm sàng: trả lời bằng văn bản TĨNH, KHÔNG gọi model, KHÔNG đổi trạng thái lâm sàng.
+        """Lượt phi lâm sàng: LLM viết câu trả lời (guard chấm, tĩnh đỡ), KHÔNG đổi trạng thái lâm sàng.
+
+        Trước 2026-08-23 lượt này đọc thẳng văn bản tĩnh. Điều đó an toàn tuyệt đối nhưng không phải
+        một câu TRẢ LỜI: người bệnh chào, hệ thống lặp lại câu hỏi mở. Nay model viết câu trả lời,
+        còn phần an toàn giữ nguyên bằng code ở cả hai đầu - xem `chitchat.compose`.
+
 
         Ba thứ cố ý không đụng tới - và đây là toàn bộ lý do lane này an toàn:
 
@@ -811,18 +894,35 @@ class ProtocolSessionStore:
         session.turn_count += 1
         console_log.user_message(session.session_id, message, turn=session.turn_count)
         session.conversation.append({"role": "user", "content": message})
-        reply = non_clinical.reply_for(lane.lane, variant_key=session.turn_count)
+        static_reply = non_clinical.reply_for(lane.lane, variant_key=session.turn_count)
+        # LLM viết câu trả lời; câu tĩnh vừa là Ý CẦN NÓI trong prompt vừa là lưới đỡ. Ba đường hỏng
+        # (tắt cờ / model chết / guard từ chối) đều rơi về đúng `static_reply`.
+        reply, llm_used = chitchat.compose(
+            message,
+            lane.lane,
+            fallback=static_reply,
+            conversation=session.conversation[:-1],
+            credential=session.credential,
+        )
         session.conversation.append({"role": "assistant", "content": reply})
         session.last_question = reply
-        session.llm_used_last_turn = False
+        session.llm_used_last_turn = llm_used
         stage_log.step(
             session.session_id, turn=session.turn_count, stage=session.stage or "OPEN",
             cluster_id=session.current_cluster.id if session.current_cluster else "OPEN",
             event="agent_message", input=None,
-            output={"non_clinical_lane": lane.lane.value, "matched": list(lane.matched), "text": reply},
-            llm_used=False,
+            output={
+                "non_clinical_lane": lane.lane.value,
+                "matched": list(lane.matched),
+                # Ai ra phán quyết lane, và chắc tới đâu - đây là số liệu để quyết định có nên nới
+                # ngưỡng model hay không, và nó phải đo được mà không cần bật lại log gỡ lỗi.
+                "lane_source": lane.source,
+                "lane_score": round(lane.score, 3),
+                "text": reply,
+            },
+            llm_used=llm_used,
         )
-        console_log.agent_question(session.session_id, reply, llm_used=False)
+        console_log.agent_question(session.session_id, reply, llm_used=llm_used)
         self._remember(session)
         return session
 
@@ -915,7 +1015,7 @@ class ProtocolSessionStore:
         )
         question, llm_used = agent.generate_question(
             protocol, cluster, answers=session.answers, plan=response_plan,
-            conversation=list(session.conversation), credential=session.credential, on_token=on_token,
+            conversation=compaction.history_view(session), credential=session.credential, on_token=on_token,
         )
         session.llm_used_last_turn = llm_used
         session.last_question = question

@@ -50,8 +50,13 @@ from src.services.infra.auth import (
 from src.services.sessions import red_flag_sla, summary_render, symptom_case_bridge, symptom_session
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.case_store import case_store
+from src.services.stores.conversation_store import conversation_store
 from src.services.symptom_protocol import registry
-from src.services.symptom_protocol.session import EmptyMessageError, SessionNotFoundError
+from src.services.symptom_protocol.session import (
+    EmptyMessageError,
+    SessionNotFoundError,
+    SessionState,
+)
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
 
@@ -239,7 +244,9 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
     if session_id is None or symptom_session.session_store.get(session_id, user_id=patient_id) is None:
         # Chưa có phiên, hoặc phiên không khôi phục được. Từ M1 (§4.9) `store.get` đã tra cả kho bền,
         # nên nhánh này giờ chỉ còn là case MỚI thật sự - phiên đang dở sống được qua restart.
-        session_id = symptom_session.session_store.start_session().session_id
+        # `user_id` truyền NGAY từ lượt mở: khoá persist là `(conversation_id, user_id)` (M1) và câu
+        # hỏi thăm phiên trước (M3) chỉ có đúng một chỗ để xuất hiện, là câu mở.
+        session_id = symptom_session.session_store.start_session(user_id=patient_id).session_id
         previous = None
     # Nửa còn lại của khoá composite `user_id + conversation_id`. Gán ở đây vì store không biết gì về
     # xác thực, còn route thì không biết gì về vòng đời phiên - chỗ hai thứ gặp nhau là đây.
@@ -252,7 +259,24 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
 async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     await _save_with_graph_decision(triage_case)
+    _remember_nurse_summary(session, triage_case, patient_id=patient_id)
     return _patient_chat_response(triage_case)
+
+
+def _remember_nurse_summary(session, triage_case: TriageCase, *, patient_id: int) -> None:
+    """Ghi `nurse_summary_json` cho hội thoại - Memory M3 (§4.9).
+
+    CHỈ khi phiên đã đóng, vì hai lý do: phiếu của một phiên mới hỏi được 3 field không dùng vào việc
+    gì, và `summary.narrative` (thứ đáng lưu nhất) chỉ được sinh khi phiên đóng (ADR-006). Ghi mỗi
+    lượt là một lần UPDATE thừa cho mọi lượt của mọi phiên.
+
+    Ghi ở route chứ không trong `symptom_case_bridge`: `to_triage_case` là hàm THUẦN, và nó phải giữ
+    nguyên như vậy - đây là chỗ duy nhất biết cả `patient_id` lẫn phiếu vừa dựng."""
+    if session.state is SessionState.COLLECTING:
+        return
+    conversation_store.save_nurse_summary(
+        session.session_id, user_id=patient_id, summary=triage_case.summary.model_dump(mode="json"),
+    )
 
 
 _case_locks: dict[str, asyncio.Lock] = {}

@@ -54,6 +54,15 @@ ENV GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs \
     BERT_FULL_MODEL=danhnahh/bert_full \
     FUSION_FULL_MODEL=danhnahh/fusion_full
 
+# Cache Hugging Face nằm TRONG /app để nó đi theo layer được COPY sang stage runtime. Để mặc định
+# (~/.cache/huggingface) thì trọng số nằm trong home của user builder và biến mất ở stage cuối.
+ENV HF_HOME=/app/.hf_cache
+
+# Model phân loại lane phi lâm sàng (§4.10). ARG để tắt được khi muốn image mỏng: tắt thì app vẫn
+# chạy đúng bằng sàn keyword tất định, chỉ mất phần phủ ngôn ngữ ngoài danh sách cụm từ.
+ARG WITH_LANE_CLASSIFIER=true
+RUN if [ "$WITH_LANE_CLASSIFIER" = "true" ]; then python -m scripts.download_lane_classifier; fi
+
 # Gọi dạng `-m` chứ không phải `python scripts/xxx.py`: chạy trực tiếp file thì Python đặt
 # sys.path[0] = thư mục scripts/, nên `import src.config` chết với ModuleNotFoundError.
 #
@@ -68,7 +77,8 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
-    GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs
+    GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs \
+    HF_HOME=/app/.hf_cache
 
 # libgomp1: torch cần libgomp.so.1 lúc import. Ở bản một stage nó đi kèm build-essential; bỏ
 # build-essential ra rồi thì phải cài riêng, nếu không app chết ngay khi import torch.

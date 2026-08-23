@@ -28,6 +28,7 @@ from src.services.infra import provider_router
 from src.services.infra.json_output import parse_json_object
 from src.services.symptom_protocol import (
     batching,
+    compaction,
     controller,
     coverage,
     dialogue,
@@ -961,12 +962,25 @@ def _field_brief(protocol: SymptomProtocol, keys: tuple[str, ...]) -> str:
 
 
 def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
-    if not conversation:
+    """Cửa sổ hội thoại gửi cho model: bản tóm tắt phần cũ (nếu có) + `limit` lượt thô gần nhất.
+
+    Lượt mang vai `compaction.ROLE_SUMMARY` được tách ra xử lý RIÊNG chứ không đi qua `[-limit:]`:
+    nó là bản nén của hàng chục lượt trước đó, và để nó bị đẩy khỏi cửa sổ vì mấy lượt "vâng"/"không"
+    mới nhất là đánh mất đúng thứ việc nén sinh ra để giữ (§4.9 M2)."""
+    summary = " ".join(
+        str(turn.get("content", "")).strip()
+        for turn in conversation
+        if turn.get("role") == compaction.ROLE_SUMMARY
+    ).strip()
+    turns = [turn for turn in conversation if turn.get("role") != compaction.ROLE_SUMMARY]
+    if not turns and not summary:
         return "(chưa có lượt nào trước đó)"
-    recent = conversation[-limit:]
-    return "\n".join(
-        f"{'Người bệnh' if turn.get('role') == 'user' else 'Trợ lý'}: {turn.get('content', '')}" for turn in recent
-    )
+    lines = [f"(tóm tắt các lượt trước đó) {summary}"] if summary else []
+    lines += [
+        f"{'Người bệnh' if turn.get('role') == 'user' else 'Trợ lý'}: {turn.get('content', '')}"
+        for turn in turns[-limit:]
+    ]
+    return "\n".join(lines)
 
 
 # temperature cao hơn CHỈ dùng cho bước "diễn đạt lại câu hỏi" - không trích xuất field ở đây nên

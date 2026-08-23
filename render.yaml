@@ -113,6 +113,13 @@ services:
       - key: TAVILY_API_KEY
         sync: false
 
+      # ---- Memory (F04) ----
+      # M3 (ky uc xuyen phien) TAT tren production cho toi khi PM tra loi consent + retention bang
+      # van ban - xem _guidance/features/F04_memory.md muc 3 dieu kien 3. Bat = doi thanh "true".
+      # M2 (nen context) khong co cong tac: no chay mac dinh va khong doi hanh vi lam sang nao.
+      - key: LONG_MEMORY_ENABLED
+        value: "false"
+
       # ---- Graph triage agent (src/graph_triage/) ----
       # TẮT trên plan free: 512 MB không đủ nạp PhoBERT + fusion. Đây là "ý kiến tham khảo thứ hai",
       # không bao giờ quyết định TriageProposal.priority, nên tắt không ảnh hưởng luồng chính.
