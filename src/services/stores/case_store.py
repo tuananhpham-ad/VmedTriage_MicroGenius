@@ -12,13 +12,16 @@ Hình dạng bảng và lý do dùng cột JSON: xem `src/models/case_record.py`
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 
 from src.database import session_scope
 from src.models.case_record import TriageCaseRow
-from src.models.schemas import TriageCase
+from src.models.schemas import CaseStatus, TriageCase
+
+CaseUpdater = Callable[[TriageCase], None]
 
 
 class SqliteCaseStore:
@@ -34,6 +37,24 @@ class SqliteCaseStore:
             if row is None:
                 row = TriageCaseRow(case_id=triage_case.case_id, created_at=triage_case.created_at)
                 session.add(row)
+            self._write_columns(row, triage_case)
+        return triage_case
+
+    def update_if_unapproved(self, case_id: str, updater: CaseUpdater) -> TriageCase | None:
+        """Apply an update to the newest case snapshot unless a nurse has approved it.
+
+        Background safety work must not read an old pending case and later overwrite an approval.
+        The check and write intentionally share one database transaction.
+        """
+        with session_scope() as session:
+            row = session.get(TriageCaseRow, case_id)
+            if row is None:
+                return None
+            triage_case = TriageCase.model_validate(row.payload)
+            if triage_case.status is CaseStatus.APPROVED:
+                return None
+            updater(triage_case)
+            triage_case.updated_at = datetime.now(timezone.utc)
             self._write_columns(row, triage_case)
         return triage_case
 
@@ -75,6 +96,14 @@ class InMemoryCaseStore:
     def save(self, triage_case: TriageCase) -> TriageCase:
         triage_case.updated_at = datetime.now(timezone.utc)
         self._cases[triage_case.case_id] = triage_case
+        return triage_case
+
+    def update_if_unapproved(self, case_id: str, updater: CaseUpdater) -> TriageCase | None:
+        triage_case = self._cases.get(case_id)
+        if triage_case is None or triage_case.status is CaseStatus.APPROVED:
+            return None
+        updater(triage_case)
+        triage_case.updated_at = datetime.now(timezone.utc)
         return triage_case
 
     def list_cases(self) -> list[TriageCase]:

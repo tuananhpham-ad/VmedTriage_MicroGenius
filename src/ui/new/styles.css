@@ -177,9 +177,20 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .header-identity { display:grid; gap:1px; text-align:right; }
 .header-identity b { font-size:13.5px; font-weight:500; }
 .header-identity small { color:var(--faint); font-size:12px; }
-.live-chip { display:inline-flex; align-items:center; gap:6px; border-radius:var(--r-pill); padding:6px 11px; background:var(--blue-soft); color:var(--blue); font-size:12.5px; font-weight:500; }
-.live-chip::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; animation:vmt-pulse 1.8s ease-in-out infinite; }
-.page { flex:1; width:min(1320px, 100%); margin:0 auto; padding:24px clamp(16px, 3vw, 26px) 34px; }
+/* Trang KHÔNG khoá `max-width` nữa: 1320px để lại một dải trống lớn hai bên trên màn rộng. Thay vào
+   đó lề ngang giãn theo khung nhìn (`clamp` với đơn vị vw), nên nội dung nở ra theo màn mà vẫn có
+   khoảng thở ở mép. Các thẻ chữ dài vẫn tự chặn bề rộng đọc bằng `max-width` của riêng chúng. */
+.page { flex:1; width:100%; margin:0 auto; padding:24px clamp(16px, 4vw, 72px) 38px; }
+
+/* Khung ba màn điều dưỡng. `is-fixed` khoá app-shell vào đúng một khung nhìn rồi để `.nurse-main`
+   tự cuộn - nhờ vậy rail luôn cao hết màn hình mà CSS không cần biết header cao bao nhiêu.
+   Vùng nội dung KHÔNG cap `max-width`: màn này là bàn làm việc, màn rộng thì bảng phải rộng theo. */
+.app-shell.is-fixed { height:100dvh; min-height:0; overflow:hidden; }
+/* `--rail` phải được ĐĂNG KÝ mới chuyển động được: custom property không khai báo kiểu thì trình
+   duyệt coi nó là chuỗi và nhảy thẳng sang giá trị mới, không nội suy được. */
+@property --rail { syntax:"<length>"; inherits:true; initial-value:232px; }
+.nurse-body { display:grid; grid-template-columns:var(--rail, 232px) minmax(0, 1fr); flex:1; min-height:0; transition:--rail .24s cubic-bezier(.4, 0, .2, 1); }
+.nurse-main { min-width:0; overflow-y:auto; padding:24px clamp(16px, 3vw, 30px) 40px; scrollbar-color:var(--blue-line) transparent; }
 .card { border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 
 /* ── W-00P trang giới thiệu công khai ──────────────────────────────────────────────────────── */
@@ -349,8 +360,10 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .disclaimer-card .primary-button { flex:1; min-height:52px; font-size:16px; }
 
 /* ── W-03 khai báo triệu chứng ─────────────────────────────────────────────────────────────── */
-.chat-grid { display:grid; grid-template-columns:minmax(0, 1fr) 344px; gap:20px; align-items:start; }
-.chat-panel { display:flex; flex-direction:column; height:640px; overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
+.chat-grid { display:grid; grid-template-columns:minmax(0, 1fr) clamp(300px, 24%, 420px); gap:clamp(16px, 1.6vw, 26px); align-items:start; }
+/* Chiều cao theo khung nhìn thay vì 640px cứng: màn 1080px thì khung chat cao gần gấp rưỡi màn
+   laptop 13", còn màn thấp thì không bị đẩy tràn xuống dưới. */
+.chat-panel { display:flex; flex-direction:column; height:clamp(420px, 68dvh, 860px); overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 /* G1 — dải năng lực. Không phải trang trí: nó là chỗ DUY NHẤT phạm vi của trợ lý được nhắc lại
    trong lúc người bệnh đang thực sự trò chuyện với nó (disclaimer W-02 chỉ hiện một lần đầu phiên).
    Đừng gỡ, đừng rút gọn thành "AI hỗ trợ". */
@@ -369,6 +382,7 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .bubble.is-patient { align-self:flex-end; border-radius:14px 14px 4px 14px; color:#fff; background:var(--blue); }
 .bubble.is-system, .bubble.is-error, .bubble.is-pending { text-align:center; text-align-last:center; }
 .bubble.is-system { align-self:center; display:flex; align-items:center; gap:7px; max-width:90%; border:1px solid var(--blue-line); border-radius:var(--r-pill); padding:6px 13px; color:var(--blue-deep); background:var(--blue-soft); font-size:12.5px; font-weight:500; }
+.bubble.is-nurse { align-self:flex-start; border:1px solid var(--green-line); border-radius:14px 14px 14px 4px; color:var(--green-deep); background:var(--green-soft); }
 .bubble.is-pending { align-self:flex-start; display:flex; align-items:center; gap:9px; border:1px solid var(--line); border-radius:14px 14px 14px 4px; color:var(--muted); background:var(--surface-soft); font-size:14px; }
 .bubble.is-error { align-self:center; max-width:90%; border:1px solid var(--red-line); color:var(--red-deep); background:var(--red-soft); font-size:13.5px; text-align:center; }
 /* Con trỏ nhấp nháy phân biệt "đang viết tiếp" với "đã viết xong": thiếu nó, một câu bị cắt giữa
@@ -490,31 +504,59 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .alert-card p { margin:0; color:var(--muted-2); font-size:14px; line-height:1.55; text-wrap:pretty; }
 
 /* ── W-06 hàng đợi ─────────────────────────────────────────────────────────────────────────── */
-.queue-grid { display:grid; grid-template-columns:236px minmax(0, 1fr); gap:20px; align-items:start; }
+/* Bảng nằm TRƯỚC trong luồng đọc, tổng quan đẩy sang phải: danh sách ca là thứ điều dưỡng quét, còn
+   hai con số tổng thì liếc. Cột phải hẹp hơn cột lọc cũ vì nó không còn phải chứa 5 dòng bộ lọc. */
 .queue-side { display:flex; flex-direction:column; gap:16px; }
-.filter-card { border:1px solid var(--line); border-radius:13px; padding:16px; background:var(--surface); }
-.filter-card .section-label { display:block; margin-bottom:12px; }
-.filter-list { display:flex; flex-direction:column; gap:4px; }
-.filter-button { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; border:0; border-radius:8px; padding:9px 11px; color:var(--muted-2); background:transparent; font-size:14px; text-align:left; }
-.filter-button:hover { background:var(--surface-soft); }
-.filter-button.is-active { color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
-.filter-button > span:first-child { display:flex; align-items:center; gap:9px; }
-.filter-button b { color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums; }
-.filter-button.is-active b { color:inherit; font-weight:600; }
-.filter-card label { display:grid; gap:7px; margin-top:14px; }
-.filter-card input { min-height:40px; font-size:14px; }
-.shift-card { color:var(--muted-2); font-size:14px; line-height:1.6; }
-.shift-card small { color:var(--faint); }
-.shift-card b { color:var(--muted-2); font-weight:600; font-variant-numeric:tabular-nums; }
+
+/* Bộ lọc chuyển từ cột trái vào ngay trên bảng: bộ lọc và thứ nó lọc phải nằm cùng một chỗ, và bỏ
+   cột trái trả lại ~236px chiều ngang cho các cột dữ liệu của bảng. */
+.queue-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; border:1px solid var(--line); border-radius:13px; padding:11px 13px; margin-bottom:14px; background:var(--surface); }
+.filter-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.filter-chip { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:var(--r-pill); padding:7px 13px; color:var(--muted-2); background:var(--surface); font-size:13.5px; font-weight:500; white-space:nowrap; }
+.filter-chip:hover { background:var(--surface-soft); }
+.filter-chip.is-active { border-color:var(--blue-line); color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
+.filter-chip b { color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums; }
+.filter-chip.is-active b { color:inherit; font-weight:600; }
+.queue-search { flex:1; min-width:180px; max-width:290px; }
+.queue-search input { width:100%; min-height:38px; font-size:14px; }
+
+/* Thanh điều hướng bên trái - dải dọc cao hết màn hình, không phải một thẻ nổi. Mục đang mở có
+   vạch màu bên trái + nền xanh nhạt; nhãn nhóm chia các mục thành từng cụm đọc được. */
+.queue-side { position:relative; display:flex; flex-direction:column; gap:2px; overflow-y:auto; padding:14px 12px 18px; border-right:1px solid var(--line); background:var(--surface); }
+.nav-list { display:flex; flex-direction:column; gap:2px; }
+.nav-group { margin:16px 0 6px; padding-left:11px; color:var(--faint); font-size:11.5px; font-weight:500; letter-spacing:.02em; transition:font-size .24s cubic-bezier(.4, 0, .2, 1), margin .24s cubic-bezier(.4, 0, .2, 1), color .16s ease; }
+.nav-list > .nav-group:first-child { margin-top:2px; }
+.nav-item { position:relative; display:flex; align-items:center; gap:12px; overflow:hidden; width:100%; border:0; border-radius:9px; padding:10px 11px; color:var(--muted-2); background:transparent; font-size:14px; text-align:left; transition:gap .24s cubic-bezier(.4, 0, .2, 1), background-color .15s ease, color .15s ease; }
+.nav-item:hover { background:var(--surface-soft); }
+.nav-item.is-on { color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
+/* Vạch chỉ báo nằm ở MÉP RAIL, không phải mép nút - nó chỉ ra "bạn đang ở nhánh này", giống bản
+   tham chiếu; vẽ bằng ::before nên không làm nút xê dịch khi đổi trạng thái. */
+.nav-item.is-on::before { content:""; position:absolute; top:7px; bottom:7px; left:-12px; width:3px; border-radius:0 3px 3px 0; background:var(--blue); }
+.nav-glyph { display:grid; flex:none; place-items:center; width:17px; height:17px; }
+.nav-text { flex:1; max-width:180px; white-space:nowrap; overflow:hidden; transition:max-width .24s cubic-bezier(.4, 0, .2, 1), opacity .16s ease; }
+.nav-count { max-width:40px; overflow:hidden; color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums; transition:max-width .24s cubic-bezier(.4, 0, .2, 1), opacity .16s ease; }
+.nav-item.is-on .nav-count { color:inherit; font-weight:600; }
+
+.nav-toggle { display:flex; align-items:center; justify-content:center; align-self:flex-end; flex:none; width:28px; height:28px; border:1px solid var(--line); border-radius:50%; color:var(--faint); background:var(--surface); transition:transform .24s cubic-bezier(.4, 0, .2, 1), color .15s ease, background-color .15s ease; }
+.nav-toggle:hover { color:var(--muted-2); background:var(--surface-soft); }
+
+/* Thu gọn: chỉ còn dải icon. Nhãn bóp về bề rộng 0 + mờ đi chứ KHÔNG `display:none` - thuộc tính
+   `display` không chuyển động được, đặt nó thì nhãn biến mất giật cục giữa lúc rail đang trượt.
+   Rộng 0 + `gap:0` nên icon vẫn nằm đúng tâm dải. Bề rộng rail đổi qua `--rail`, lưới tự co theo. */
+.nurse-body:has(.queue-side.is-collapsed) { --rail:68px; }
+.queue-side.is-collapsed .nav-text, .queue-side.is-collapsed .nav-count { max-width:0; opacity:0; }
+.queue-side.is-collapsed .nav-group { overflow:hidden; margin:14px 0 6px; padding:0; border-top:1px solid var(--divider); color:transparent; font-size:0; }
+.queue-side.is-collapsed .nav-item { justify-content:center; gap:0; padding-inline:0; }
+.queue-side.is-collapsed .nav-toggle { align-self:center; transform:rotate(180deg); }
 
 .queue-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:16px; }
 .queue-head h1 { margin:0; font-size:22px; font-weight:600; }
 .queue-head p { margin:3px 0 0; color:var(--muted); font-size:13.5px; }
 .polling-chip { display:flex; align-items:center; gap:8px; color:var(--faint); font-size:13px; }
 .polling-chip .ico { animation:vmt-spin 4s linear infinite; }
-.queue-table { display:flex; flex-direction:column; max-height:calc(100dvh - 250px); gap:8px; overflow-y:auto; padding:8px 8px 8px 0; scrollbar-color:var(--blue-line) transparent; scrollbar-gutter:stable; }
+.queue-table { display:flex; flex-direction:column; gap:8px; padding-top:8px; }
 .queue-head-row, .queue-row { display:grid; grid-template-columns:16px 136px minmax(0, 1fr) 176px 132px 112px; gap:16px; align-items:center; }
-.queue-head-row { position:sticky; top:-8px; z-index:1; padding:8px 18px 5px; background:var(--surface-soft); }
+.queue-head-row { position:sticky; top:0; z-index:1; padding:10px 18px 6px; background:var(--surface-soft); }
 .queue-head-row .align-right { text-align:right; }
 .queue-row { border:1px solid var(--line); border-radius:12px; padding:17px 18px; color:var(--ink); background:var(--surface); text-align:left; }
 .queue-row:hover { background:var(--surface-soft); }
@@ -537,8 +579,79 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .sla-badge.is-warning { color:var(--amber-deep); background:var(--amber-soft); }
 .sla-badge.is-breached { color:var(--red-deep); background:var(--red-soft); }
 
+/* ── W-08 bảng điều khiển ──────────────────────────────────────────────────────────────────────
+   Quy ước biểu đồ theo skill dataviz: nét mảnh, lưới lùi về sau, chữ KHÔNG BAO GIỜ mang màu series
+   (nhận diện đến từ chấm/nét màu đứng CẠNH chữ), và mọi giá trị đều đọc được mà không cần hover. */
+.kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(168px, 1fr)); gap:12px; margin-bottom:16px; }
+.kpi-tile { display:flex; flex-direction:column; gap:5px; border:1px solid var(--line); border-radius:var(--r-card); padding:15px 16px; background:var(--surface); }
+.kpi-label { color:var(--muted); font-size:12.5px; font-weight:500; }
+.kpi-value { color:var(--ink); font-size:26px; font-weight:600; line-height:1.15; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.kpi-note { color:var(--faint); font-size:12px; line-height:1.45; }
+
+.chart-row { display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(0, 1fr); gap:16px; margin-bottom:16px; }
+.chart-card { border:1px solid var(--line); border-radius:var(--r-card); padding:16px 18px 18px; background:var(--surface); }
+.chart-card > .chart-plot, .chart-card > .bar-list { flex:1; }
+.chart-head { display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+.chart-head h2 { margin:0; color:var(--ink); font-size:15px; font-weight:600; }
+.chart-sub { color:var(--faint); font-size:12.5px; }
+.chart-legend { display:flex; gap:14px; color:var(--muted); font-size:12.5px; }
+.chart-legend span { display:inline-flex; align-items:center; gap:7px; }
+.key-line { display:inline-block; flex:none; width:14px; height:2px; border-radius:2px; }
+
+.chart-plot { position:relative; }
+.chart-plot svg { display:block; width:100%; height:auto; }
+.axis-text { fill:var(--faint); font-size:11px; }
+.end-label { fill:var(--muted-2); font-size:12px; font-weight:600; }
+.crosshair[hidden] { display:none; }
+/* Tooltip: GIÁ TRỊ là thứ đậm, tên series lùi lại - ngược với legend, vì ở đây người đọc đã biết
+   series và đang cần con số. */
+.chart-tip { position:absolute; top:6px; transform:translateX(-50%); pointer-events:none; border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--surface); box-shadow:var(--shadow-menu); white-space:nowrap; }
+.chart-tip[hidden] { display:none; }
+.tip-head { margin-bottom:5px; color:var(--muted); font-size:11.5px; font-weight:600; }
+.tip-row { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; }
+.tip-row b { margin-left:auto; padding-left:12px; color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+
+/* Thẻ là cột dọc để phần thân nhận hết chiều cao còn lại - nếu không, hình tròn giữ nguyên 132px và
+   phần dưới thẻ bỏ trống một mảng lớn (thẻ bị kéo cao bằng biểu đồ đường bên cạnh). */
+.chart-card { display:flex; flex-direction:column; }
+.donut-wrap { display:flex; flex:1; align-items:center; gap:18px; flex-wrap:wrap; }
+/* Hình tròn co giãn theo bề rộng thẻ thay vì cố định 132px. KHÔNG đặt `max-height` kèm
+   `aspect-ratio`: bề rộng đã do flex chốt nên chặn chiều cao sẽ bóp méo hình tròn thành bầu dục.
+   Chữ bên trong nằm trong viewBox nên tự lớn theo. */
+.donut { flex:1 1 44%; min-width:118px; max-width:224px; height:auto; aspect-ratio:1; }
+/* Chỉ chạy khi VÀO màn - class `is-drawing` do JS gắn cho đúng lần vẽ đầu tiên, không gắn lại ở các
+   lần vẽ do polling hay đổi bộ lọc. Mỗi lát chạy từ độ dài 0 tới đúng `stroke-dasharray` của chính
+   nó: `both` lấy giá trị đã đặt sẵn trên phần tử làm khung hình cuối, nên không phải viết `to` riêng
+   cho từng lát. `--circ` (chu vi) đặt inline khi dựng. */
+@keyframes donut-draw { from { stroke-dasharray:0 var(--circ); } }
+@keyframes donut-fade { from { opacity:0; } }
+.donut.is-drawing circle[data-arc] { animation:donut-draw .7s cubic-bezier(.32, .72, .3, 1) both; }
+.donut.is-drawing .donut-total, .donut.is-drawing .donut-caption { animation:donut-fade .5s ease .3s both; }
+.donut-total { fill:var(--ink); font-size:26px; font-weight:600; }
+.donut-caption { fill:var(--faint); font-size:11px; }
+/* Danh sách này ĐỒNG THỜI là legend và bảng số liệu - nhờ nó mọi lát bánh đều đọc được giá trị mà
+   không cần phân biệt màu. */
+.donut-table { display:flex; flex-direction:column; flex:1 1 52%; min-width:150px; gap:8px; margin:0; padding:0; list-style:none; }
+.donut-table li { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+/* Nhãn KHÔNG giãn: để `flex:1` thì số bị đẩy sang tận mép phải và tách rời khỏi nhãn nó thuộc về.
+   `min-width` vừa đủ chứa nhãn dài nhất ("Tự theo dõi") nên các cột số vẫn thẳng hàng nhau. */
+.donut-name { min-width:84px; }
+.donut-table b { min-width:16px; color:var(--ink); font-weight:600; text-align:right; font-variant-numeric:tabular-nums; }
+.donut-share { min-width:34px; color:var(--faint); font-size:12px; text-align:right; font-variant-numeric:tabular-nums; }
+
+.bar-list { display:flex; flex-direction:column; gap:10px; margin:0; padding:0; list-style:none; }
+.bar-row { display:grid; grid-template-columns:118px minmax(0, 1fr) 40px; gap:12px; align-items:center; border-radius:8px; color:var(--muted); font-size:13px; }
+.bar-row.is-hover { background:var(--surface-soft); }
+.bar-row:focus-visible { outline:2px solid var(--blue-line); outline-offset:3px; }
+.bar-track { height:16px; border-radius:4px; background:var(--surface-mute); }
+/* Cột cao ≤24px, bo 4px ở ĐẦU DỮ LIỆU và vuông ở gốc - mọi cột mọc từ cùng một đường gốc. */
+.bar-fill { display:block; height:100%; border-radius:0 4px 4px 0; background:var(--faint-2); transition:width .25s ease; }
+.bar-row.is-on .bar-fill { background:var(--blue); }
+.bar-row.is-on { color:var(--ink-2); font-weight:600; }
+.bar-value { color:var(--ink); font-weight:600; text-align:right; font-variant-numeric:tabular-nums; }
+
 /* ── W-07 duyệt ca ─────────────────────────────────────────────────────────────────────────── */
-.review-grid { display:grid; grid-template-columns:1.35fr 1fr; gap:20px; align-items:start; }
+.review-grid { display:grid; grid-template-columns:minmax(0, 1.5fr) minmax(360px, 1fr); gap:clamp(16px, 1.6vw, 26px); align-items:start; }
 .review-main, .review-side { display:flex; flex-direction:column; gap:16px; }
 .record-card { overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 .record-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:17px 20px; border-bottom:1px solid var(--line); }
@@ -563,10 +676,9 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .provenance, .provenance .label { color:var(--faint-2); font-size:12.5px; line-height:1.5; }
 .provenance .value { flex:1; text-align:right; }
 .transcript { display:flex; flex-direction:column; gap:10px; max-height:420px; overflow-y:auto; padding:18px 20px; }
-.transcript .bubble { max-width:72%; padding:10px 13px; font-size:14px; }
-.transcript .bubble.is-agent { border-radius:12px 12px 12px 3px; }
+.transcript .bubble { max-width:min(78%, 620px); padding:10px 13px; font-size:14px; }
+.transcript .bubble.is-agent, .transcript .bubble.is-nurse { border-radius:12px 12px 12px 3px; }
 .transcript .bubble.is-patient { border-radius:12px 12px 3px 12px; }
-.transcript .bubble.is-system { padding:5px 12px; font-size:12px; }
 
 .redflag-callout { border:1px solid var(--red-line); border-left:4px solid var(--red); border-radius:var(--r-card); padding:20px; background:var(--surface); }
 .redflag-callout .head { display:flex; align-items:center; gap:9px; margin-bottom:10px; color:var(--red-deep); font-size:16.5px; font-weight:600; }
@@ -623,7 +735,7 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .advisory-label { margin:0 0 8px; font-size:15px; }
 .advisory-summary { margin:0 0 8px; color:var(--muted-2); font-size:14px; line-height:1.55; }
 .advisory-review { margin:0 0 8px; color:var(--red-deep); font-size:13px; font-weight:600; }
-.advisory-disclaimer { margin:0; color:var(--faint); font-size:12px; font-style:italic; }
+.advisory-disclaimer { margin:0; color:var(--red-deep); font-size:12px; font-style:italic; }
 .citation-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
 .citation-list li { font-size:13px; line-height:1.5; }
 .citation-list .marker { font-weight:600; color:var(--muted-2); }
@@ -652,6 +764,11 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .feature-icon.is-grey { color:var(--muted); background:var(--surface-mute); }
 .feature-row h3 { margin:0; font-size:16px; font-weight:600; letter-spacing:-.01em; }
 .feature-row p { margin:0; color:var(--muted); font-size:13.5px; line-height:1.55; text-wrap:pretty; }
+/* W-09 "Kết quả của tôi" - dùng lại đúng thẻ lịch sử của trang chủ nên bảng ở hai nơi không thể
+   lệch nhau; chỉ thêm khoảng cách giữa tiêu đề, thanh lọc và bảng. */
+.cases-page { display:flex; flex-direction:column; gap:16px; }
+.cases-page .history-body { padding:4px 20px 16px; }
+
 .history-card { overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 .history-card > .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--line); }
 .history-card > .head h2 { margin:0; font-size:16px; font-weight:600; letter-spacing:-.01em; }
@@ -679,14 +796,16 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 
 /* ── Dashboard bệnh nhân ──────────────────────────────────────────────────────────────────── */
 .patient-dashboard-shell { background:var(--surface-soft); }
-.patient-emergency-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px max(16px, calc((100% - 1280px) / 2)); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
+/* Lề ngang GIỐNG HỆT `.page` - dải này nằm ngoài `.page` nên nếu để công thức riêng thì chữ trong
+   dải sẽ lệch khỏi mép nội dung bên dưới ở mọi bề rộng màn hình. */
+.patient-emergency-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px clamp(16px, 4vw, 72px); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
 .patient-emergency-bar > div { display:flex; align-items:center; gap:9px; }
 .patient-emergency-signal { width:8px; height:8px; flex:none; border-radius:50%; background:#e11d48; box-shadow:0 0 0 4px rgb(225 29 72 / .12); }
 .patient-emergency-bar a { display:inline-flex; align-items:center; gap:6px; flex:none; border-radius:8px; padding:6px 10px; color:#fff; background:#be123c; font-size:12px; font-weight:600; }
 .patient-emergency-bar a:hover { color:#fff; background:#9f1239; text-decoration:none; }
 .patient-dashboard { display:flex; flex-direction:column; gap:22px; }
 .patient-dashboard-top { display:grid; grid-template-columns:minmax(0, 1.7fr) minmax(300px, .9fr); gap:22px; }
-.patient-action-hero { display:flex; flex-direction:column; justify-content:space-between; min-height:334px; overflow:hidden; border:1px solid #17385e; border-radius:var(--r-card-lg); padding:32px; color:#fff; background:linear-gradient(135deg, #123d70, #08284e); box-shadow:0 18px 38px rgb(11 45 83 / .15); }
+.patient-action-hero { display:flex; flex-direction:column; justify-content:space-between; min-height:clamp(300px, 34dvh, 420px); overflow:hidden; border:1px solid #17385e; border-radius:var(--r-card-lg); padding:32px; color:#fff; background:linear-gradient(135deg, #123d70, #08284e); box-shadow:0 18px 38px rgb(11 45 83 / .15); }
 .patient-action-copy { max-width:620px; }
 .patient-action-tag { display:inline-flex; align-items:center; gap:7px; margin-bottom:22px; border:1px solid rgb(159 199 248 / .3); border-radius:var(--r-pill); padding:5px 10px; color:#bfddff; background:rgb(52 120 203 / .2); font-size:12px; font-weight:600; }
 .patient-action-hero .home-hello { margin:0 0 6px; color:#b9d1ec; font-size:14px; }
@@ -701,7 +820,7 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .patient-action-note { display:flex; align-items:center; gap:8px; margin:0; color:#a9c6e5; font-size:12.5px; }
 .patient-action-availability { display:inline-flex; align-items:center; gap:7px; flex:none; border:1px solid rgb(147 197 253 / .22); border-radius:var(--r-pill); padding:5px 9px; color:#c9e1ff; background:rgb(10 44 83 / .35); font-size:11.5px; font-weight:600; }
 .patient-action-availability i, .case-ready-status i, .open-case-availability i { width:7px; height:7px; border-radius:50%; background:#24b47e; box-shadow:0 0 0 3px rgb(36 180 126 / .13); }
-.patient-dashboard .open-case-card { display:flex; flex-direction:column; min-height:334px; border-color:var(--line-2); border-radius:var(--r-card-lg); padding:24px; box-shadow:var(--shadow-lift); }
+.patient-dashboard .open-case-card { display:flex; flex-direction:column; min-height:clamp(300px, 34dvh, 420px); border-color:var(--line-2); border-radius:var(--r-card-lg); padding:24px; box-shadow:var(--shadow-lift); }
 .patient-dashboard .open-case-card .head { padding-bottom:12px; border-bottom:1px solid var(--divider); }
 .case-ready-status { display:inline-flex; align-items:center; gap:7px; color:var(--green-deep); font-size:11.5px; font-weight:600; }
 .open-case-empty-state { display:grid; justify-items:center; align-content:center; flex:1; padding:18px 0; text-align:center; }
@@ -735,7 +854,7 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .patient-dashboard .history-card { border-color:var(--line-2); border-radius:var(--r-card-lg); box-shadow:var(--shadow-lift); }
 .patient-dashboard .history-card > .head { padding:20px 24px; }
 .patient-dashboard .history-card > .head p { margin:4px 0 0; color:var(--muted); font-size:13px; }
-.patient-dashboard .history-body { width:min(100%, 1120px); margin-inline:auto; padding:4px 24px 18px; }
+.patient-dashboard .history-body { width:100%; padding:4px 24px 18px; }
 .patient-dashboard .col-label { color:var(--muted-2); font-size:11.5px; font-weight:700; letter-spacing:.01em; text-transform:none; }
 .history-all-link { display:inline-flex; align-items:center; gap:3px; flex:none; border:0; padding:6px 0; color:var(--blue); background:transparent; font-size:13px; font-weight:600; }
 .history-all-link:hover { color:var(--blue-dark); text-decoration:underline; }
@@ -835,7 +954,17 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .hero-figure { min-height:0; }
   .hero-rings, .hero-beat { display:none; }
   .trust-photo { min-height:260px; }
-  .chat-grid, .queue-grid, .review-grid, .result-grid { grid-template-columns:1fr; }
+  .chat-grid, .review-grid, .result-grid { grid-template-columns:1fr; }
+  /* Màn hẹp: rail luôn ở dạng thu gọn. Bỏ hẳn nó thì mất đường đi giữa các màn (header không còn
+     tab), nên giữ dải icon thay vì cho nó chiếm nửa màn hình. */
+  .nurse-body { --rail:56px; }
+  .queue-side .nav-text, .queue-side .nav-count { max-width:0; opacity:0; }
+  .queue-side .nav-group { overflow:hidden; margin:14px 0 6px; padding:0; border-top:1px solid var(--divider); color:transparent; font-size:0; }
+  .queue-side .nav-item { justify-content:center; gap:0; padding-inline:0; }
+  .queue-side .nav-toggle { display:none; }
+  .queue-toolbar { align-items:stretch; flex-direction:column; }
+  .queue-search { max-width:none; }
+  .chart-row { grid-template-columns:1fr; }
   .auth-shell { height:auto; min-height:100dvh; overflow:visible; padding:24px 16px; }
   .auth-card { grid-template-columns:1fr; width:100%; height:auto; }
   .auth-aside { border-right:0; border-bottom:1px solid var(--line); }

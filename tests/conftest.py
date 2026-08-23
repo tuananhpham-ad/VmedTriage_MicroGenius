@@ -27,6 +27,21 @@ def _source_support_off_by_default():
     settings.source_support_enabled = previous
 
 
+@pytest.fixture(autouse=True)
+def _graph_triage_off_by_default():
+    """Không để `.env` của developer làm test route gọi model thật.
+
+    Mode đều best-effort và mặc định nguồn là tắt, nhưng máy local có thể đang bật để thử tay. Test
+    nào cần kiểm C6 phải chọn mode tường minh và mock nhánh model; nhờ vậy suite không
+    treo ở network call ngoài ý muốn.
+    """
+    settings = get_settings()
+    previous_mode = settings.graph_triage_mode
+    settings.graph_triage_mode = "off"
+    yield
+    settings.graph_triage_mode = previous_mode
+
+
 @pytest_asyncio.fixture
 async def client(tmp_path):
     """Async HTTP client for testing API endpoints."""

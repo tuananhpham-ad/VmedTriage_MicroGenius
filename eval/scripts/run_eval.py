@@ -201,7 +201,7 @@ async def run_case_direct(case: dict[str, Any]) -> dict[str, Any]:
     Hệ quả: **baseline của §9 P0.2 phải chạy `--mode api`**, nếu không con số thu được là của một
     pipeline không ai dùng - và mọi so sánh "trước/sau" sau đó đều vô nghĩa.
     """
-    from src.services.case_store import InMemoryCaseStore
+    from src.services.stores.case_store import InMemoryCaseStore
 
     from src.services.triage_pipeline import TriagePipeline
 

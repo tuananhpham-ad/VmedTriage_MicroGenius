@@ -23,6 +23,12 @@ export const state = {
   // lượt trao đổi phía sau, mà bắn lại màn cảnh báo sau mỗi lượt thì người bệnh học cách bấm qua nó
   // mà không đọc - đúng thứ màn hình này tồn tại để chống lại.
   redFlagShownCaseId: null,
+  // Người bệnh mở ca này TỪ màn "Kết quả của tôi" hay đang khai báo một ca mới. Quyết định nút quay
+  // lại của màn chi tiết ca trỏ về đâu - hai lối vào cùng một màn hình nên không suy ra được từ
+  // trạng thái ca.
+  patientFromCases: false,
+  // Danh sách ca cho màn "Kết quả của tôi". Giữ ở state để đổi bộ lọc không phải gọi lại API.
+  patientCases: [],
 };
 
 export const pendingStatuses = new Set([
@@ -33,8 +39,9 @@ export const pendingStatuses = new Set([
 ]);
 
 // "escalated" KHÔNG nằm ở đây: đó là trạng thái hệ thống tự gán ngay khi phát hiện red-flag (bệnh
-// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt — xem
-// `needsNurseAttention` trong nurse.js, nơi "escalated" được coi là CẦN xử lý, không phải đã xong.
+// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt. Tập hợp này chia
+// đôi hai màn W-06: ca thuộc `completedStatuses` nằm ở "Ca đã duyệt", còn lại — kể cả "escalated" —
+// ở lại hàng đợi (xem `listScopes` trong nurse.js).
 export const completedStatuses = new Set(["approved", "rejected", "withdrawn"]);
 
 function readStoredUser() {

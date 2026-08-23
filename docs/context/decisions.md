@@ -87,3 +87,25 @@
 - **Bối cảnh:** Cần chọn provider LLM thật để tích hợp Agent, dựa trên chi phí, latency, khả năng xuất structured output.
 - **Quyết định:** _TBD — cập nhật entry này thành ADR chính thức ngay khi Tuấn Anh chốt provider.
 - **Hệ quả tạm thời:** Mọi phần thiết kế liên quan LLM trong Feature Spec ghi "chốt ở Sprint 2" thay vì tên provider cụ thể.
+
+## ADR-009: C6 safety gate chỉ nâng priority sau rule-engine, giữ HITL 100%
+
+- **Ngày:** 21/08/2026 · **Trạng thái:** Thử nghiệm có feature flag, mặc định tắt
+- **Bối cảnh:** Benchmark Semigran 45 ca cho C6 (GPT direct OR Fusion OR documented-rule emergency)
+  đạt emergency recall 100% (15/15), đổi lại accuracy 66.67% và có over-triage. Runtime thực tế đã
+  dùng `symptom_protocol.rule_engine` để phát hiện red flag và xếp hàng đợi đồng bộ, nhưng Part 2
+  trước đây chỉ là ý kiến tham khảo và còn bị bỏ qua với case `ESCALATED`.
+- **Quyết định:** Giữ rule engine là sàn priority tức thời. Khi
+  `graph_triage_mode="c6"`, mọi case đã chốt được chạy C6 với GPT direct, Fusion và documented-rule;
+  C6 không nạp LogReg, PhoBERT độc lập hay LLM quyết định tổng của ensemble. Với case `ESCALATED`, C6
+  chạy nền sau khi case đã được lưu và phản hồi an toàn đã được gửi. C6 chỉ được nâng priority, không
+  được hạ priority, sửa red flag, tự duyệt, hay gửi nội dung cho bệnh nhân. Case đã `APPROVED` không
+  bị sửa bởi một kết quả C6 đến muộn.
+- **Hệ quả:** C6 có audit source khi nâng priority, rồi chuyển nhãn hiệu lực cuối cùng
+  (`max(rule-engine, C6)`) cùng evidence đã kiểm sang Part 3 để trích nguồn y văn (nếu
+  `source_support_enabled=true`); mọi kết luận vẫn phải được điều dưỡng duyệt.
+  C6 là một candidate safety gate, chưa là bằng chứng triển khai: benchmark dùng vignette có phân
+  phối khác phiếu tóm tắt production, cần hold-out độc lập và review lâm sàng trước rollout.
+- **Ghi chú phạm vi:** `ProtocolTriageEngine`, `RedFlagSafetyLayer`, và `TriagePipeline` được nhắc
+  trong một số tài liệu cũ không phải nguồn priority của luồng `/chat` hiện tại. Việc dọn dead code
+  được tách thành công việc riêng, không nằm trong ADR này.

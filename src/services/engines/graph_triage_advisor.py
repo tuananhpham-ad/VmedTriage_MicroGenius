@@ -21,9 +21,9 @@ khỏi TriagePipeline chính):
    được (a) danh sách case tương tự cụ thể (không phải % vô danh), (b) field/node nào trong graph
    đóng góp nhiều nhất vào độ tương đồng. Nếu chưa làm được (b) thì KHÔNG hiển thị cho nurse, chỉ
    chạy shadow-mode (log để đánh giá offline).
-3. `ProtocolTriageEngine` (src/services/triage_engine.py) và `RedFlagSafetyLayer`
-   (src/services/red_flag.py) vẫn PHẢI là nguồn quyết định priority duy nhất. Output của module này
-   không bao giờ được gán vào `TriageProposal.priority` hay override `RedFlagFinding`.
+3. `symptom_protocol.rule_engine` vẫn tạo priority/red-flag tức thời trong runtime thật. Output GNN
+   của module này không bao giờ được gán vào `TriageProposal.priority` hay override `RedFlagFinding`;
+   đây không phải C6 safety gate ở `src/graph_triage/`.
 4. Bắt buộc feature-flag tắt theo mặc định (xem `Settings.enable_graph_triage_advisor` - #TODO thêm
    vào src/config.py khi bắt đầu implement) và chạy shadow-mode trước khi bật hiển thị thật.
 
@@ -72,5 +72,5 @@ class GraphTriageAdvisor:
         raise NotImplementedError(
             "GraphTriageAdvisor chưa được implement - xem #TODO trong "
             "src/services/graph_triage_advisor.py. Không dùng module này trong luồng quyết định "
-            "triage chính (ProtocolTriageEngine/RedFlagSafetyLayer vẫn là nguồn quyết định duy nhất)."
+            "triage chính (rule engine là baseline; module GNN này không có quyền đổi priority)."
         )

@@ -670,6 +670,11 @@ có nhóm nào khớp `triage_daudau.csv` (đau đầu) — đã bổ sung nhóm
 
 ### 9.4. Quality Guard và HITL mở rộng (reject/ask_more)
 
+> **Ghi chú 2026-08-21:** Phần mô tả runtime cũ ở mục 2/9.4 đã được thay thế một phần bởi ADR-009
+> trong `docs/context/decisions.md`: runtime `/chat` dùng `symptom_protocol.rule_engine` làm sàn
+> priority, và C6 safety gate (feature flag mặc định tắt) chỉ có quyền nâng sau đó. Lý do gốc của
+> tài liệu này được giữ nguyên để PM/tech lead rà soát, không viết đè hồi tố.
+
 - Quality Guard chỉ được phép **gắn nhãn quan sát** (`quality_flag`), không có quyền tự đổi trạng
   thái case. Quyết định suppress case "vớ vẩn" khỏi hàng đợi nằm ở đúng một chỗ
   (`case_approval.list_queue`) và luôn kiểm tra `not red_flags` trước — an toàn luôn thắng.

@@ -1,11 +1,14 @@
 """Bước 3 - tìm URL khi index không phủ được claim. Đổi nhà cung cấp bằng CẤU HÌNH, không bằng sửa code.
 
-HAI ĐƯỜNG, CÙNG MỘT HỢP ĐỒNG: nhận một mệnh đề tiếng Anh, trả về danh sách URL. Không fetch, không
+BA BACKEND TÌM KIẾM + CHẾ ĐỘ TẮT, CÙNG MỘT HỢP ĐỒNG: nhận một mệnh đề tiếng Anh, trả về danh sách URL. Không fetch, không
 chunk, không chấm - những việc đó nằm ở `retrieval` và `fetching`, và chúng không cần biết URL đến từ
 đâu. Nhờ vậy đổi backend là đổi một dòng `.env`.
 
     gemini  (mặc định) - Grounding with Google Search, built-in tool của Gemini API
     tavily             - HTTP search API, cần TAVILY_API_KEY
+    pubmed             - NCBI ESearch, không cần key, trả URL PubMed dựng từ PMID
+    auto               - thử gemini -> tavily -> pubmed theo thứ tự, dừng ở backend đầu tiên có URL;
+                          rỗng hoặc lỗi ở một backend đều rớt sang backend kế tiếp (xem `_search_chain`)
     none               - tắt hẳn, tương đương SOURCE_SUPPORT_INDEX_ONLY
 
 VÌ SAO MẶC ĐỊNH GEMINI: dự án đã có key Gemini và chưa có key Tavily. Đánh đổi thật nằm ở chỗ khác
@@ -23,13 +26,15 @@ HAI KHÁC BIỆT KỸ THUẬT PHẢI XỬ LÝ, không phải chi tiết vặt:
    số tiền mua được kết quả dùng được; grounding chỉ nêu được trong câu hỏi, và Guard 1 vẫn phải lọc
    sau. Nghĩa là nhánh grounding sẽ có tỉ lệ URL bị vứt cao hơn.
 
-CẢ HAI ĐƯỜNG ĐỀU KHÔNG TỰ QUYẾT ĐỊNH GÌ. Chúng chỉ đề xuất URL; guard 1 (allowlist) và guard 2 (fetch
-hợp lệ) ở `fetching.py` mới là chỗ chặn, và chúng chạy y hệt nhau cho cả hai backend.
+CÁC BACKEND ĐỀU KHÔNG TỰ QUYẾT ĐỊNH GÌ. Chúng chỉ đề xuất URL; guard 1 (allowlist) và guard 2 (fetch
+hợp lệ) ở `fetching.py` mới là chỗ chặn. Với PubMed, điểm khác biệt là trang tóm tắt thường ngắn và
+có thể không qua Guard 2, không phải dạng URL chuyển hướng như Gemini.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlparse
 
 from src.config import get_settings
@@ -54,6 +59,10 @@ def search_web(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[st
     try:
         if provider == "tavily":
             return _search_tavily(query, allowlist, meter=meter)
+        if provider == "pubmed":
+            return _search_pubmed(query, allowlist, meter=meter)
+        if provider == "auto":
+            return _search_chain(query, allowlist, meter=meter)
         return _search_gemini(query, allowlist, meter=meter)
     except Exception as error:
         logger.warning("source_support.search_failed provider=%s reason=%s", provider, type(error).__name__)
@@ -187,3 +196,108 @@ def _search_tavily(query: str, allowlist: tuple[str, ...], *, meter=None) -> lis
     urls = [item["url"] for item in response.json().get("results", []) if item.get("url")]
     logger.info("source_support.search provider=tavily raw_urls=%s", len(urls))
     return [url for url in urls if domain_allowed(url, allowlist)]
+
+
+# ---------- PubMed (NCBI E-utilities) ----------
+_ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+
+_PUBMED_OPERATOR_CHARS = re.compile(r'[()\[\]{}"&|:]')
+"""Ký tự ESearch đọc là CÚ PHÁP, không phải chữ. Dấu ngoặc là toán tử gộp boolean, `[...]` là field
+tag (`[tiab]`), `:` là khoảng giá trị. Đo thật 2026-08-23: claim
+`"Acute liver failure (acetaminophen poisoning acceptable) ..."` trả về ĐÚNG 0 kết quả; bỏ mỗi cặp
+ngoặc đi thì ra 5. Một mệnh đề lâm sàng vô tình có ngoặc đơn - rất thường gặp - sẽ âm thầm mất nguồn
+chứ không báo lỗi."""
+
+_PUBMED_STOPWORDS = frozenset({
+    # từ chức năng tiếng Anh
+    "a", "an", "the", "of", "in", "on", "at", "by", "to", "for", "from", "with", "without",
+    "and", "or", "as", "is", "are", "be", "being", "been", "that", "this", "these", "those",
+    "it", "its", "may", "can", "who", "which",
+    # ngôn ngữ KHUYẾN CÁO - không giúp truy hồi vì abstract nghiên cứu không bao giờ viết kiểu này
+    "requires", "require", "required", "needs", "need", "needed", "should", "must",
+    "warrants", "warrant", "indicated", "recommended", "advise", "advised",
+    # từ lâm sàng rỗng nghĩa - bài nào trên PubMed cũng "clinical"/"patient"
+    "clinical", "clinically", "patient", "patients", "prompt", "promptly", "urgent", "urgently",
+    "immediate", "immediately", "evaluation", "evaluate", "assessment", "assess", "review",
+})
+"""Bỏ khỏi câu truy vấn ESearch. HAI NHÓM CÓ CHỦ ĐÍCH KHÁC NHAU: nhóm từ chức năng là để câu ngắn lại
+(xem `_PUBMED_MAX_TERMS`), còn nhóm khuyến cáo/rỗng nghĩa là vì chúng CHỦ ĐỘNG làm hỏng truy hồi -
+`requires clinical evaluation` không xuất hiện trong abstract nghiên cứu nào, nên giữ lại chỉ siết
+chặt thêm phép AND ngầm của ESearch mà không lọc được gì."""
+
+_PUBMED_MAX_TERMS = 10
+"""Trần số từ khoá. ESearch nối các từ bằng AND ngầm, nên câu càng dài kết quả càng teo. Đo thật
+2026-08-23, cùng một mệnh đề COPD: câu đầy đủ (14 từ) -> 1 kết quả, `best_score` 0.532, verdict
+`unsupported`; bản rút còn 7 từ khoá -> 5 kết quả, `best_score` 0.644, verdict `supports`."""
+
+
+def _pubmed_query(claim: str) -> str:
+    """Câu mệnh đề tiếng Anh -> chuỗi từ khoá cho ESearch. Hàm THUẦN: không mạng, không LLM.
+
+    Phải deterministic. Nhánh `documented_rule` của C6 đã có một tầng LLM trích fact không tái lập
+    được (chạy 3 lần ra 2 kết quả khác nhau); thêm một tầng LLM nữa ở chỗ dựng câu truy vấn thì
+    không còn cách nào truy ngược vì sao một ca trích được nguồn còn ca kia thì không.
+
+    Rỗng sau khi lọc thì TRẢ LẠI câu gốc: chuỗi rỗng khiến ESearch khớp toàn bộ PubMed."""
+    cleaned = _PUBMED_OPERATOR_CHARS.sub(" ", claim)
+    terms = [word for word in cleaned.split() if word.lower().strip(",.;") not in _PUBMED_STOPWORDS]
+    return " ".join(terms[:_PUBMED_MAX_TERMS]) if terms else claim
+
+
+def _search_pubmed(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[str]:
+    """Gọi NCBI ESearch và dựng URL PubMed trực tiếp từ PMID.
+
+    Không tốn LLM call và không cần key. URL PubMed vẫn phải đi qua allowlist trước khi fetch.
+    `query` là câu mệnh đề đầy đủ; ESearch cần từ khoá nên đi qua `_pubmed_query` trước.
+    """
+    import httpx
+
+    settings = get_settings()
+    term = _pubmed_query(query)
+    if term != query:
+        logger.info("source_support.pubmed_query_trimmed term=%r", term[:120])
+    params = {
+        "db": "pubmed",
+        "term": term,
+        "retmax": str(MAX_RESULTS),
+        "retmode": "json",
+        # BẮT BUỘC truyền `sort`. Mặc định của ESearch là trả bài MỚI NHẤT, không phải bài LIÊN QUAN
+        # NHẤT - đo thật 2026-08-23: claim về đợt cấp COPD nhận về 5 chunk đều từ CÙNG một bài về ô
+        # nhiễm không khí (PMID 42xxxxxx, tức vừa đăng), và bước chấm loại sạch. Nguồn tra cứu sắp
+        # theo ngày đăng là vô nghĩa với một mệnh đề lâm sàng.
+        "sort": "relevance",
+    }
+    if settings.ncbi_api_key.strip():
+        params["api_key"] = settings.ncbi_api_key
+
+    response = httpx.get(_ESEARCH_URL, params=params, timeout=FETCH_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    pmids = response.json().get("esearchresult", {}).get("idlist", [])
+    urls = [f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" for pmid in pmids]
+    logger.info("source_support.search provider=pubmed raw_urls=%s", len(urls))
+    return [url for url in urls if domain_allowed(url, allowlist)]
+
+
+# ---------- Auto (chain gemini -> tavily -> pubmed) ----------
+
+
+def _search_chain(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[str]:
+    """Thử lần lượt Gemini -> Tavily -> PubMed, dừng ở backend đầu tiên có URL.
+
+    TỰ BẮT LỖI Ở TỪNG BƯỚC, không dựa vào catch chung của `search_web()` - catch đó bọc quanh TOÀN BỘ
+    dispatch, nên nếu để lộ ra đây thì Gemini lỗi (vd 429 free tier, xem config.py) sẽ làm hỏng luôn
+    cả chuỗi thay vì rớt xuống Tavily/PubMed - đúng ngược với mục đích của "auto". Rỗng (backend chạy
+    xong nhưng không có URL nào qua được allowlist) cũng tính là "không được", vì 429 của Gemini vốn
+    đã bị chính `_search_gemini`/`search_web` nuốt thành danh sách rỗng ở tầng ngoài - chỉ bắt
+    exception thì tình huống hay gặp nhất sẽ không bao giờ kích hoạt fallback."""
+    for name, backend in (("gemini", _search_gemini), ("tavily", _search_tavily), ("pubmed", _search_pubmed)):
+        try:
+            urls = backend(query, allowlist, meter=meter)
+        except Exception as error:
+            logger.warning("source_support.search_chain_step_failed provider=%s reason=%s", name, type(error).__name__)
+            continue
+        if urls:
+            logger.info("source_support.search_chain_selected provider=%s urls=%s", name, len(urls))
+            return urls
+    logger.info("source_support.search_chain_exhausted")
+    return []

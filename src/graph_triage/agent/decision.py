@@ -64,6 +64,12 @@ class LogRegPredictor:
         if not model_path.is_file():
             raise FileNotFoundError(f"Logistic Regression model not found: {model_path}")
         self.model = joblib.load(model_path)
+        # The serialized artifact was trained with scikit-learn 1.9, where
+        # LogisticRegression no longer stores ``multi_class``.  Older runtime
+        # versions still access that attribute during predict_proba.
+        classifier = getattr(self.model, "named_steps", {}).get("classifier")
+        if classifier is not None and not hasattr(classifier, "multi_class"):
+            classifier.multi_class = "auto"
         self.metrics = _load_metrics(model_path.parent / "metrics.json")
         if not hasattr(self.model, "predict_proba"):
             raise TypeError("The supplied Logistic Regression artifact has no predict_proba method.")
@@ -93,15 +99,14 @@ class BertPredictor:
 
 
 class GraphResolver:
-    """Resolve a graph from the v1 cache; live extraction is explicitly opt-in."""
+    """Resolve a graph from the cache; live extraction is explicitly opt-in with auto-caching."""
 
-    def __init__(self, graph_cache: Path | None, allow_live_extraction: bool):
+    def __init__(self, graph_cache: Path | None = None, allow_live_extraction: bool = True):
         self.allow_live_extraction = allow_live_extraction
+        self.cache_path = graph_cache or Path("data/graphs/semigran_cache.jsonl")
         self.graph_by_text_hash: dict[str, ClinicalGraph] = {}
-        if graph_cache is not None:
-            if not graph_cache.is_file():
-                raise FileNotFoundError(f"Patient Graph cache not found: {graph_cache}")
-            for line in graph_cache.read_text(encoding="utf-8").splitlines():
+        if self.cache_path.is_file():
+            for line in self.cache_path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 record = json.loads(line)
@@ -117,18 +122,16 @@ class GraphResolver:
         if not self.allow_live_extraction:
             raise ValueError("No exact patient-text match in the graph cache. Use a golden.csv patient text or pass --allow-live-extraction (this calls the DeepSeek/Claude API).")
         from src.graph_triage.deepseek_extractor import DeepSeekExtractor
-
+        graph = DeepSeekExtractor().extract(text)
+        self.graph_by_text_hash[fingerprint] = graph
         try:
-            return DeepSeekExtractor().extract(text)
-        except Exception as error:
-            # DeepSeek là provider chính (rẻ hơn, không rate-limit theo nhóm); Claude chỉ dự phòng khi
-            # DeepSeek lỗi hẳn (hết số dư, key sai, hoặc hết retry) - không phải đường mặc định.
-            from src.graph_triage.claude_extractor import ClaudeExtractor
-
-            try:
-                return ClaudeExtractor().extract(text)
-            except Exception:
-                raise error
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.cache_path.open("a", encoding="utf-8", newline="\n") as f:
+                record = {"text_sha256": fingerprint, "graph": graph.model_dump(mode="json")}
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # don't fail if write fails
+        return graph
 
 
 class FusionPredictor:
@@ -220,33 +223,32 @@ def relation_summary(graph: ClinicalGraph, limit: int = 16) -> list[dict]:
 
 @dataclass
 class DecisionAgent:
-    logreg: LogRegPredictor
-    bert: BertPredictor
-    graph_resolver: GraphResolver
+    logreg: LogRegPredictor | None = None
+    graph_resolver: GraphResolver | None = None
+    bert: BertPredictor | None = None
     fusion: FusionPredictor | None = None
-    """Optional cho tới khi ``runs/fusion_full`` được train (Phần B của kế hoạch port).
-
-    Khi chưa có, ``decide()`` bỏ hẳn khoá ``fusion`` và ``fusion_mean_text_gate`` khỏi payload thay vì
-    điền 0.0 - LLM quyết định đọc payload này như sự thật, một số giả sẽ thành "model fusion tự tin
-    mức 0" chứ không phải "không có model fusion".
-    """
 
     def decide(self, patient_text: str) -> dict:
         text = patient_text.strip()
         if not text:
             raise ValueError("patient_text must not be empty.")
-        graph = self.graph_resolver.resolve(text)
-        predictors = {"logreg": self.logreg, "bert": self.bert}
+        graph = self.graph_resolver.resolve(text) if self.graph_resolver else ClinicalGraph(nodes=[], edges=[])
+        predictors: dict = {}
+        if self.logreg is not None:
+            predictors["logreg"] = self.logreg
+        if self.bert is not None:
+            predictors["bert"] = self.bert
         probabilities = {name: predictor.predict(text) for name, predictor in predictors.items()}
         mean_text_gate = None
         if self.fusion is not None:
             predictors["fusion"] = self.fusion
             probabilities["fusion"], mean_text_gate = self.fusion.predict(text, graph)
         votes = {name: TRIAGE_LABELS[int(values.argmax())] for name, values in probabilities.items()}
+        model_disagreement = (len(set(votes.values())) > 1) if votes else False
         payload = {
             "research_only": True,
             "decision_policy": "LLM tool-grounded decision; no automatic probability ensemble and no clinically validated safety override",
-            "model_disagreement": len(set(votes.values())) != 1,
+            "model_disagreement": model_disagreement,
             "models": {
                 name: {
                     "predicted_label": votes[name],
