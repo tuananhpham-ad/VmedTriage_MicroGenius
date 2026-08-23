@@ -1,54 +1,46 @@
-databases:
-  - name: vmedtriage-postgres
-    plan: basic-256mb
-    region: singapore
-    databaseName: vmedtriage
-    user: vmedtriage
+# Cấu hình Render cho bản public FREE.
+#
+# Không khai `databases:` ở đây: Render free Postgres HẾT HẠN sau 30 ngày rồi bị xoá, còn gói trả
+# phí thì đi ngược mục tiêu $0. Database dùng Neon (0.5 GB, free vĩnh viễn) - dán chuỗi kết nối vào
+# secret DATABASE_URL trong dashboard.
+#
+# Không khai `disk:`: Render Disk chỉ gắn được cho instance trả phí. Hệ quả là data/source_index/
+# (corpus RAG của source_support) bị xoá mỗi lần deploy và dựng lại lúc khởi động - vài chục giây,
+# chấp nhận được. Dữ liệu người dùng KHÔNG nằm ở đây mà ở Neon nên không mất gì.
 
 services:
   - type: web
     name: vmedtriage
     runtime: python
-    # Graph triage agent tải PhoBERT (~500MB) + fusion (~500MB) vào RAM cùng lúc, cộng thêm torch.
-    # Plan free (512MB) không đủ - cần ít nhất "standard" (2GB). Đổi lại trong dashboard nếu Render
-    # chưa hỗ trợ giá trị này trong render.yaml ở vùng/tài khoản của bạn.
-    plan: standard
+    # Free = 512 MB RAM, ngủ sau 15 phút không có request, 750 giờ/tháng cho cả workspace.
+    # 512 MB KHÔNG đủ cho graph triage (PhoBERT ~500 MB + fusion ~500 MB + torch cùng lúc) - vì vậy
+    # ENABLE_GRAPH_TRIAGE_AGENT=false ở dưới. Muốn bật lại thì phải đổi sang instance >= 2 GB.
+    plan: free
     region: singapore
     branch: dev
-    # CHỈ cài dependency ở đây. Render Disk KHÔNG được mount trong lúc buildCommand chạy (nó chỉ gắn
-    # vào lúc container runtime khởi động) - ghi vào /opt/render/project/src/data ở bước build là ghi
-    # vào filesystem tạm rồi bị vứt, đĩa persistent thật sự vẫn trống. Vì vậy bước tải artifact/corpus
-    # phải nằm ở startCommand, không phải buildCommand.
-    buildCommand: pip install -r requirements.txt -r requirements-graph.txt
-    # scripts/download_graph_artifacts.py và build_source_corpus đều idempotent (bỏ qua phần đã có
-    # trên đĩa persistent) - từ lần khởi động thứ 2 trở đi chỉ mất vài giây để kiểm tra rồi bỏ qua.
-    # build_source_corpus dùng "|| true": một URL guideline chết không được phép chặn app khởi động,
-    # chỉ làm corpus thiếu vài tài liệu (xem log start để biết URL nào fail).
-    # seed_demo_users chỉ đụng đúng user0/nurse0 kể cả ở production (xem allowlist trong script) -
-    # idempotent, an toàn chạy lại mỗi lần khởi động. "|| true": một lần DB hiccup lúc seed không được
-    # phép chặn app khởi động, đây chỉ là tiện ích demo chứ không phải bước bắt buộc.
+    # Chỉ cài requirements.txt. requirements-graph.txt (torch ~2.5 GB + transformers) bị bỏ ra vì
+    # graph triage đang tắt - cài vào chỉ tốn build minutes và dung lượng.
+    buildCommand: pip install -r requirements.txt
+    # build_source_corpus dùng "|| true": một URL guideline chết không được phép chặn app khởi
+    # động, chỉ làm corpus thiếu vài tài liệu. seed_demo_users chỉ đụng user0/nurse0 kể cả ở
+    # production (xem allowlist trong script) - idempotent, an toàn chạy lại mỗi lần khởi động.
     startCommand: >-
-      python scripts/download_graph_artifacts.py &&
       (python -m scripts.build_source_corpus && echo "[startup] build_source_corpus: OK" || echo "[startup] build_source_corpus: FAILED (bo qua)") &&
       (python -m scripts.seed_demo_users && echo "[startup] seed_demo_users: OK" || echo "[startup] seed_demo_users: FAILED (bo qua)") &&
       uvicorn src.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
-    disk:
-      # Giữ lại runs/ (artifact graph triage) và data/source_index/ (corpus RAG source_support)
-      # giữa các lần deploy - không phải tải lại/nạp lại corpus mỗi lần build.
-      # runtime: python (native, không dùng Dockerfile) -> Render checkout repo tại
-      # /opt/render/project/src, nên mount đè đúng thư mục data/ ở đó.
-      name: vmedtriage-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 5
     envVars:
       - key: APP_ENV
         value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: vmedtriage-postgres
-          property: connectionString
+
+      # ---- URL công khai của service. Thiếu PASSWORD_RESET_BASE_URL thì link đặt lại mật khẩu
+      # ---- gửi cho người dùng trỏ về http://localhost:8000 và bấm vào là hỏng.
+      - key: PASSWORD_RESET_BASE_URL
+        value: https://vmedtriage.onrender.com
+      - key: CORS_ORIGINS
+        value: https://vmedtriage.onrender.com
+
       - key: LLM_PROVIDER
         value: auto
       - key: LLM_PROVIDER_ORDER
@@ -66,7 +58,16 @@ services:
       - key: LLM_TEMPERATURE
         value: "0.0"
 
-      # ---- API key (bí mật) - dán giá trị trong Render dashboard, KHÔNG commit vào đây ----
+      # ---- Bí mật - dán giá trị trong Render dashboard, KHÔNG commit vào đây ----
+      # DATABASE_URL: chuỗi kết nối Neon, dạng
+      #   postgresql://<user>:<pass>@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+      # Giữ nguyên ?sslmode=require. App từ chối khởi động ở production nếu đây vẫn là SQLite.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: NURSE_REGISTRATION_CODE
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: DEEPSEEK_API_KEY
@@ -74,10 +75,6 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY
-        sync: false
-      - key: JWT_SECRET_KEY
-        sync: false
-      - key: NURSE_REGISTRATION_CODE
         sync: false
 
       # ---- SMTP (mã xác thực email, reset mật khẩu) ----
@@ -116,16 +113,10 @@ services:
       - key: TAVILY_API_KEY
         sync: false
 
-      # ---- Graph triage agent (src/graph_triage/) - ý kiến tham khảo thứ hai, không quyết định priority ----
+      # ---- Graph triage agent (src/graph_triage/) ----
+      # TẮT trên plan free: 512 MB không đủ nạp PhoBERT + fusion. Đây là "ý kiến tham khảo thứ hai",
+      # không bao giờ quyết định TriageProposal.priority, nên tắt không ảnh hưởng luồng chính.
+      # Bật lại: đổi instance sang >= 2 GB, thêm requirements-graph.txt vào buildCommand, thêm
+      # "python scripts/download_graph_artifacts.py &&" vào đầu startCommand, rồi đặt lại true.
       - key: ENABLE_GRAPH_TRIAGE_AGENT
-        value: "true"
-      - key: GRAPH_TRIAGE_ARTIFACT_ROOT
-        value: /opt/render/project/src/data/runs
-      - key: GRAPH_TRIAGE_MAX_LENGTH
-        value: "256"
-      - key: FUSION_FULL_MODEL
-        value: danhnahh/fusion_full
-      - key: LOGREG_FULL_MODEL
-        value: danhnahh/logreg_full
-      - key: BERT_FULL_MODEL
-        value: danhnahh/bert_full
+        value: "false"
