@@ -1,10 +1,8 @@
 import { api } from "../api.js";
 import { accountMenu, bindAccountMenu } from "./account.js?v=design-20260819b";
-import { completedStatuses, pendingStatuses, state } from "../state.js";
+import { completedStatuses, state } from "../state.js";
 import {
-  aiConfidence,
   appHeader,
-  confidenceMarkup,
   escapeHtml,
   formatDate,
   icon,
@@ -53,7 +51,7 @@ function startNurseChatPolling(root, context) {
   }, 10000);
 }
 
-function nurseHeader(active, { title = "", right = "" } = {}) {
+export function nurseHeader(active, { title = "", right = "" } = {}) {
   return appHeader({
     nav: active
       ? [
@@ -66,46 +64,194 @@ function nurseHeader(active, { title = "", right = "" } = {}) {
   });
 }
 
-/** W-06 — hàng đợi ca chờ duyệt. Cột lọc bên trái, danh sách quét nhanh bên phải. */
-export function renderNurseQueue(root, { navigate, logout }) {
-  root.innerHTML = `<section class="app-shell">${nurseHeader("queue")}
-    <main class="page">
-      <div class="queue-grid">
-        <aside class="queue-side">
-          <div class="filter-card">
-            <span class="section-label">Bộ lọc</span>
-            <div class="filter-list">
-              <button class="filter-button" type="button" data-filter="pending"><span>Ca cần xử lý</span><b id="pending-count">0</b></button>
-              <button class="filter-button is-active" type="button" data-filter="all"><span>Tất cả</span><b id="all-count">0</b></button>
-              <button class="filter-button" type="button" data-filter="Emergency"><span><span class="priority-dot is-emergency"></span>Cấp cứu</span><b id="emergency-count">0</b></button>
-              <button class="filter-button" type="button" data-filter="Urgent"><span><span class="priority-dot is-urgent"></span>Khám sớm</span><b id="urgent-count">0</b></button>
-              <button class="filter-button" type="button" data-filter="Self-care"><span><span class="priority-dot is-self-care"></span>Tự theo dõi</span><b id="selfcare-count">0</b></button>
-            </div>
-            <label class="field"><span class="section-label">Tìm ca</span><input id="queue-search" placeholder="Mã ca hoặc triệu chứng" /></label>
-          </div>
-          <div class="filter-card shift-card">
-            <span class="section-label">Ca trực</span>
-            <div>Đang trực<br /><small>Đã duyệt hôm nay: <b id="done-today">0</b> ca</small></div>
-            <button class="secondary-button btn-sm wide" type="button" data-refresh style="margin-top:12px">${icon("retry", 15)}<span>Làm mới</span></button>
-          </div>
-        </aside>
+// Màn danh sách vừa mở, để nút quay lại của W-07 trả điều dưỡng về ĐÚNG chỗ họ vừa rời: mở một ca
+// từ "Ca đã duyệt" rồi bị đẩy về hàng đợi là mất vị trí đang đọc.
+let lastListView = "nurse-queue";
 
-        <section>
-          <div class="queue-head">
-            <div>
-              <h1>Tất cả ca</h1>
-              <p>Ca có red flag luôn được hiển thị trước để nhân viên y tế nắm tình huống.</p>
-            </div>
-            <span class="polling-chip">${icon("retry", 15)}<span id="queue-updated">Làm mới (polling tự động)</span></span>
-          </div>
-          <div class="banner is-warning" id="queue-message" hidden>${icon("warning", 19)}<span class="banner-text"></span><button class="secondary-button btn-sm" type="button" data-refresh>${icon("retry", 15)}<span>Thử lại</span></button></div>
-          <div id="queue-list" class="queue-table"></div>
-        </section>
-      </div>
-    </main>
+// Hai màn W-06 dùng CHUNG một hàm render, khác nhau đúng ở `scope`. Tách thành hai hàm copy-paste
+// thì mỗi lần sửa cột/bộ lọc phải sửa hai chỗ và chúng sẽ lệch nhau - đây là lý do "Ca đã duyệt" có
+// UI giống hệt hàng đợi mà không tốn thêm markup nào.
+const listScopes = {
+  queue: {
+    nav: "queue",
+    title: "Hàng đợi",
+    intro: "Ca có red flag luôn được hiển thị trước để nhân viên y tế nắm tình huống.",
+    // Ca đã duyệt/từ chối/đóng đã rời hàng đợi - chúng nằm trọn ở màn "Ca đã duyệt". `escalated`
+    // KHÔNG phải trạng thái đã xong (xem `completedStatuses` trong state.js) nên vẫn ở lại đây.
+    includes: (item) => !completedStatuses.has(item.status),
+    action: "Duyệt ca →",
+    emptyTitle: "Không có ca nào đang chờ duyệt 🎉",
+    emptyCopy: "Danh sách sẽ tự cập nhật khi có ca mới.",
+  },
+  done: {
+    nav: "done",
+    title: "Ca đã duyệt",
+    intro: "Ca đã xử lý xong, sắp theo mức ưu tiên rồi tới thời gian chờ như hàng đợi.",
+    includes: (item) => completedStatuses.has(item.status),
+    // KHÔNG dùng lại chữ "Duyệt ca →": ca ở đây đã chốt, màn W-07 mở ra ở chế độ chỉ đọc.
+    action: "Xem chi tiết →",
+    emptyTitle: "Chưa có ca nào được duyệt",
+    emptyCopy: "Ca sẽ chuyển sang đây ngay khi bạn duyệt hoặc từ chối.",
+  },
+};
+
+const SIDEBAR_KEY = "vmed_nurse_sidebar";
+
+/** Cột điều hướng đang thu gọn hay không. Nhớ trong `localStorage` vì mỗi lần đổi màn là một lần
+ *  render lại từ đầu - không nhớ thì thanh này bung ra lại sau mỗi cú bấm. */
+function sidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Cột điều hướng bên trái, DÙNG CHUNG cho cả ba màn của điều dưỡng. Sau khi bỏ tab trên header,
+ *  đây là đường duy nhất đi giữa các màn - nên nó phải giống hệt nhau ở mọi màn, và cách duy nhất
+ *  bảo đảm điều đó là chỉ có một chỗ dựng ra nó.
+ *
+ *  Chỉ có icon + nhãn + số ca. Mọi thứ khác (mức cấp cứu, ca chờ lâu nhất, thanh đo) đã chuyển vào
+ *  màn tương ứng - thanh điều hướng không phải chỗ đọc số liệu, nó là chỗ đi lại. */
+export function nurseSideNav(activeKey) {
+  const item = (key, name, glyph, badge) => `<button class="nav-item${key === activeKey ? " is-on" : ""}" type="button" data-nav="${key}" title="${name}">
+    <span class="nav-glyph">${icon(glyph, 17)}</span>
+    <span class="nav-text">${name}</span>
+    ${badge ? `<b class="nav-count" id="${badge}">0</b>` : ""}
+  </button>`;
+
+  return `<aside class="queue-side${sidebarCollapsed() ? " is-collapsed" : ""}" data-sidebar>
+    <button class="nav-toggle" type="button" data-sidebar-toggle aria-label="Thu gọn hoặc mở rộng thanh điều hướng">${icon("chevronLeft", 15)}</button>
+    <nav class="nav-list" aria-label="Điều hướng nhân viên y tế">
+      <p class="nav-group">Theo dõi</p>
+      ${item("dashboard", "Bảng điều khiển", "pulse", "")}
+      ${item("queue", "Hàng đợi", "clipboard", "overview-queue")}
+      ${item("done", "Ca đã duyệt", "shieldCheck", "overview-done")}
+
+      <p class="nav-group">Ca làm việc</p>
+      ${item("shift", "Ca trực", "clock", "")}
+      <button class="nav-item" type="button" data-refresh title="Làm mới">
+        <span class="nav-glyph">${icon("retry", 17)}</span>
+        <span class="nav-text">Làm mới</span>
+      </button>
+    </nav>
+  </aside>`;
+}
+
+/** Khung chung của ba màn điều dưỡng: header, rail trái, vùng nội dung cuộn được.
+ *
+ *  `is-fixed` khoá chiều cao vào đúng một khung nhìn và để `.nurse-main` cuộn - nhờ vậy rail luôn
+ *  cao hết màn hình mà không cần biết header cao bao nhiêu, không có con số ma nào trong CSS. */
+export function nurseShell(activeKey, content) {
+  return `<section class="app-shell is-fixed">${nurseHeader("")}
+    <div class="nurse-body">
+      ${nurseSideNav(activeKey)}
+      <main class="nurse-main">${content}</main>
+    </div>
   </section>`;
+}
 
-  bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseQueue(root, { navigate, logout }) });
+/** Điều hướng của cột trái. Tách ra vì cả ba màn đều phải nối `[data-nav]` y hệt nhau. */
+export function bindSideNav(root, { navigate }, activeKey) {
+  root.querySelector("[data-sidebar-toggle]")?.addEventListener("click", () => {
+    const bar = root.querySelector("[data-sidebar]");
+    const collapsed = bar.classList.toggle("is-collapsed");
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+    } catch {
+      // Trình duyệt chặn storage thì thanh vẫn thu gọn được, chỉ là không nhớ qua lần render sau.
+    }
+  });
+  root.querySelectorAll("[data-nav]").forEach((button) =>
+    button.addEventListener("click", () => {
+      // Bấm vào chính màn đang mở thì không render lại: render dựng lại toàn bộ innerHTML nên bộ lọc
+      // và ô tìm kiếm đang gõ dở sẽ bị xoá sạch.
+      if (button.dataset.nav === activeKey) return;
+      navigate(navTargets[button.dataset.nav] || "nurse-queue");
+    }),
+  );
+}
+
+const navTargets = {
+  dashboard: "nurse-dashboard",
+  queue: "nurse-queue",
+  done: "nurse-done",
+  shift: "nurse-shift",
+};
+
+/** Màn "Ca trực" — MỚI CHỈ CÓ KHUNG. Nội dung còn chờ chốt, nên ở đây cố tình chưa có số liệu nào:
+ *  bịa ra vài ô "đang trực / đã duyệt hôm nay" rồi sau phải gỡ đi thì tệ hơn một trạng thái rỗng
+ *  nói thẳng rằng phần này chưa làm. */
+export function renderNurseShift(root, { navigate, logout }) {
+  root.innerHTML = nurseShell("shift", `
+    <div class="queue-head">
+      <div>
+        <h1>Ca trực</h1>
+        <p>Thông tin phiên trực của nhân viên y tế.</p>
+      </div>
+    </div>
+    <div class="queue-empty">
+      <span class="state-icon is-neutral">${icon("clock", 32)}</span>
+      <h2>Chưa có nội dung</h2>
+      <p>Phần này đang chờ chốt sẽ hiển thị những gì.</p>
+    </div>
+  `);
+
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseShift(root, { navigate, logout }) });
+  bindSideNav(root, { navigate }, "shift");
+  root.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", () => refreshSideCounts(root)));
+  refreshSideCounts(root);
+}
+
+/** Nạp lại danh sách case CHỈ để cập nhật hai con số trên thanh điều hướng. Không dùng `refreshQueue`
+ *  ở đây: hàm đó còn vẽ bảng và sẽ ngã ngay vì màn này không có `#queue-list`. */
+async function refreshSideCounts(root) {
+  try {
+    state.queue = await api("/api/v1/nurse/queue");
+  } catch {
+    // Giữ nguyên số cũ trên thanh điều hướng - xoá đi khi mất mạng không giúp được gì.
+  }
+  paintOverview(root);
+}
+
+/** W-06 — hàng đợi ca chờ duyệt. Cột lọc bên trái, danh sách quét nhanh bên phải. */
+export function renderNurseQueue(root, context) {
+  renderNurseList(root, context, "queue");
+}
+
+/** W-06b — ca đã duyệt. Cùng bộ lọc, cùng cột, cùng cách sắp xếp với hàng đợi. */
+export function renderNurseDone(root, context) {
+  renderNurseList(root, context, "done");
+}
+
+function renderNurseList(root, { navigate, logout }, scopeKey) {
+  const scope = listScopes[scopeKey];
+  lastListView = scope.nav === "done" ? "nurse-done" : "nurse-queue";
+  root.innerHTML = nurseShell(scopeKey, `
+    <div class="queue-head">
+      <div>
+        <h1>${scope.title}</h1>
+        <p>${scope.intro}</p>
+      </div>
+      <span class="polling-chip">${icon("retry", 15)}<span id="queue-updated">Làm mới (polling tự động)</span></span>
+    </div>
+    <div class="banner is-warning" id="queue-message" hidden>${icon("warning", 19)}<span class="banner-text"></span><button class="secondary-button btn-sm" type="button" data-refresh>${icon("retry", 15)}<span>Thử lại</span></button></div>
+
+    <div class="queue-toolbar">
+      <div class="filter-chips" role="group" aria-label="Lọc theo mức ưu tiên">
+        <button class="filter-chip is-active" type="button" data-filter="all"><span>Tất cả</span><b id="all-count">0</b></button>
+        <button class="filter-chip" type="button" data-filter="Emergency"><span class="priority-dot is-emergency"></span><span>Cấp cứu</span><b id="emergency-count">0</b></button>
+        <button class="filter-chip" type="button" data-filter="Urgent"><span class="priority-dot is-urgent"></span><span>Khám sớm</span><b id="urgent-count">0</b></button>
+        <button class="filter-chip" type="button" data-filter="Self-care"><span class="priority-dot is-self-care"></span><span>Tự theo dõi</span><b id="selfcare-count">0</b></button>
+      </div>
+      <div class="queue-search"><input id="queue-search" aria-label="Tìm ca" placeholder="Mã ca hoặc triệu chứng" /></div>
+    </div>
+
+    <div id="queue-list" class="queue-table"></div>
+  `);
+
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseList(root, { navigate, logout }, scopeKey) });
+  bindSideNav(root, { navigate }, scopeKey);
   root.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", () => refreshQueue(root, { navigate, logout })));
   root.querySelector("#queue-search").addEventListener("input", () => paintQueue(root, { navigate, logout }));
   root.querySelectorAll("[data-filter]").forEach((button) =>
@@ -116,6 +262,7 @@ export function renderNurseQueue(root, { navigate, logout }) {
     }),
   );
   root.dataset.filter = "all";
+  root.dataset.scope = scopeKey;
   refreshQueue(root, { navigate, logout });
   polling = window.setInterval(() => refreshQueue(root, { navigate, logout, silent: true }), 15000);
 }
@@ -138,56 +285,66 @@ export async function refreshQueue(root, context) {
 }
 
 function paintQueue(root, { navigate, logout }) {
-  const filter = root.dataset.filter || "pending";
+  const scope = listScopes[root.dataset.scope] || listScopes.queue;
+  const filter = root.dataset.filter || "all";
   const query = root.querySelector("#queue-search").value.trim().toLocaleLowerCase("vi-VN");
-  const counts = { pending: 0, Emergency: 0, Urgent: 0, "Self-care": 0, done: 0 };
-  for (const item of state.queue) {
-    if (needsNurseAttention(item)) counts.pending += 1;
-    if (completedStatuses.has(item.status) && item.status !== "escalated") counts.done += 1;
-    const level = priority(item);
+  // Mọi con số bên cột lọc đếm TRONG phạm vi màn đang mở. Đếm trên `state.queue` (toàn bộ case) như
+  // bản trước sẽ khiến hàng đợi hiện "Cấp cứu 3" trong khi danh sách chỉ còn 1 ca cấp cứu chưa duyệt.
+  const scoped = state.queue.filter(scope.includes);
+  const counts = { Emergency: 0, Urgent: 0, "Self-care": 0 };
+  for (const item of scoped) {
+    const level = displayLevel(item);
     if (level in counts) counts[level] += 1;
   }
-  root.querySelector("#pending-count").textContent = counts.pending;
-  root.querySelector("#all-count").textContent = state.queue.length;
+  root.querySelector("#all-count").textContent = scoped.length;
   root.querySelector("#emergency-count").textContent = counts.Emergency;
   root.querySelector("#urgent-count").textContent = counts.Urgent;
   root.querySelector("#selfcare-count").textContent = counts["Self-care"];
-  root.querySelector("#done-today").textContent = counts.done;
+  paintOverview(root);
 
-  const items = state.queue
+  const items = scoped
     .filter((item) => {
-      if (filter === "pending" && !needsNurseAttention(item)) return false;
-      if (filter !== "pending" && filter !== "all" && priority(item) !== filter) return false;
+      if (filter !== "all" && displayLevel(item) !== filter) return false;
       if (!query) return true;
-      return [item.case_id, complaint(item), priorityLabels[priority(item)], statusLabels[item.status], item.red_flags?.length ? "red flag" : ""].join(" ").toLocaleLowerCase("vi-VN").includes(query);
+      return [item.case_id, complaint(item), priorityLabels[displayLevel(item)], statusLabels[item.status], item.red_flags?.length ? "red flag" : ""].join(" ").toLocaleLowerCase("vi-VN").includes(query);
     })
     .sort(compareCases);
 
   const list = root.querySelector("#queue-list");
   if (!items.length) {
-    list.innerHTML = `<div class="queue-empty"><span class="state-icon is-ok">${icon("check", 32)}</span><h2>Không có ca nào đang chờ duyệt 🎉</h2><p>Danh sách sẽ tự cập nhật khi có ca mới.</p></div>`;
+    list.innerHTML = `<div class="queue-empty"><span class="state-icon is-ok">${icon("check", 32)}</span><h2>${escapeHtml(scope.emptyTitle)}</h2><p>${escapeHtml(scope.emptyCopy)}</p></div>`;
     return;
   }
   const header = `<div class="queue-head-row"><span></span><span class="col-label">Mã bệnh nhân</span><span class="col-label">Nhóm triệu chứng</span><span class="col-label">Mức ưu tiên AI</span><span class="col-label align-right">Thời gian chờ</span><span></span></div>`;
-  list.innerHTML = header + items.map(queueRow).join("");
+  list.innerHTML = header + items.map((item) => queueRow(item, scope)).join("");
   list.querySelectorAll("[data-case]").forEach((button) => button.addEventListener("click", () => loadCase(button.dataset.case, { navigate, logout })));
 }
 
-function queueRow(item) {
-  const level = priority(item);
+/** Ba thẻ số liệu cột phải. Đếm trên TOÀN BỘ `state.queue` chứ không theo scope - đó là điểm của
+ *  một bảng tổng quan: đứng ở màn nào cũng thấy đủ số của cả hai, và bấm được để sang màn kia.
+ *
+ *  Chỉ hai con số, và cả hai đếm trên TOÀN BỘ `state.queue` chứ không theo màn đang mở - đó là điểm
+ *  của một thanh điều hướng: đứng ở đâu cũng thấy đủ. */
+export function paintOverview(root) {
+  const done = state.queue.filter((item) => completedStatuses.has(item.status)).length;
+  root.querySelector("#overview-queue").textContent = state.queue.length - done;
+  root.querySelector("#overview-done").textContent = done;
+}
+
+function queueRow(item, scope) {
+  const level = displayLevel(item);
   const hasRedFlag = item.status === "escalated" || Boolean(item.red_flags?.length);
-  const emergency = level === "Emergency" || hasRedFlag;
+  const emergency = level === "Emergency";
   return `<button class="queue-row ${emergency ? "is-emergency" : ""}" type="button" data-case="${item.case_id}">
     ${priorityDot(level)}
     <span class="case-code">${shortCaseId(item.case_id)}</span>
     <span class="group">${escapeHtml(complaint(item))}</span>
     <span class="signal">
-      <span class="priority-badge ${priorityClass(emergency ? "Emergency" : level)}">${emergency ? icon("warning", 13) : ""}${priorityLabels[emergency ? "Emergency" : level] || level}</span>
+      <span class="priority-badge ${priorityClass(level)}">${emergency ? icon("warning", 13) : ""}${priorityLabels[level] || level}</span>
       ${hasRedFlag ? `<span class="redflag-queue-tag">Red flag</span>` : ""}
-      ${confidenceMarkup(item.triage_proposal?.confidence)}
     </span>
     <span class="wait">${waitingLabel(item.created_at)}${slaBadge(item)}</span>
-    <span class="go">Duyệt ca →</span>
+    <span class="go">${scope.action}</span>
   </button>`;
 }
 
@@ -204,7 +361,7 @@ async function loadCase(caseId, { navigate, logout }) {
  */
 export function renderNurseCase(root, { navigate, logout }) {
   const item = state.selectedNurseCase;
-  if (!item) { navigate("nurse-queue"); return; }
+  if (!item) { navigate(lastListView); return; }
   const summary = item.summary || {};
   const structured = item.structured_data || {};
   const validation = item.validation || {};
@@ -213,13 +370,12 @@ export function renderNurseCase(root, { navigate, logout }) {
   const isDone = completedStatuses.has(item.status);
   const isChatting = item.status === "needs_more_info";
   const level = priority(item);
-  const confidence = aiConfidence(proposal.confidence);
 
   // Trạng thái "lỗi lưu" của thiết kế thay nút "Về hàng đợi" bằng chip khoá — cố ý: khi chưa lưu
   // được quyết định thì rời màn hình là mất nó.
   const headerRight = state.nurseSaveError
     ? `<span class="header-meta"><span class="pill is-muted">${icon("lock", 15)}<span>Đang khoá — chưa lưu được quyết định</span></span></span>`
-    : `<div class="header-right"><button class="back-button" type="button" data-back>${icon("chevronLeft", 15)}<span>Về hàng đợi</span></button>${accountMenu()}</div>`;
+    : `<div class="header-right"><button class="back-button" type="button" data-back>${icon("chevronLeft", 15)}<span>${lastListView === "nurse-done" ? "Về ca đã duyệt" : "Về hàng đợi"}</span></button>${accountMenu()}</div>`;
 
   root.innerHTML = `<section class="app-shell">
     ${nurseHeader("", { title: `Duyệt ca <b>${shortCaseId(item.case_id)}</b> · chờ ${waitingLabel(item.created_at)}`, right: headerRight })}
@@ -255,15 +411,6 @@ export function renderNurseCase(root, { navigate, logout }) {
         <div class="review-side">
           <div class="banner is-error" id="review-error" role="alert" hidden>${icon("alert", 19)}<span class="banner-text"></span></div>
           ${redFlagCallout(item, isDone)}
-
-          <div class="ai-priority-card ${priorityClass(level)}">
-            <div class="ai-priority-head">
-              <span class="section-label">Mức ưu tiên AI đề xuất</span>
-              ${confidence ? `<span class="conf-chip is-${confidence.key}"><span class="dot"></span>Độ tin cậy: ${confidence.label}</span>` : ""}
-            </div>
-            <div class="ai-priority-value">${priorityDot(level)}<b>${priorityLabels[level] || level}</b></div>
-            <p>Quyết định cuối cùng thuộc về nhân viên y tế.</p>
-          </div>
 
           ${graphDecisionBlock(item)}
 
@@ -319,7 +466,7 @@ export function renderNurseCase(root, { navigate, logout }) {
     </main>
   </section>`;
 
-  root.querySelector("[data-back]")?.addEventListener("click", () => navigate("nurse-queue"));
+  root.querySelector("[data-back]")?.addEventListener("click", () => navigate(lastListView));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseCase(root, { navigate, logout }) });
   bindRedFlagEditor(root);
   bindReviewActions(root, { navigate, logout, currentPriority: level });
@@ -476,22 +623,68 @@ function provenanceRow(label, value) {
   return `<div class="provenance"><span class="label">${label}</span><span class="value">${escapeHtml(value)}</span></div>`;
 }
 
-function needsNurseAttention(item) { return pendingStatuses.has(item.status) || item.status === "escalated"; }
-
 function priority(item) { return item.triage_proposal?.priority || "Manual review"; }
 
-// Nhãn của agent quyết định (src/graph_triage/) dùng bộ 3 mức riêng. Khi safety gate C6 bật, backend
-// chỉ được nâng `triage_proposal.priority` theo nhãn này; nurse vẫn là người duyệt cuối.
+// Nhãn 3 mức của Part 2 -> vocab priority của UI. Dùng ở CẢ hàng đợi (`displayLevel`) lẫn thẻ mức
+// ưu tiên của W-07, nên chỉ được có MỘT bảng này. Giữ khớp với `C6_TRIAGE_LABEL_TO_PRIORITY`
+// (src/services/engines/priority_labels.py).
+const graphLabelPriority = { theo_doi_tai_nha: "Self-care", kham_som: "Urgent", cap_cuu: "Emergency" };
+
+/** Mức mà điều dưỡng THẤY trên một hàng: KẾT LUẬN CỦA PART 2 (`graph_decision.triage_label`), đúng
+ *  thứ thẻ mức ưu tiên ở màn duyệt W-07 hiển thị. Hai màn đọc chung một nguồn thì không thể nói hai
+ *  mức khác nhau cho cùng một ca.
+ *
+ *  An toàn khi làm vậy vì `service._effective_c6_label` đã so nhãn C6 với `triage_proposal.priority`
+ *  của rule engine và giữ mức NẶNG HƠN trước khi lưu - nhãn ở đây không bao giờ thấp hơn mức rule
+ *  engine chốt.
+ *
+ *  Chưa có `graph_decision` (Part 2 chưa chạy xong hoặc lỗi API) thì rơi về `triage_proposal.priority`,
+ *  và ca `escalated` luôn đọc là Cấp cứu - hàng đợi không được để trống mức của một ca red-flag.
+ *
+ *  MỌI chỗ hiển thị mức đều phải gọi hàm này - huy hiệu, viền đỏ, chip lọc, số đếm, thứ tự sắp xếp,
+ *  ô tìm kiếm. Trước đây huy hiệu tự nâng lên "Cấp cứu" khi ca có `red_flags` còn bộ lọc lại đọc
+ *  `triage_proposal.priority`, nên một ca hiện huy hiệu "Cấp cứu" mà nằm trong bộ lọc "Khám sớm".
+ *
+ *  `red_flags` KHÔNG được tự nâng mức: `symptom_case_bridge._red_flags` ánh xạ MỌI `reason_codes` của
+ *  phiên thành RedFlagFinding, kể cả mã mức hổ phách như RF-28 "Rét run dữ dội" (rule engine chốt
+ *  EARLY_VISIT chứ không phải EMERGENCY). Coi mọi red flag là cấp cứu làm chữ "Cấp cứu" mất nghĩa.
+ *  Dấu hiệu nguy hiểm vẫn hiện, nhưng bằng thẻ "Red flag" riêng bên cạnh mức. */
+function displayLevel(item) {
+  const fromPart2 = graphLabelPriority[item.graph_decision?.triage_label];
+  if (fromPart2) return fromPart2;
+  return item.status === "escalated" ? "Emergency" : priority(item);
+}
+
+// Nhãn của agent quyết định (src/graph_triage/) dùng bộ 3 mức riêng. `triage_label` KHÔNG phải nhãn
+// thô của C6: `service._effective_c6_label` đã so với `triage_proposal.priority` của rule engine và
+// nâng lên trước khi lưu, nên nhãn ở đây luôn >= mức của hàng đợi.
 const graphLabels = { theo_doi_tai_nha: "Theo dõi tại nhà", kham_som: "Khám sớm", cap_cuu: "Cấp cứu" };
 
-/** Chỉ hiện kết luận cuối — không hiện xác suất hay evidence graph. Với C6, mức ưu tiên bên cạnh có
- *  thể đã được nâng bởi backend, nhưng điều dưỡng vẫn là người duyệt nội dung và mức cuối cùng. */
+/** THẺ MỨC ƯU TIÊN DUY NHẤT của W-07. Thẻ "Mức ưu tiên AI đề xuất" của rule engine (part 1) đã được
+ *  gỡ khỏi màn này: ở mode `c6`, `graph_decision.triage_label` và `triage_proposal.priority` luôn
+ *  bằng nhau (gate chỉ nâng, không bao giờ hạ - `_raise_priority_from_c6` + `_effective_c6_label`),
+ *  nên hiện cả hai chỉ là một mức nói hai lần.
+ *
+ *  `triage_proposal.priority` VẪN là field quyết định của hệ thống - hàng đợi, bản nháp phản hồi và
+ *  giá trị mặc định của dropdown "Chỉnh sửa mức ưu tiên" đều đọc nó. Đây chỉ là thay đổi HIỂN THỊ.
+ *
+ *  Chỉ hiện kết luận cuối - không hiện xác suất hay evidence graph. Khi chưa có `graph_decision`
+ *  (part 2 chưa chạy xong, hoặc lỗi API), thẻ không hiện: điều dưỡng tự đánh giá và vẫn là người
+ *  duyệt cuối. KHÔNG được rơi về một mức đoán bừa ở đây. */
 function graphDecisionBlock(item) {
   const decision = item.graph_decision;
   if (!decision) return "";
   const label = graphLabels[decision.triage_label] || decision.triage_label || "Không xác định";
-  const title = "Đánh giá mức độ";
-  return `<section class="advisory-card"><h3>${title}</h3><p class="advisory-label">Mức đề xuất: <strong>${escapeHtml(label)}</strong></p><p class="advisory-disclaimer">${escapeHtml(decision.disclaimer || "")}</p></section>`;
+  const tone = priorityClass(graphLabelPriority[decision.triage_label] || "Manual review");
+  const raised = (decision.escalated_by || []).length
+    ? `<p class="advisory-review">Đã nâng mức theo nhánh an toàn: ${escapeHtml(decision.escalated_by.join(", "))}.</p>`
+    : "";
+  return `<section class="ai-priority-card ${tone}">
+    <div class="ai-priority-head"><span class="section-label">Mức ưu tiên AI đề xuất</span></div>
+    <div class="ai-priority-value"><span class="priority-dot ${tone}" aria-hidden="true"></span><b>${escapeHtml(label)}</b></div>
+    ${raised}
+    <p>${escapeHtml(decision.disclaimer || "Quyết định cuối cùng thuộc về nhân viên y tế.")}</p>
+  </section>`;
 }
 /** Khối nguồn y văn ĐỌC-CHỈ của part 3 (src/source_support/), tách biệt khỏi ô nháp phản hồi bệnh
  *  nhân - trích dẫn không còn tự đổ vào bản nháp có thể sửa (xem `patientDraft`), chỉ hiện ở đây.
@@ -530,7 +723,7 @@ function patientDraft(item, isDone) {
 }
 
 function complaint(item) { return item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Triệu chứng chung"; }
-function compareCases(left, right) { const ranks = { Emergency: 0, Urgent: 1, "Manual review": 2, Routine: 3, "Self-care": 4 }; return (ranks[priority(left)] ?? 9) - (ranks[priority(right)] ?? 9) || new Date(left.created_at) - new Date(right.created_at); }
+function compareCases(left, right) { const ranks = { Emergency: 0, Urgent: 1, "Manual review": 2, Routine: 3, "Self-care": 4 }; return (ranks[displayLevel(left)] ?? 9) - (ranks[displayLevel(right)] ?? 9) || new Date(left.created_at) - new Date(right.created_at); }
 
 function conversation(items = []) {
   if (!items.length) return `<p class="muted-copy">Chưa có lịch sử trao đổi.</p>`;

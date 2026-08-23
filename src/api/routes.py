@@ -252,7 +252,6 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
 
 async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
-    triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     if _should_background_safety_gate(triage_case, previous):
         # Rule-engine priority is saved before scheduling network-dependent C6 work. The patient
         # gets the fixed red-flag response and the nurse queue sees the case immediately.
@@ -272,6 +271,7 @@ async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | 
         case_store.save(triage_case)
         if changed is not None:
             _log_priority_raise(triage_case.case_id, triage_case.graph_decision, changed)
+        _retry_graph_decision_if_stranded(triage_case)
     return _patient_chat_response(triage_case)
 
 
@@ -404,6 +404,7 @@ async def force_complete_case(case_id: str, request: Request) -> ChatResponse:
         raise HTTPException(status_code=400, detail=str(error)) from error
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     await _save_with_graph_decision(triage_case)
+    _retry_graph_decision_if_stranded(triage_case)
     return _patient_chat_response(triage_case)
 
 
@@ -436,6 +437,22 @@ async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase |
     # `decide_for_case` không bao giờ raise (best-effort), nhưng nó đồng bộ và nặng - đẩy sang
     # threadpool để không chặn event loop của các request khác.
     triage_case.graph_decision = await run_in_threadpool(graph_triage_service.decide_for_case, triage_case)
+
+
+def _retry_graph_decision_if_stranded(triage_case: TriageCase) -> None:
+    """Thử lại Part 2/3 dưới nền cho ca đã chốt phiếu mà lượt vừa rồi không lấy được kết quả.
+
+    Trước khi hàng đợi lọc theo `_is_ready_for_nurse_queue`, một lần C6 hỏng chỉ làm mất thẻ mức ưu
+    tiên. Bây giờ nó làm ca BIẾN MẤT khỏi hàng đợi - và `_attach_graph_decision` vốn dựa vào "lượt
+    chat sau thử lại", trong khi ca vừa chốt phiếu thì không còn lượt chat nào nữa. Đây là chỗ bù lại
+    đúng một lần thử: `_complete_safety_gate` chạy một lượt rồi thôi, không có vòng lặp nào.
+    """
+    if get_settings().graph_triage_mode == "off":
+        return
+    if triage_case.graph_decision is not None or not triage_case.summary_ready:
+        return
+    logger.info("graph_triage.retry_scheduled case_id=%s", triage_case.case_id)
+    _schedule_safety_gate(triage_case.case_id)
 
 
 def _should_background_safety_gate(triage_case: TriageCase, previous: TriageCase | None) -> bool:
@@ -573,13 +590,48 @@ async def call_tool(tool_name: str, request: MCPToolCallRequest) -> MCPToolCallR
     return result
 
 
+_NURSE_HISTORY_STATUSES = frozenset(
+    {CaseStatus.APPROVED, CaseStatus.REJECTED, CaseStatus.WITHDRAWN}
+)
+
+
+def _is_ready_for_nurse_queue(triage_case: TriageCase) -> bool:
+    """Case đã đủ điều kiện xuất hiện trước mặt điều dưỡng chưa.
+
+    Mặc định là CHƯA: một ca vừa mở, bệnh nhân mới nhắn câu đầu, không nên chiếm chỗ trong hàng đợi
+    khi chưa có gì để duyệt. Ca chỉ nổi lên khi Part 2 + Part 3 đã suy luận xong - `graph_decision`
+    tồn tại nghĩa là cả hai đã chạy (`decide_for_case` gọi `_source_support_for` TRƯỚC khi dựng
+    payload), nên một điều kiện là đủ cho cả hai.
+
+    HAI NGOẠI LỆ, cả hai đều không được bỏ:
+
+    1. `ESCALATED` - red-flag hiện NGAY, không chờ ai. Đây đúng là ngoại lệ có chủ đích của HITL
+       (nguyên tắc 4, CLAUDE.md): C6 là lời gọi mạng, có thể chậm vài giây hoặc hỏng hẳn, và
+       `red_flag_sla` bắt đầu đếm từ lúc ca escalate - giấu ca đi trong lúc đồng hồ SLA chạy là kiểu
+       hỏng tệ nhất có thể có ở màn này.
+    2. Ca đã chốt (duyệt/từ chối/đóng) - đó là LỊCH SỬ. Một ca được duyệt trong lúc Part 2 lỗi vẫn
+       phải nằm trong tab "Ca đã duyệt", nếu không điều dưỡng mất dấu việc chính họ vừa làm.
+
+    Khi `graph_triage_mode="off"` thì không có Part 2 nào để chờ - lúc đó mốc "xong" lùi về đúng
+    nghĩa còn lại của nó: bệnh nhân đã chốt phiếu (`summary_ready`).
+    """
+    if triage_case.status in _NURSE_HISTORY_STATUSES or triage_case.status is CaseStatus.ESCALATED:
+        return True
+    if get_settings().graph_triage_mode == "off":
+        return triage_case.summary_ready
+    return triage_case.graph_decision is not None
+
+
 @router.get("/nurse/queue", response_model=list[TriageCase])
 async def nurse_queue() -> list[TriageCase]:
-    """Hàng đợi điều dưỡng: TẤT CẢ case, sắp theo mức ưu tiên rồi tới thời gian chờ.
+    """Hàng đợi điều dưỡng: case đã sẵn sàng để duyệt, sắp theo mức ưu tiên rồi tới thời gian chờ.
 
-    Trả về tất cả chứ không lọc, vì màn hình điều dưỡng có tab "Tất cả ca" bên cạnh tab "Đang chờ
-    duyệt" và tự lọc phía client (`features/nurse.js`). Endpoint `/queue` cũ (đã gỡ cùng
-    `case_approval`) lọc sẵn ở server nên không phục vụ được tab đó.
+    KHÔNG lọc theo trạng thái duyệt: màn hình điều dưỡng có hai tab ("Hàng đợi" và "Ca đã duyệt")
+    cùng ăn endpoint này rồi tự tách phía client (`listScopes` trong `features/nurse.js`). Lọc sẵn
+    theo trạng thái ở server sẽ làm rỗng một trong hai tab.
+
+    Cái server LỌC là mức độ sẵn sàng - xem `_is_ready_for_nurse_queue`. Lọc ở đây chứ không ở client
+    vì đó là chính sách "điều dưỡng được thấy gì", không phải lựa chọn hiển thị.
 
     Thứ tự thì GIỮ từ `/queue` cũ và là phần đáng giữ nhất của nó: ca cấp cứu lên đầu, cùng mức thì
     ai chờ lâu hơn đứng trước. Sắp ở server chứ không ở client vì đây là thứ tự AN TOÀN - một bug
@@ -596,7 +648,8 @@ async def nurse_queue() -> list[TriageCase]:
         waiting_minutes = max(0.0, (now - triage_case.created_at).total_seconds() / 60)
         return (PRIORITY_RANK.get(priority, 9), -waiting_minutes)
 
-    return sorted(case_store.list_cases(), key=rank)
+    ready = [item for item in case_store.list_cases() if _is_ready_for_nurse_queue(item)]
+    return sorted(ready, key=rank)
 
 
 @router.get("/patient/history", response_model=list[TriageCase])

@@ -33,8 +33,9 @@ export const pendingStatuses = new Set([
 ]);
 
 // "escalated" KHÔNG nằm ở đây: đó là trạng thái hệ thống tự gán ngay khi phát hiện red-flag (bệnh
-// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt — xem
-// `needsNurseAttention` trong nurse.js, nơi "escalated" được coi là CẦN xử lý, không phải đã xong.
+// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt. Tập hợp này chia
+// đôi hai màn W-06: ca thuộc `completedStatuses` nằm ở "Ca đã duyệt", còn lại — kể cả "escalated" —
+// ở lại hàng đợi (xem `listScopes` trong nurse.js).
 export const completedStatuses = new Set(["approved", "rejected", "withdrawn"]);
 
 function readStoredUser() {
