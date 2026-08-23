@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from src.services.infra.account_mailer import account_mailer
+from src.services.infra.account_mailer import DELIVERED, account_mailer
 
 
 def registration_payload(*, email: str = "patient.one@example.com", username: str = "patient.one") -> dict:
@@ -27,7 +27,7 @@ async def test_register_requires_email_verification_before_login(client, monkeyp
     monkeypatch.setattr(
         account_mailer,
         "send_email_verification_code",
-        lambda *, recipient, code: delivered_codes.append(code),
+        lambda *, recipient, code: (delivered_codes.append(code), DELIVERED)[1],
     )
     response = await client.post("/api/v1/register", json=registration_payload())
     assert response.status_code == 201
@@ -59,7 +59,7 @@ async def test_login_accepts_phone_number(client, monkeypatch):
     monkeypatch.setattr(
         account_mailer,
         "send_email_verification_code",
-        lambda *, recipient, code: delivered_codes.append(code),
+        lambda *, recipient, code: (delivered_codes.append(code), DELIVERED)[1],
     )
     payload = registration_payload(email="phone.login@example.com", username="phone.login")
     payload["phone_number"] = "0901234578"
@@ -80,7 +80,7 @@ async def test_login_accepts_phone_number(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch):
-    monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: None)
+    monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: DELIVERED)
     response = await client.post(
         "/api/v1/register",
         json={

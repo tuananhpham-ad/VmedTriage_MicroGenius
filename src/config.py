@@ -188,7 +188,12 @@ class Settings(BaseSettings):
     nurse_registration_code: str = os.getenv("NURSE_REGISTRATION_CODE", "")
     password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     password_reset_base_url: str = os.getenv("PASSWORD_RESET_BASE_URL", "http://localhost:8000")
-    email_verification_code_expire_minutes: int = Field(default=10, ge=5, le=60)
+    email_verification_code_expire_minutes: int = Field(default=30, ge=5, le=60)
+    """Hạn của mã xác thực email. Nâng 10 -> 30 phút (2026-08-23).
+
+    10 phút là ngắn hơn thời gian Gmail hay giữ thư ở hàng đợi lúc tải cao. Người dùng nhận mã lúc
+    nó đã hết hạn thì nhìn thấy đúng một thứ: "mã không hợp lệ" - không phân biệt được với gõ sai,
+    và họ bỏ cuộc thay vì bấm gửi lại."""
 
     # Leave SMTP_HOST empty during development to write email contents to the server log.
     smtp_host: str = os.getenv("SMTP_HOST", "")
@@ -197,6 +202,15 @@ class Settings(BaseSettings):
     smtp_password: str = os.getenv("SMTP_PASSWORD", "")
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
     smtp_use_tls: bool = True
+    """STARTTLS trên cổng 587 - nâng cấp một kết nối thường lên mã hoá."""
+    smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "").strip().lower() in {"1", "true", "yes"}
+    """SMTPS: TLS ngầm định ngay từ đầu, thường trên cổng 465.
+
+    Có mặt vì nhiều nền tảng PaaS chặn outbound 587 nhưng mở 465, và trước đây không có đường nào để
+    thử cổng còn lại - lỗi hiện ra thành "đăng ký xong không đăng nhập được".
+
+    Cổng 465 TỰ suy ra SSL kể cả khi cờ này tắt (`AccountMailer._connect`): bắt người triển khai vừa
+    đổi cổng vừa nhớ bật thêm một cờ là một cái bẫy chứ không phải một lựa chọn."""
 
     # Weaviate Cloud (optional best-effort case persistence; pipeline degrades gracefully if unset)
     weaviate_url: str = os.getenv("WEAVIATE_URL", "")

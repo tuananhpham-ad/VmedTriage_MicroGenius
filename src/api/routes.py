@@ -75,7 +75,16 @@ def register(request: RegisterRequest, db: Session = Depends(get_db_session)) ->
     except NurseRegistrationDeniedError as error:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     verification_code = auth_service.create_email_verification_code(db, user)
-    account_mailer.send_email_verification_code(recipient=user.email, code=verification_code)
+    delivery = account_mailer.send_email_verification_code(recipient=user.email, code=verification_code)
+    if not delivery.delivered:
+        # KHÔNG rollback tài khoản: người dùng đã điền xong form, và họ còn đường gửi lại mã. Nhưng
+        # phải hét lên trong log - đây là lỗi hạ tầng sẽ biểu hiện thành "đăng ký xong không đăng
+        # nhập được", và nếu không tìm được nó ở đây thì sẽ đi tìm nhầm chỗ ở tầng auth.
+        logger.error(
+            "REGISTER OK nhưng KHÔNG gửi được mã xác thực cho %s (%s). "
+            "Người dùng này sẽ không đăng nhập được cho tới khi xác thực được email.",
+            user.email, delivery.reason,
+        )
     return UserResponse.model_validate(user)
 
 
@@ -123,10 +132,27 @@ def confirm_email_verification(
 
 @router.post("/auth/email-verification/resend", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
 def resend_email_verification(payload: PasswordResetRequest, db: Session = Depends(get_db_session)) -> MessageResponse:
+    """Gửi lại mã xác thực. Trả **503 khi hệ thống thư đang hỏng** thay vì 202 dối.
+
+    Thông điệp thành công vẫn cố ý mơ hồ ("nếu tài khoản tồn tại") để không ai dò được email nào đã
+    đăng ký. 503 KHÔNG phá tính chất đó: nó chỉ nói về máy chủ thư, và được trả về **kể cả khi email
+    không tồn tại** - lúc đó `probe()` hỏi thẳng SMTP thay vì gửi gì. Nhờ vậy 503 ⇔ "SMTP hỏng",
+    không suy ra được gì về tài khoản.
+
+    Đây là chỗ người dùng đang kẹt sẽ tới khi không nhận được thư, nên nó là chỗ tệ nhất để nói dối:
+    nghe 202 ba lần rồi vẫn không có thư thì họ nghĩ email mình gõ sai, chứ không nghĩ hệ thống hỏng."""
     result = auth_service.resend_email_verification_code(db, str(payload.email))
     if result is not None:
         user, code = result
-        account_mailer.send_email_verification_code(recipient=user.email, code=code)
+        delivery = account_mailer.send_email_verification_code(recipient=user.email, code=code)
+    else:
+        delivery = account_mailer.probe()
+    if not delivery.delivered and delivery.reason != "development_console":
+        logger.error("Không gửi lại được mã xác thực: %s", delivery.reason)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Hệ thống gửi email đang gặp sự cố. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.",
+        )
     return MessageResponse(message="Nếu tài khoản chưa xác thực tồn tại, chúng tôi đã gửi mã mới.")
 
 
