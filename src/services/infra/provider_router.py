@@ -202,6 +202,26 @@ không đụng tới quyết định nào - nên đây là ứng viên số mộ
 `ROLE_ORDER_CHITCHAT`. Fallback: văn bản TĨNH của `non_clinical.reply_for`, tức là hành vi trước khi
 có vai trò này."""
 
+ROLE_CONTEXT_SUMMARY = "context_summary"
+"""Nén phần ĐẦU của hội thoại đang diễn ra thành vài câu - short memory M2 (`compaction.py`).
+
+Tách khỏi `ROLE_SYNTHESIS` (chỗ nó nằm nhờ trước đây) vì hai việc chỉ giống nhau ở chỗ "đều sinh văn
+bản": diễn đạt lại câu hỏi làm việc trên MỘT cụm rule engine vừa chọn, còn nén làm việc trên hàng
+chục lượt và sai ở đây thì mất nguyên phần đầu bối cảnh. Gộp một vai trò nghĩa là không bao giờ đọc
+được số liệu riêng của cái nào, và đổi model cho cái này là vô tình đổi cho cả cái kia.
+
+Fallback: bản tóm tắt TẤT ĐỊNH (ghép nguyên văn lời người bệnh) - kém súc tích nhưng không bịa được."""
+
+ROLE_FOLLOWUP_QUESTION = "followup_question"
+"""Viết câu hỏi thăm mở đầu hội thoại MỚI từ phiếu bàn giao của các phiên CŨ - long memory M3.
+
+Khác `ROLE_CONTEXT_SUMMARY` ở đúng thứ khiến nó nguy hiểm hơn: đầu vào là dữ liệu của những phiên đã
+đóng (PHI sống lâu hơn phiên sinh ra nó) và đầu ra ĐI THẲNG tới người bệnh mà không có lượt nào của
+điều dưỡng ở giữa. Vì thế đầu ra của nó bị `followup_writer._accept` kiểm bằng CODE (nhãn phải là
+nhãn đã chắt lọc, không chữ số, không mức ưu tiên, đúng một câu hỏi) chứ không bằng prompt.
+
+Fallback: câu TĨNH của `history_recall.greeting` - tức là hành vi trước khi có vai trò này."""
+
 ROLES: tuple[str, ...] = (
     ROLE_FACT_EXTRACTOR,
     ROLE_SYNTHESIS,
@@ -210,6 +230,8 @@ ROLES: tuple[str, ...] = (
     ROLE_SOURCE_VERDICT,
     ROLE_SOURCE_EXPLAIN,
     ROLE_CHITCHAT,
+    ROLE_CONTEXT_SUMMARY,
+    ROLE_FOLLOWUP_QUESTION,
 )
 
 _ROLE_ORDER_ATTRS: dict[str, str] = {
@@ -220,6 +242,8 @@ _ROLE_ORDER_ATTRS: dict[str, str] = {
     ROLE_SOURCE_VERDICT: "role_order_source_verdict",
     ROLE_SOURCE_EXPLAIN: "role_order_source_explain",
     ROLE_CHITCHAT: "role_order_chitchat",
+    ROLE_CONTEXT_SUMMARY: "role_order_context_summary",
+    ROLE_FOLLOWUP_QUESTION: "role_order_followup_question",
 }
 
 

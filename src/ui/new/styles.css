@@ -270,7 +270,12 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .auth-shell { display:grid; height:100dvh; min-height:0; place-items:center; overflow:hidden; padding:32px; background:var(--page); }
 .flow-back { position:fixed; top:20px; left:20px; z-index:10; }
 .role-shell { display:grid; min-height:100dvh; place-items:center; padding:clamp(16px, 3vw, 32px); background:var(--page); }
-.role-select-card { display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(300px, .95fr); width:min(980px, 100%); min-height:560px; overflow:hidden; border:1px solid var(--line-2); border-radius:var(--r-card-lg); background:var(--surface); box-shadow:var(--shadow-frame); }
+.role-select-card { display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(300px, .95fr); grid-template-areas:"copy figure"; width:min(980px, 100%); min-height:560px; overflow:hidden; border:1px solid var(--line-2); border-radius:var(--r-card-lg); background:var(--surface); box-shadow:var(--shadow-frame); }
+/* Chế độ kiểm thử: ảnh sang TRÁI, phần mô tả sang PHẢI. Đổi bằng `grid-template-areas` chứ không
+   đổi thứ tự DOM - thứ tự đọc của screen reader và thứ tự Tab giữ nguyên dù mặt nào đang mở. */
+.role-select-card.is-testing { grid-template-columns:minmax(300px, .95fr) minmax(0, 1.05fr); grid-template-areas:"figure copy"; }
+.role-select-copy { grid-area:copy; }
+.role-robot-figure { grid-area:figure; }
 .role-select-copy { display:flex; flex-direction:column; justify-content:center; gap:18px; padding:44px clamp(26px, 5vw, 62px); }
 .role-select-copy .brand { margin-bottom:10px; }
 .role-select-copy .eyebrow { margin:0; }
@@ -285,6 +290,34 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .role-select-option b { margin-bottom:3px; color:var(--ink-2); font-size:15px; font-weight:600; }
 .role-select-option small { color:var(--muted); font-size:13px; line-height:1.4; }
 .role-select-icon { display:grid; width:44px; height:44px; place-items:center; border-radius:11px; color:var(--blue); background:var(--blue-soft); }
+
+/* --- Chế độ kiểm thử trên màn chọn vai trò ---------------------------------------------------- */
+
+/* Viền ĐỨT, không phải viền liền như hai nút vai trò: đây là lối vào dữ liệu thử nghiệm, và nó phải
+   đọc ra khác hai lựa chọn thật ngay từ ngoại hình - cùng ngôn ngữ hình với khối `.demo-access`. */
+.role-testing-toggle { display:grid; grid-template-columns:44px minmax(0, 1fr) 18px; gap:12px; align-items:center; width:100%; margin-top:14px; border:1px dashed var(--line-strong); border-radius:12px; padding:14px 15px; color:var(--ink); background:transparent; text-align:left; transition:border-color .16s ease, background .16s ease, transform .16s ease; }
+.role-testing-toggle:hover { border-color:var(--blue); background:var(--blue-soft); }
+.role-testing-toggle:active { transform:translateY(1px); }
+.role-testing-toggle > .ico { color:var(--muted); }
+.role-testing-toggle b, .role-testing-toggle small { display:block; }
+.role-testing-toggle b { margin-bottom:3px; color:var(--ink-2); font-size:15px; font-weight:600; }
+.role-testing-toggle small { color:var(--muted); font-size:13px; line-height:1.4; }
+.role-testing-copy .demo-access { margin-top:4px; }
+.role-testing-back { display:inline-flex; align-items:center; gap:6px; margin-top:14px; justify-self:start; }
+
+/* Hiệu ứng lật chỉ chạy SAU cú bấm đầu tiên (`is-switched` do JS gắn). Một trang tự trượt vào lúc
+   vừa mở đọc như lỗi tải chứ không như một cú chuyển do người dùng gây ra. */
+@keyframes role-slide-from-right { from { opacity:0; transform:translateX(34px); } to { opacity:1; transform:none; } }
+@keyframes role-slide-from-left { from { opacity:0; transform:translateX(-34px); } to { opacity:1; transform:none; } }
+.role-select-card.is-switched.is-testing .role-robot-figure,
+.role-select-card.is-switched:not(.is-testing) .role-select-copy { animation:role-slide-from-right .42s cubic-bezier(.22, .61, .36, 1) both; }
+.role-select-card.is-switched.is-testing .role-select-copy,
+.role-select-card.is-switched:not(.is-testing) .role-robot-figure { animation:role-slide-from-left .42s cubic-bezier(.22, .61, .36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .role-select-card.is-switched .role-robot-figure,
+  .role-select-card.is-switched .role-select-copy { animation:none; }
+}
 .role-robot-figure { display:flex; align-items:flex-end; justify-content:center; margin:0; padding:34px 24px 0; overflow:hidden; background:linear-gradient(160deg, #edf5fc 0%, #dfeefa 100%); }
 .role-robot-figure img { width:min(400px, 100%); max-height:520px; object-fit:contain; object-position:bottom; filter:drop-shadow(0 18px 24px rgb(22 32 43 / .14)); }
 .auth-card { display:grid; grid-template-columns:minmax(0, .94fr) minmax(0, 1.06fr); width:calc(100vw - 64px); max-width:1180px; height:min(720px, calc(100dvh - 64px)); overflow:hidden; border:1px solid var(--line-2); border-radius:var(--r-card-lg); background:var(--surface); box-shadow:var(--shadow-frame); }
@@ -375,8 +408,8 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
    dòng thì dòng đó cũng là dòng cuối, mà dòng cuối không bị kéo giãn (`text-align-last: left`). Nhờ
    vậy câu "vâng" không bị dàn ra hết bề ngang, còn đoạn hỏi dài của trợ lý thì có hai lề thẳng. */
 .bubble {
-  max-width:min(62%, 560px); border-radius:14px; padding:13px 16px; font-size:15.5px;
-  line-height:1.55; text-wrap:pretty; text-align:justify; text-align-last:left; hyphens:auto;
+  max-width:min(62%, 560px); min-width:0; border-radius:14px; padding:13px 16px; font-size:15.5px;
+  line-height:1.55; text-wrap:pretty; overflow-wrap:anywhere; text-align:justify; text-align-last:left; hyphens:auto;
 }
 .bubble.is-agent, .bubble.is-streaming { align-self:flex-start; border:1px solid var(--line); border-radius:14px 14px 14px 4px; color:var(--ink-2); background:var(--surface-soft); }
 .bubble.is-patient { align-self:flex-end; border-radius:14px 14px 4px 14px; color:#fff; background:var(--blue); }
@@ -1007,7 +1040,9 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .auth-trust { grid-template-columns:1fr; }
   .auth-trust li:last-child { grid-column:auto; }
   .role-shell { padding:76px 16px 20px; }
-  .role-select-card { grid-template-columns:1fr; min-height:0; }
+  /* Một cột: đảo trái/phải không còn nghĩa gì, và giữ ảnh luôn nằm dưới phần chữ thì cú bấm không
+     đẩy nội dung vừa mở xuống khỏi màn hình. */
+  .role-select-card, .role-select-card.is-testing { grid-template-columns:1fr; grid-template-areas:"copy" "figure"; min-height:0; }
   .role-select-copy { padding:30px 22px; }
   .role-robot-figure { min-height:240px; padding:18px 18px 0; }
   .role-robot-figure img { max-height:300px; }

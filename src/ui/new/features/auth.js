@@ -6,6 +6,9 @@ import { escapeHtml, icon, logo, showToast } from "../shared.js";
 // thay bằng ảnh nhân viên y tế duyệt ca thật trước khi lên production.
 const TEAM_PHOTO = "/assets/landing-team.jpg";
 const AI_DOCTOR = "/assets/triage-ai-doctor-looking-left.png";
+// Robot cầm bảng checklist - dùng cho chế độ kiểm thử. Ảnh RIÊNG chứ không dùng lại ảnh bác sĩ: đổi
+// bên mà vẫn cùng một hình thì cú chuyển chỉ trông như trang bị giật, không như đổi sang một chỗ khác.
+const AI_ENGINEER = "/assets/engineer-testing.png";
 
 /**
  * W-00P — trang giới thiệu công khai, thứ người chưa đăng nhập thấy đầu tiên.
@@ -109,12 +112,22 @@ export function renderAccess(root, { navigate }) {
   root.querySelectorAll("[data-guide-open]").forEach((button) => button.addEventListener("click", () => openGuide(root)));
 }
 
-/** Màn hình chọn vai trò được mở sau CTA "Bắt đầu khai báo triệu chứng". */
-export function renderRoleSelect(root, { navigate }) {
+/**
+ * Màn hình chọn vai trò được mở sau CTA "Bắt đầu khai báo triệu chứng".
+ *
+ * Hai mặt trên CÙNG một trang, không phải hai view: chọn vai trò và chế độ kiểm thử.
+ *
+ * Kiểm thử không phải một vai trò thứ ba - nó là một CÁCH VÀO của hai vai trò đã có. Cho nó đứng
+ * chung hàng với "Bệnh nhân" và "Nhân viên y tế" là mời người bệnh thật bấm nhầm vào tài khoản
+ * `test-*`; đẩy nó sang một view riêng thì mất bối cảnh và phải dựng thêm một entry history. Vì thế
+ * nó là một nút ở CUỐI danh sách, và mở ra bằng cách lật chính tấm thẻ này: ảnh sang trái, phần mô
+ * tả chế độ kiểm thử sang phải.
+ */
+export function renderRoleSelect(root, { navigate, onAuthenticated }) {
   root.innerHTML = `<section class="role-shell">
     <button class="back-button flow-back" type="button" data-back>${icon("chevronLeft", 16)}<span>Quay lại</span></button>
-    <div class="role-select-card">
-      <div class="role-select-copy">
+    <div class="role-select-card" data-role-card>
+      <div class="role-select-copy" data-role-panel="roles">
         <span class="brand brand-lg">${logo(28)}</span>
         <p class="eyebrow">Bắt đầu an toàn</p>
         <h1>Bạn đang sử dụng VMedTriage với vai trò nào?</h1>
@@ -131,14 +144,57 @@ export function renderRoleSelect(root, { navigate }) {
             ${icon("chevronRight", 18)}
           </button>
         </div>
+        <button class="role-testing-toggle" type="button" data-testing-open aria-expanded="false">
+          <span class="role-select-icon">${icon("pulse", 20)}</span>
+          <span><b>Bạn đang kiểm thử hệ thống?</b><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span>
+          ${icon("chevronRight", 18)}
+        </button>
       </div>
-      <figure class="role-robot-figure">
-        <img src="${AI_DOCTOR}" alt="Trợ lý AI bác sĩ VMedTriage" />
+      <div class="role-select-copy role-testing-copy" data-role-panel="testing" hidden>
+        <span class="brand brand-lg">${logo(28)}</span>
+        <p class="eyebrow">Chế độ kiểm thử</p>
+        <h1>Xem thử luồng của từng vai trò</h1>
+        <p>Dành cho người kiểm thử và nghiệm thu: vào thẳng màn hình cần xem mà không phải dựng tài khoản thật.</p>
+        ${demoAccessPanel()}
+        <button class="link-button role-testing-back" type="button" data-testing-close>${icon("chevronLeft", 16)}<span>Quay lại chọn vai trò</span></button>
+      </div>
+      <figure class="role-robot-figure" data-role-figure>
+        <img src="${AI_DOCTOR}" alt="Trợ lý AI bác sĩ VMedTriage" data-role-image />
       </figure>
     </div>
   </section>`;
+
+  const card = root.querySelector("[data-role-card]");
+  const image = root.querySelector("[data-role-image]");
+  const panels = { roles: root.querySelector('[data-role-panel="roles"]'), testing: root.querySelector('[data-role-panel="testing"]') };
+  const toggle = root.querySelector("[data-testing-open]");
+
+  /**
+   * Lật thẻ sang mặt kia. `is-switched` chỉ được bật ở lần lật ĐẦU TIÊN và không bao giờ tắt: các
+   * keyframe trượt nằm dưới class đó, nên lần render đầu của trang không có hiệu ứng nào - một trang
+   * tự trượt vào khi vừa mở đọc như lỗi tải, không như một cú chuyển do người dùng bấm.
+   */
+  const showPanel = (name) => {
+    const testing = name === "testing";
+    card.classList.add("is-switched");
+    card.classList.toggle("is-testing", testing);
+    panels.roles.hidden = testing;
+    panels.testing.hidden = !testing;
+    image.src = testing ? AI_ENGINEER : AI_DOCTOR;
+    image.alt = testing ? "Robot kỹ sư VMedTriage cầm bảng kiểm thử" : "Trợ lý AI bác sĩ VMedTriage";
+    toggle.setAttribute("aria-expanded", String(testing));
+    // Đưa tiêu điểm sang mặt vừa mở: người dùng bàn phím vừa bấm một nút giờ đang bị `hidden`, và
+    // tiêu điểm rơi về `body` nghĩa là họ phải Tab lại từ đầu trang.
+    panels[testing ? "testing" : "roles"].querySelector("button")?.focus();
+  };
+
   root.querySelector("[data-back]").addEventListener("click", () => navigate("access"));
   root.querySelectorAll("[data-role]").forEach((button) => button.addEventListener("click", () => navigate("auth", { role: button.dataset.role })));
+  toggle.addEventListener("click", () => showPanel("testing"));
+  root.querySelector("[data-testing-close]").addEventListener("click", () => showPanel("roles"));
+  // Cùng một hàm `bindDemoAccess` với màn đăng nhập: hai chỗ bấm "Dùng thử" phải sinh tài khoản theo
+  // đúng một đường, nếu không thì sửa một chỗ là để chỗ kia lệch đi mà không ai thấy.
+  if (onAuthenticated) bindDemoAccess(root, { onAuthenticated });
 }
 
 // Hướng dẫn được tách theo vai trò: người dùng chọn vai trò trước, rồi chỉ thấy đúng luồng của mình.

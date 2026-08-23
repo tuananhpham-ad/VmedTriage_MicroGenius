@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     role_order_source_verdict: str = os.getenv("ROLE_ORDER_SOURCE_VERDICT", "")
     role_order_source_explain: str = os.getenv("ROLE_ORDER_SOURCE_EXPLAIN", "")
     role_order_chitchat: str = os.getenv("ROLE_ORDER_CHITCHAT", "")
+    role_order_context_summary: str = os.getenv("ROLE_ORDER_CONTEXT_SUMMARY", "")
+    """M2 - model nén hội thoại đang diễn ra. Rỗng = kế thừa thứ tự toàn cục."""
+    role_order_followup_question: str = os.getenv("ROLE_ORDER_FOLLOWUP_QUESTION", "")
+    """M3 - model viết câu hỏi thăm mở đầu hội thoại mới. Rỗng = kế thừa thứ tự toàn cục."""
 
     # Bộ lọc phạm vi y tế rẻ (`non_clinical.classify_with_zero_shot`) đứng TRƯỚC LLM domain
     # classifier - model NLI nhỏ qua HF Inference API, không sinh văn bản nên rẻ và nhanh hơn một
@@ -175,6 +179,18 @@ class Settings(BaseSettings):
     (bất biến 9). Cờ này chỉ quyết định agent có ĐƯỢC HỎI THĂM hay không."""
     long_memory_recent_conversations: int = Field(default=3, ge=1, le=10)
     """Số phiên gần nhất được lấy để hỏi thăm."""
+    followup_question_llm_enabled: bool = os.getenv(
+        "FOLLOWUP_QUESTION_LLM_ENABLED", "true"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    """M3 - để MODEL viết câu hỏi thăm thay vì đọc câu tĩnh. Mặc định BẬT.
+
+    Bật được vì nó không nằm trên đường an toàn và bị siết ở CẢ HAI đầu bằng code
+    (`followup_writer`): đầu vào chỉ có nhãn than phiền đã chắt lọc (không phiếu bàn giao, không mức
+    ưu tiên), đầu ra bị guard kiểm rồi mới tới người bệnh. Mọi đường thất bại - tắt cờ, model chết,
+    trượt guard - đều rơi về đúng câu tĩnh `history_recall.greeting`, tức là hành vi trước khi có nó.
+
+    ⚠️ Cờ này KHÔNG bật được M3: nó chỉ chọn ai viết câu hỏi thăm. Có hỏi thăm hay không vẫn do
+    `long_memory_enabled` quyết định."""
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "")

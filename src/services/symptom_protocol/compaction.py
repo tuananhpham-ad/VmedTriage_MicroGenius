@@ -44,6 +44,9 @@ _SUMMARY_TEMPERATURE = 0.0
 
 _SYSTEM_PROMPT = """Bạn tóm tắt phần đầu của một cuộc hỏi-đáp y tế để lưu vào bộ nhớ ngắn hạn.
 
+Người đọc bản tóm tắt này là MODEL đang hỏi tiếp ở cùng phiên đó - không phải người bệnh, không phải
+điều dưỡng. Nó cần biết đã hỏi gì và người bệnh đã đáp gì, để không hỏi lại.
+
 QUY TẮC BẮT BUỘC:
 - CHỈ ghi lại những gì đã thật sự được nói trong đoạn hội thoại bên dưới. TUYỆT ĐỐI không suy diễn.
 - KHÔNG nêu tên bệnh, KHÔNG chẩn đoán, KHÔNG khuyên xử trí, KHÔNG đề xuất mức độ ưu tiên.
@@ -126,7 +129,7 @@ def _summarize(
             [{"role": "user", "content": prompt}],
             temperature=_SUMMARY_TEMPERATURE,
             credential=credential,
-            role=provider_router.ROLE_SYNTHESIS,
+            role=provider_router.ROLE_CONTEXT_SUMMARY,
         )
         text = result.text.strip()
     except Exception as error:  # provider hỏng / hết ngân sách / JSON rác

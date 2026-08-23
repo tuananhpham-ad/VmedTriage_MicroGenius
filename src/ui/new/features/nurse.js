@@ -739,7 +739,7 @@ const bubbleRole = { patient: "patient", nurse: "nurse" };
 function conversation(items = []) {
   if (!items.length) return `<p class="muted-copy">Chưa có lịch sử trao đổi.</p>`;
   return items
-    .map((item) => `<div class="bubble is-${bubbleRole[item.role] || "agent"}">${escapeHtml(item.content)}</div>`)
+    .map((item) => `<div class="bubble is-${bubbleRole[item.role] || "agent"}">${paragraphs(item.content)}</div>`)
     .join("");
 }
 

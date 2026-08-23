@@ -49,7 +49,13 @@ from src.services.infra.auth import (
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.sessions import red_flag_sla, summary_render, symptom_case_bridge, symptom_session
+from src.services.sessions import (
+    history_recall,
+    red_flag_sla,
+    summary_render,
+    symptom_case_bridge,
+    symptom_session,
+)
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.approval_store import AuditLogEntry, approval_store
 from src.services.stores.case_store import case_store
@@ -345,6 +351,11 @@ def _remember_nurse_summary(session, triage_case: TriageCase, *, patient_id: int
     conversation_store.save_nurse_summary(
         session.session_id, user_id=patient_id, summary=triage_case.summary.model_dump(mode="json"),
     )
+    # Phiếu vừa lưu là phiếu MỚI NHẤT trong ba phiếu sẽ được chắt lọc, nên chắt lọc lại ngay tại đây
+    # chứ không đợi lượt mở lần sau. Đây là chỗ RẢNH duy nhất biết chắc cả hai điều kiện: phiên đã
+    # đóng, và phiếu của nó đã nằm trong DB (chắt lọc TRƯỚC `save_nurse_summary` sẽ đọc trúng bộ ba
+    # cũ, thiếu đúng phiên vừa xong - phiên đáng hỏi thăm nhất).
+    history_recall.refresh_for_user(patient_id)
 
 
 _case_locks: dict[str, asyncio.Lock] = {}
