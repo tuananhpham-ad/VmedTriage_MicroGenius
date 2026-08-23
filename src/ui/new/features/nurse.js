@@ -725,13 +725,20 @@ function patientDraft(item, isDone) {
 function complaint(item) { return item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Triệu chứng chung"; }
 function compareCases(left, right) { const ranks = { Emergency: 0, Urgent: 1, "Manual review": 2, Routine: 3, "Self-care": 4 }; return (ranks[displayLevel(left)] ?? 9) - (ranks[displayLevel(right)] ?? 9) || new Date(left.created_at) - new Date(right.created_at); }
 
+/** `ActorRole` chỉ có patient / nurse / system - KHÔNG có "agent", nên mọi lượt trả lời của trợ lý
+ *  đi qua `symptom_case_bridge._conversation` đều mang role `system`. Vì vậy ở phiên bản trước, câu
+ *  hỏi dài của trợ lý bị vẽ thành viên thuốc bo tròn `is-system` (kiểu dành cho một dòng thông báo
+ *  ngắn) và tràn ra khỏi khung; lượt của điều dưỡng cũng rơi vào đúng kiểu đó nên không phân biệt
+ *  được ai nói.
+ *
+ *  Ánh xạ ở đây bám nguồn thật: `system` là trợ lý (chỗ duy nhất sinh ra nó là bridge), `nurse` là
+ *  điều dưỡng (`hitl_review`). Nếu sau này backend thêm role thật cho agent thì sửa lại bảng này. */
+const bubbleRole = { patient: "patient", nurse: "nurse" };
+
 function conversation(items = []) {
   if (!items.length) return `<p class="muted-copy">Chưa có lịch sử trao đổi.</p>`;
   return items
-    .map((item) => {
-      const role = item.role === "patient" ? "patient" : item.role === "agent" ? "agent" : "system";
-      return `<div class="bubble is-${role}">${escapeHtml(item.content)}</div>`;
-    })
+    .map((item) => `<div class="bubble is-${bubbleRole[item.role] || "agent"}">${escapeHtml(item.content)}</div>`)
     .join("");
 }
 

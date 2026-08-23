@@ -185,7 +185,7 @@ export function renderPatientHome(root, { navigate, logout }) {
               <span class="patient-action-availability"><i aria-hidden="true"></i>Tiếp nhận thông tin 24/7</span>
             </div>
           </section>
-          ${openCaseCard(current)}
+          <div id="open-case-slot">${openCaseCard(current)}</div>
         </div>
 
         <div class="patient-quick-grid">
@@ -255,6 +255,16 @@ async function loadPatientHistory(root, { navigate, logout }) {
         button.addEventListener("click", () => openPatientCase(button.dataset.historyCase, { navigate })),
       );
     };
+    // "Tiến trình hiện tại" phải là ca MỚI NHẤT, không phải ca cuối cùng người dùng bấm mở.
+    // `state.currentPatientCase` giữ ca vừa xem (khôi phục cả từ `sessionStorage`), nên mở lại một ca
+    // cũ trong lịch sử là trang chủ kẹt luôn ở ca đó. `/patient/history` đã sắp theo `updated_at`
+    // giảm dần nên phần tử đầu chính là ca mới nhất.
+    state.currentPatientCase = cases[0];
+    const slot = root.querySelector("#open-case-slot");
+    if (slot) {
+      slot.innerHTML = openCaseCard(cases[0]);
+      slot.querySelector("[data-open-case]")?.addEventListener("click", () => openPatientCase(cases[0].case_id, { navigate }));
+    }
     historyControl.hidden = cases.length <= 5;
     historyControl.addEventListener("click", () => {
       showingAll = !showingAll;

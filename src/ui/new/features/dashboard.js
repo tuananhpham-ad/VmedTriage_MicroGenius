@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { bindAccountMenu } from "./account.js?v=design-20260819b";
-import { bindSideNav, nurseShell, paintOverview } from "./nurse.js?v=design-20260823p";
+import { bindSideNav, nurseShell, paintOverview } from "./nurse.js?v=design-20260823r";
 import { completedStatuses, state } from "../state.js";
 import { escapeHtml, icon, symptomGroupLabels } from "../shared.js";
 
