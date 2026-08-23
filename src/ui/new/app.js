@@ -1,9 +1,9 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
-import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260823m";
-import { renderDisclaimer, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260823m";
-import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260823m";
-import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260823m";
+import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260823p";
+import { renderDisclaimer, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260823p";
+import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260823p";
+import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260823p";
 
 const app = document.querySelector("#app");
 
@@ -24,6 +24,7 @@ export function navigate(view, options = {}) {
   // W-04: màn hình chiếm trọn khung, không phải một khối trong trang chat. Đó là lý do nó là một
   // view riêng chứ không phải một nhánh markup của `patient-chat`.
   if (view === "red-flag") renderRedFlag(app, { navigate, logout });
+  if (view === "patient-cases") renderPatientCases(app, { navigate, logout });
   if (view === "patient-result") renderPatientResult(app, { navigate, logout });
   if (view === "nurse-queue") renderNurseQueue(app, { navigate, logout });
   if (view === "nurse-done") renderNurseDone(app, { navigate, logout });

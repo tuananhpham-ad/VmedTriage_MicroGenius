@@ -23,6 +23,12 @@ export const state = {
   // lượt trao đổi phía sau, mà bắn lại màn cảnh báo sau mỗi lượt thì người bệnh học cách bấm qua nó
   // mà không đọc - đúng thứ màn hình này tồn tại để chống lại.
   redFlagShownCaseId: null,
+  // Người bệnh mở ca này TỪ màn "Kết quả của tôi" hay đang khai báo một ca mới. Quyết định nút quay
+  // lại của màn chi tiết ca trỏ về đâu - hai lối vào cùng một màn hình nên không suy ra được từ
+  // trạng thái ca.
+  patientFromCases: false,
+  // Danh sách ca cho màn "Kết quả của tôi". Giữ ở state để đổi bộ lọc không phải gọi lại API.
+  patientCases: [],
 };
 
 export const pendingStatuses = new Set([

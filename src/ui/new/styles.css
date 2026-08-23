@@ -177,8 +177,6 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .header-identity { display:grid; gap:1px; text-align:right; }
 .header-identity b { font-size:13.5px; font-weight:500; }
 .header-identity small { color:var(--faint); font-size:12px; }
-.live-chip { display:inline-flex; align-items:center; gap:6px; border-radius:var(--r-pill); padding:6px 11px; background:var(--blue-soft); color:var(--blue); font-size:12.5px; font-weight:500; }
-.live-chip::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; animation:vmt-pulse 1.8s ease-in-out infinite; }
 /* Trang KHÔNG khoá `max-width` nữa: 1320px để lại một dải trống lớn hai bên trên màn rộng. Thay vào
    đó lề ngang giãn theo khung nhìn (`clamp` với đơn vị vw), nên nội dung nở ra theo màn mà vẫn có
    khoảng thở ở mép. Các thẻ chữ dài vẫn tự chặn bề rộng đọc bằng `max-width` của riêng chúng. */
@@ -759,6 +757,11 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .feature-icon.is-grey { color:var(--muted); background:var(--surface-mute); }
 .feature-row h3 { margin:0; font-size:16px; font-weight:600; letter-spacing:-.01em; }
 .feature-row p { margin:0; color:var(--muted); font-size:13.5px; line-height:1.55; text-wrap:pretty; }
+/* W-09 "Kết quả của tôi" - dùng lại đúng thẻ lịch sử của trang chủ nên bảng ở hai nơi không thể
+   lệch nhau; chỉ thêm khoảng cách giữa tiêu đề, thanh lọc và bảng. */
+.cases-page { display:flex; flex-direction:column; gap:16px; }
+.cases-page .history-body { padding:4px 20px 16px; }
+
 .history-card { overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 .history-card > .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--line); }
 .history-card > .head h2 { margin:0; font-size:16px; font-weight:600; letter-spacing:-.01em; }
@@ -786,7 +789,9 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 
 /* ── Dashboard bệnh nhân ──────────────────────────────────────────────────────────────────── */
 .patient-dashboard-shell { background:var(--surface-soft); }
-.patient-emergency-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px max(16px, calc((100% - 1280px) / 2)); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
+/* Lề ngang GIỐNG HỆT `.page` - dải này nằm ngoài `.page` nên nếu để công thức riêng thì chữ trong
+   dải sẽ lệch khỏi mép nội dung bên dưới ở mọi bề rộng màn hình. */
+.patient-emergency-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px clamp(16px, 4vw, 72px); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
 .patient-emergency-bar > div { display:flex; align-items:center; gap:9px; }
 .patient-emergency-signal { width:8px; height:8px; flex:none; border-radius:50%; background:#e11d48; box-shadow:0 0 0 4px rgb(225 29 72 / .12); }
 .patient-emergency-bar a { display:inline-flex; align-items:center; gap:6px; flex:none; border-radius:8px; padding:6px 10px; color:#fff; background:#be123c; font-size:12px; font-weight:600; }
