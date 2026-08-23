@@ -37,7 +37,6 @@ from src.services.symptom_protocol import (
     coverage,
     dialogue,
     flags,
-    lane_model,
     non_clinical,
     red_flag_branches,
     registry,
@@ -544,7 +543,6 @@ class ProtocolSessionStore:
         # Sau, vì `scan.short_circuit` đã thoát ở trên: một tin nhắn vừa mang dấu hiệu cấp cứu vừa
         # nói "thôi khỏi" phải escalate, không được đọc thành ý định dừng (§1 bất biến 3).
         intent = user_intent.classify(cleaned)
-<<<<<<< HEAD
         # Lane phi lâm sàng (§4.10) - SAU L0, nên nó không có cơ hội nuốt một tín hiệu đỏ. Matcher
         # deterministic được phép chạy cả khi đang có câu hỏi dở: nếu user hỏi chuyện bia/shop/xe bus
         # giữa checklist thì đó là non-answer và phải nhắc lại câu đang hỏi, không đưa vào extractor.
@@ -566,19 +564,6 @@ class ProtocolSessionStore:
             and not controller.is_greeting_only(cleaned)
         ):
             lane = non_clinical.classify_with_model(cleaned, credential=session.credential)
-=======
-        # Lane phi lâm sàng (§4.10) - SAU L0, nên nó không có cơ hội nuốt một tín hiệu đỏ. Chỉ nhận
-        # lượt CHƯA có cụm nào đang chờ trả lời: giữa chừng bộ câu hỏi, một câu "cảm ơn nhé" là lời
-        # cảm ơn KÈM câu trả lời, không phải một lượt tán gẫu - cắt nó ra khỏi luồng lâm sàng sẽ làm
-        # mất chính dữ kiện người bệnh vừa nói.
-        lane = (
-            self._route_non_clinical(cleaned)
-            if session.current_cluster is None or session.phase is SessionPhase.OPENING
-            else non_clinical.NonClinicalVerdict()
-        )
-        if lane.is_non_clinical:
-            return self._answer_non_clinical(session, cleaned, lane)
->>>>>>> b52a1de8e88242a9b1e96481d5d1a5348afab36f
 
         if (
             session.phase is SessionPhase.COLLECTING
@@ -594,7 +579,19 @@ class ProtocolSessionStore:
             )
         ):
             return self._answer_joking_non_answer(session, cleaned)
-        if lane.is_non_clinical:
+        # Lane phi lâm sàng chỉ được CẮT lượt khi chưa có cụm nào đang chờ trả lời.
+        #
+        # Giữa chừng bộ câu hỏi thì đã có hai đường đúng hơn, và cả hai đứng trên dòng này:
+        # LOW_CONTENT/OUT_OF_SCOPE/LIFESTYLE/META rơi vào nhánh nhắc-lại-câu-đang-hỏi ngay phía trên,
+        # còn CHITCHAT đi tiếp đường lâm sàng - `controller.is_greeting_only` đã nhận ra lượt chào và
+        # bỏ hẳn bước trích xuất, nên nó tốn ĐÚNG một lời gọi model thay vì hai
+        # (`test_a_greeting_turn_costs_one_model_call_instead_of_two`, ~3.8s/lượt tiết kiệm được).
+        #
+        # Không có điều kiện này thì một câu "cảm ơn nhé" giữa checklist bị kéo sang lane tán gẫu, và
+        # câu hỏi lâm sàng đang treo biến mất khỏi hội thoại.
+        if lane.is_non_clinical and (
+            session.current_cluster is None or session.phase is SessionPhase.OPENING
+        ):
             return self._answer_non_clinical(session, cleaned, lane)
         self._run_model_red_flag_branch(session, cleaned)
 
@@ -912,19 +909,6 @@ class ProtocolSessionStore:
                 },
             },
         )
-
-    @staticmethod
-    def _route_non_clinical(message: str) -> non_clinical.NonClinicalVerdict:
-        """Sàn keyword trước, model sau — và model CHỈ được hỏi khi sàn không quyết được.
-
-        Hai tầng chứ không phải một, vì chúng giỏi hai việc khác nhau: keyword chính xác tuyệt đối
-        trên những gì nó biết và mù hoàn toàn với phần còn lại; model phủ được phần đuôi dài (kể cả
-        tiếng nước ngoài - nó đa ngữ) nhưng không bao giờ chắc chắn 100%.
-
-        Thứ tự này là thứ giữ cho tầng model không đụng được vào an toàn: tin nhắn đã có dấu hiệu
-        lâm sàng thì `keyword_verdict.is_undecided` là `False`, và model không hề được gọi."""
-        keyword = non_clinical.classify(message)
-        return lane_model.classify(message, keyword_verdict=keyword)
 
     def _answer_non_clinical(
         self, session: Session, message: str, lane: non_clinical.NonClinicalVerdict,

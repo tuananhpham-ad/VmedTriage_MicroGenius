@@ -146,28 +146,6 @@ class Settings(BaseSettings):
     `red_flag_branches.merge_findings`). Vì vậy công tắc này không vi phạm quy tắc "không có công
     tắc cho tầng an toàn" ở trên."""
 
-    # Lane phi lâm sàng (§4.10) — classifier bằng model + LLM trả lời chitchat
-    enable_hf_zero_shot_domain_classifier: bool = (
-        os.getenv("ENABLE_HF_ZERO_SHOT_DOMAIN_CLASSIFIER", "").strip().lower() in {"1", "true", "yes"}
-    )
-    """Tầng phân loại y-tế/phi-y-tế bằng model NLI zero-shot. **Mặc định TẮT.**
-
-    Biến này đã nằm trong `.env` từ trước nhưng chưa có dòng code nào đọc - đây là chỗ nối nó vào.
-
-    Công tắc này KHÔNG phải công tắc cho tầng an toàn: model đứng SAU `non_clinical.classify` thuần
-    code và chỉ được hỏi khi tầng đó không quyết được. Tắt nó đi, hệ thống chạy đúng như hôm nay."""
-    hf_zero_shot_model_name: str = os.getenv(
-        "HF_ZERO_SHOT_MODEL_NAME", "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli",
-    )
-    """Model NLI đa ngữ. Đa ngữ là điểm mấu chốt: danh sách cụm từ trong `non_clinical` đều là tiếng
-    Việt không dấu, nên "hello" / "how are you" không có cửa nào được nhận ra."""
-    hf_zero_shot_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
-    """Điểm tối thiểu để CHẤP NHẬN phán quyết phi lâm sàng của model.
-
-    Dưới ngưỡng thì coi như model không biết, và "không biết" ở lane này phải rơi về **đường lâm
-    sàng**: định tuyến nhầm một câu tán gẫu vào bộ câu hỏi chỉ tốn một câu hỏi thừa, còn định tuyến
-    nhầm một triệu chứng vào chitchat là bỏ một ca."""
-
     chitchat_llm_enabled: bool = os.getenv("CHITCHAT_LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
     """LLM viết câu trả lời cho lượt phi lâm sàng thay vì đọc văn bản tĩnh. Mặc định BẬT.
 

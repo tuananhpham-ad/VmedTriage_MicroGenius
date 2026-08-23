@@ -12,13 +12,8 @@ from unittest.mock import Mock
 import pytest
 
 from src import paths
-<<<<<<< HEAD
-from src.config import Settings
+from src.config import Settings, get_settings
 from src.services.infra import hf_zero_shot, provider_router
-=======
-from src.config import get_settings
-from src.services.infra import provider_router
->>>>>>> b52a1de8e88242a9b1e96481d5d1a5348afab36f
 from src.services.symptom_protocol import controller_shadow, non_clinical
 from src.services.symptom_protocol.non_clinical import NonClinicalLane
 from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase
@@ -148,8 +143,7 @@ def test_opening_out_of_scope_question_is_answered_without_starting_a_checklist(
     spy.assert_not_called()
 
 
-<<<<<<< HEAD
-def test_opening_shop_question_is_out_of_scope_not_repeated_as_opening_question(monkeypatch):
+def test_opening_shop_question_is_out_of_scope_not_repeated_as_opening_question(monkeypatch, no_chitchat_llm):
     spy = Mock(side_effect=AssertionError("Câu hỏi mua hàng không được gọi model"))
     monkeypatch.setattr(provider_router, "complete", spy)
     monkeypatch.setattr(provider_router, "complete_stream", spy)
@@ -169,7 +163,10 @@ def test_opening_shop_question_is_out_of_scope_not_repeated_as_opening_question(
     spy.assert_not_called()
 
 
-def test_opening_unknown_non_medical_question_uses_model_domain_classifier(monkeypatch):
+def test_opening_unknown_non_medical_question_uses_model_domain_classifier(monkeypatch, no_chitchat_llm):
+    """`no_chitchat_llm`: bài này ĐẾM số lời gọi model của tầng ĐỊNH TUYẾN. Từ 2026-08-23 lượt phi
+    lâm sàng còn thêm một lời gọi nữa để VIẾT câu trả lời (`chitchat.compose`), nên không tắt thì
+    `call_count` đếm cả hai và bài đo sai thứ nó định đo."""
     def complete(messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         return provider_router.CompletionResult(
             text=json.dumps({"medical_domain": False, "lane": "out_of_scope", "confidence": 0.96}),
@@ -300,12 +297,8 @@ def test_inconclusive_zero_shot_falls_through_to_the_llm_domain_classifier(monke
     mock.assert_called_once()
 
 
-def test_opening_punctuation_only_reply_is_not_sent_to_the_checklist(monkeypatch):
-    spy = Mock(side_effect=AssertionError("Tin chỉ có dấu câu không được gọi model"))
-=======
 def test_opening_punctuation_only_reply_is_not_sent_to_the_checklist(monkeypatch, no_chitchat_llm):
     spy = Mock(side_effect=AssertionError("Tin chỉ có dấu câu không được đi vào đường lâm sàng"))
->>>>>>> b52a1de8e88242a9b1e96481d5d1a5348afab36f
     monkeypatch.setattr(provider_router, "complete", spy)
     monkeypatch.setattr(provider_router, "complete_stream", spy)
     store = ProtocolSessionStore(default_protocol=None)
@@ -339,9 +332,13 @@ def test_opening_no_symptoms_statement_does_not_start_emergency_screening(
     spy.assert_not_called()
 
 
-<<<<<<< HEAD
-def test_opening_joking_gross_message_does_not_start_clinical_screening(monkeypatch):
-    spy = Mock(side_effect=AssertionError("Câu đùa ở opening không được gọi model"))
+def test_opening_joking_gross_message_does_not_start_clinical_screening(monkeypatch, no_chitchat_llm):
+    """Câu đùa ở lượt mở không được kéo phiên vào bộ câu hỏi lâm sàng.
+
+    `no_chitchat_llm`: từ 2026-08-23 lane phi lâm sàng CÓ gọi model để viết câu trả lời, nên spy
+    "không gọi model nào" chỉ còn đúng khi tắt cờ đó. Thứ bài này bảo vệ - không vào checklist -
+    không đổi."""
+    spy = Mock(side_effect=AssertionError("Câu đùa ở opening không được đi vào đường lâm sàng"))
     monkeypatch.setattr(provider_router, "complete", spy)
     monkeypatch.setattr(provider_router, "complete_stream", spy)
     store = ProtocolSessionStore(default_protocol=None)
@@ -354,7 +351,9 @@ def test_opening_joking_gross_message_does_not_start_clinical_screening(monkeypa
     assert session.current_cluster is None
     assert "triệu chứng" in session.last_question.casefold()
     assert "Khó thở nặng" not in session.last_question
-=======
+    spy.assert_not_called()
+
+
 def test_turning_the_chitchat_llm_off_restores_the_old_static_behaviour(monkeypatch, no_chitchat_llm):
     """`INVARIANTS.md` §4: tắt cờ thì hệ thống phải chạy đúng như trước khi có tính năng. Ở đây nghĩa
     là KHÔNG một lời gọi model nào cho lượt phi lâm sàng, và câu trả lời là bản tĩnh nguyên văn."""
@@ -367,7 +366,6 @@ def test_turning_the_chitchat_llm_off_restores_the_old_static_behaviour(monkeypa
 
     assert session.last_question in non_clinical.CHITCHAT_REPLIES
     assert session.llm_used_last_turn is False
->>>>>>> b52a1de8e88242a9b1e96481d5d1a5348afab36f
     spy.assert_not_called()
 
 

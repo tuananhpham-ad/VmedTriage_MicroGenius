@@ -141,13 +141,11 @@ rất hay không bỏ dấu. Vài cụm tiếng Anh ở đây chỉ là lưới 
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-<<<<<<< HEAD
 MODEL_DOMAIN_CONFIDENCE_MIN = 0.75
 """Ngưỡng để model được quyền chặn lượt opening khỏi luồng y tế.
 
 Thấp hơn ngưỡng này thì fail-open sang clinical: hỏi thừa một câu còn rẻ hơn bỏ sót một ca bệnh.
 """
-=======
 
 def _matcher(phrases: tuple[str, ...]) -> tuple[tuple[str, re.Pattern[str]], ...]:
     """Biên dịch cụm từ thành mẫu khớp theo RANH GIỚI TỪ.
@@ -172,7 +170,6 @@ def _matcher(phrases: tuple[str, ...]) -> tuple[tuple[str, re.Pattern[str]], ...
 
 def _matches(folded: str, compiled: tuple[tuple[str, re.Pattern[str]], ...]) -> tuple[str, ...]:
     return tuple(phrase for phrase, pattern in compiled if pattern.search(folded))
->>>>>>> b52a1de8e88242a9b1e96481d5d1a5348afab36f
 
 # Từ khoá cho thấy tin nhắn CÓ nội dung lâm sàng - khi chúng xuất hiện, mọi lane phi lâm sàng bị huỷ.
 # Cố ý rộng và cố ý nghiêng về BỎ SÓT lane phi lâm sàng: định tuyến nhầm một câu tán gẫu vào đường
