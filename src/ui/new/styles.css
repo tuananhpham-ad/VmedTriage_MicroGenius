@@ -275,6 +275,9 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
    đổi thứ tự DOM - thứ tự đọc của screen reader và thứ tự Tab giữ nguyên dù mặt nào đang mở. */
 .role-select-card.is-testing { grid-template-columns:minmax(300px, .95fr) minmax(0, 1.05fr); grid-template-areas:"figure copy"; }
 .role-select-copy { grid-area:copy; }
+/* `display` khai trong CSS THẮNG thuộc tính `hidden` của HTML - thiếu dòng này thì mặt đang ẩn vẫn
+   hiện và hai mặt chồng lên nhau trong cùng một ô lưới. */
+.role-select-copy[hidden] { display:none; }
 .role-robot-figure { grid-area:figure; }
 .role-select-copy { display:flex; flex-direction:column; justify-content:center; gap:18px; padding:44px clamp(26px, 5vw, 62px); }
 .role-select-copy .brand { margin-bottom:10px; }
@@ -302,8 +305,82 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .role-testing-toggle b, .role-testing-toggle small { display:block; }
 .role-testing-toggle b { margin-bottom:3px; color:var(--ink-2); font-size:15px; font-weight:600; }
 .role-testing-toggle small { color:var(--muted); font-size:13px; line-height:1.4; }
+/* Mặt kiểm thử phải CAO BẰNG mặt chọn vai trò - hai mặt của cùng một tấm thẻ mà chênh nhau thì cú
+   lật trông như đổi trang. Ba thứ kéo nó cao lên và cả ba đều bị siết ở đây: tiêu đề nhỏ hơn (nó là
+   màn phụ, không phải câu hỏi chính của trang), khối `.demo-access` bỏ phần đầu trùng ý, và hai lựa
+   chọn xếp THEO HÀNG. */
+.role-testing-copy h1 { font-size:clamp(1.5rem, 2.6vw, 1.85rem); }
 .role-testing-copy .demo-access { margin-top:4px; }
+/* Cột chữ ở đây hẹp hơn màn đăng nhập, nên chia đôi thì mỗi ô còn ~130px và nhãn vỡ thành từng chữ
+   một dòng. Ghi đè media query `min-width:640px` bằng ĐỘ ĐẶC HIỆU, không bằng thứ tự. */
+.role-testing-copy .demo-access-options { grid-template-columns:1fr; }
 .role-testing-back { display:inline-flex; align-items:center; gap:6px; margin-top:14px; justify-self:start; }
+
+/* --- Sân khấu linh vật: hai con robot "chạy qua thay áo" ---------------------------------------
+   Cả hai `<img>` nằm sẵn trong DOM từ lúc render chứ không đổi `src` khi bấm: đổi `src` thì lần lật
+   đầu tiên hiện một khung TRỐNG trong lúc trình duyệt tải ảnh, đúng khoảnh khắc người dùng đang nhìn.
+   Hai con chồng lên nhau trong cùng một ô lưới, con nào đang diễn thì `is-active`. */
+/* `align-self:stretch` + `flex:1` chứ không `height:100%`: khung ảnh là flex container căn đáy, và
+   trong đó `height:100%` không có mốc để tính - sân khấu sẽ co lại đúng bằng con robot và cú chạy
+   ngang bị cắt cụt ngay mép. `overflow:hidden` để con chạy khuất hẳn thay vì tràn ra ngoài thẻ. */
+.robot-stage { position:relative; display:grid; flex:1 1 auto; align-self:stretch; width:100%; place-items:end center; overflow:hidden; padding-bottom:clamp(10px, 3vh, 34px); --dir:-1; --mascot-h:min(582px, 62vh); }
+/* `--mascot-h` là chiều cao của KHUNG HÌNH, không phải của con robot. Ảnh tĩnh và các khung phim
+   được dựng trên cùng một khung (`build_mascot_cutscene.py`: 430x540, chân ở 494), nên chỉ cần một
+   dòng `height` duy nhất cho cả hai là chúng chồng khít lên nhau - không có phép nhân bù nào trong
+   stylesheet để lệch đi khi ai đó đổi một con số bên script. Phần rỗng dưới vạch chân (8.5% khung)
+   cộng với `padding-bottom` là thứ NÂNG linh vật khỏi mép dưới. */
+.robot-runner { grid-area:1/1; align-self:end; display:block; opacity:0; pointer-events:none; }
+.robot-runner.is-active { opacity:1; }
+/* Chiều cao khoá cứng cho CẢ HAI (ảnh đã cắt sát thân và chuẩn hoá cùng chiều cao pixel) - đây là
+   thứ khiến hai linh vật to bằng nhau, `max-height` trên hai ảnh lệch tỉ lệ thì không. */
+.role-robot-figure .robot-runner img { display:block; width:auto; max-width:100%; height:var(--mascot-h); object-fit:contain; object-position:bottom; filter:drop-shadow(0 18px 24px rgb(22 32 43 / .14)); animation:mascot-idle 4.2s ease-in-out infinite; }
+
+/* Cut-scene render sẵn: nằm đè lên đúng ô lưới của hai ảnh tĩnh, chỉ hiện lúc đang diễn. Hai ảnh
+   tĩnh bị ẩn trong lúc đó chứ không bị gỡ khỏi DOM - phim tắt là chúng lộ lại ngay, không có một
+   khung hình nào phải chờ tải. */
+.role-robot-figure .robot-cutscene { grid-area:1/1; align-self:end; display:block; width:auto; max-width:100%; height:var(--mascot-h); opacity:0; pointer-events:none; filter:drop-shadow(0 18px 24px rgb(22 32 43 / .14)); }
+.robot-stage.is-cutscene .robot-cutscene { opacity:1; }
+.robot-stage.is-cutscene .robot-runner { opacity:0; }
+/* Tắt nhịp thở trong lúc phim chạy để nó KHỞI ĐỘNG LẠI từ đầu khi ảnh tĩnh lộ ra: không tắt thì
+   khung cuối của phim (robot đứng thẳng) gặp một ảnh tĩnh đang lơ lửng giữa chu kỳ nhún, và người
+   xem thấy một cú giật nhỏ đúng vào lúc đang nhìn chằm chằm vào chỗ đó. */
+.robot-stage.is-cutscene .robot-runner img { animation:none; }
+
+/* Đứng yên vẫn THỞ: nhún nhẹ 9px kèm nghiêng dưới 1 độ. Biên độ cố ý nhỏ - một linh vật nhún mạnh
+   trong khi người dùng đang đọc hai lựa chọn là thứ kéo mắt khỏi đúng chỗ cần đọc. */
+@keyframes mascot-idle { 0%, 100% { transform:translateY(0) rotate(0deg); } 50% { transform:translateY(-9px) rotate(-.8deg); } }
+/* Lúc chạy thì nhún NHANH và nghiêng theo nhịp - đây là thứ biến "ảnh trượt ngang" thành "robot chạy". */
+@keyframes mascot-step { 0%, 100% { transform:translateY(0) rotate(-2.5deg); } 50% { transform:translateY(-17px) rotate(2.5deg); } }
+.robot-runner.is-leaving img, .robot-runner.is-entering img { animation:mascot-step .26s ease-in-out infinite; }
+
+/* `--dir` = hướng con cũ chạy đi (JS đặt: -1 trái, +1 phải). Con mới luôn vào từ phía ĐỐI DIỆN, nên
+   nó dùng chính biến đó với dấu ngược - một biến cho cả hai chiều, không có bản sao keyframe nào để
+   quên đồng bộ. Bước 12%/82% là nhịp lấy đà và nhịp phanh: chạy đều tăm tắp trông như trượt băng. */
+@keyframes runner-out {
+  0% { transform:translateX(0) scaleX(1); opacity:1; }
+  12% { transform:translateX(calc(var(--dir) * -7%)) scaleX(.94); opacity:1; }
+  100% { transform:translateX(calc(var(--dir) * 175%)) scaleX(1.05); opacity:0; }
+}
+@keyframes runner-in {
+  0% { transform:translateX(calc(var(--dir) * -175%)) scaleX(1.05); opacity:0; }
+  40% { opacity:1; }
+  82% { transform:translateX(calc(var(--dir) * 6%)) scaleX(.97); opacity:1; }
+  100% { transform:translateX(0) scaleX(1); opacity:1; }
+}
+.robot-runner.is-leaving { opacity:1; animation:runner-out .42s cubic-bezier(.55, 0, .85, .35) both; }
+/* Vào SAU khi con cũ đã khuất và tấm thẻ đã đổi bên xong (.42s + .22s): hai con cùng trên sân một
+   lúc thì người xem không biết nhìn con nào, và cú thay áo mất hẳn ý nghĩa. */
+.robot-runner.is-entering { animation:runner-in .5s cubic-bezier(.22, .8, .3, 1) .22s both; }
+
+/* Vệt tốc độ quét ngang đúng lúc giao ca - thứ lấp khoảng trống giữa "con cũ vừa khuất" và "con mới
+   chưa tới", và là lý do khoảng trống đó đọc như một cú chạy nhanh chứ như một khung hình rỗng. */
+.robot-swoosh { grid-area:1/1; align-self:center; justify-self:stretch; height:150px; opacity:0; background:repeating-linear-gradient(90deg, rgb(37 99 235 / .16) 0 2px, transparent 2px 15px); -webkit-mask-image:linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); mask-image:linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); }
+@keyframes robot-swoosh {
+  0% { opacity:0; transform:translateX(calc(var(--dir) * -30%)) scaleX(.5); }
+  35% { opacity:1; }
+  100% { opacity:0; transform:translateX(calc(var(--dir) * 45%)) scaleX(1.15); }
+}
+.robot-stage.is-swapping .robot-swoosh { animation:robot-swoosh .46s ease-out .08s both; }
 
 /* Hiệu ứng lật chỉ chạy SAU cú bấm đầu tiên (`is-switched` do JS gắn). Một trang tự trượt vào lúc
    vừa mở đọc như lỗi tải chứ không như một cú chuyển do người dùng gây ra. */
@@ -314,9 +391,16 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .role-select-card.is-switched.is-testing .role-select-copy,
 .role-select-card.is-switched:not(.is-testing) .role-robot-figure { animation:role-slide-from-left .42s cubic-bezier(.22, .61, .36, 1) both; }
 
+/* Tôn trọng người đã tắt hiệu ứng ở cấp hệ điều hành: giữ nguyên KẾT QUẢ (đúng con robot, đúng bên),
+   bỏ toàn bộ chuyển động. `opacity` vẫn do class `is-active` quyết định nên không con nào kẹt lại. */
 @media (prefers-reduced-motion: reduce) {
   .role-select-card.is-switched .role-robot-figure,
-  .role-select-card.is-switched .role-select-copy { animation:none; }
+  .role-select-card.is-switched .role-select-copy,
+  .robot-runner.is-leaving, .robot-runner.is-entering,
+  .role-robot-figure .robot-runner img,
+  .robot-stage.is-cutscene .robot-cutscene,
+  .robot-stage.is-swapping .robot-swoosh { animation:none; }
+  .robot-runner.is-leaving { opacity:0; }
 }
 .role-robot-figure { display:flex; align-items:flex-end; justify-content:center; margin:0; padding:34px 24px 0; overflow:hidden; background:linear-gradient(160deg, #edf5fc 0%, #dfeefa 100%); }
 .role-robot-figure img { width:min(400px, 100%); max-height:520px; object-fit:contain; object-position:bottom; filter:drop-shadow(0 18px 24px rgb(22 32 43 / .14)); }
@@ -394,9 +478,8 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 
 /* ── W-03 khai báo triệu chứng ─────────────────────────────────────────────────────────────── */
 .chat-grid { display:grid; grid-template-columns:minmax(0, 1fr) clamp(300px, 24%, 420px); gap:clamp(16px, 1.6vw, 26px); align-items:start; }
-/* Chiều cao theo khung nhìn thay vì 640px cứng: màn 1080px thì khung chat cao gần gấp rưỡi màn
-   laptop 13", còn màn thấp thì không bị đẩy tràn xuống dưới. */
-.chat-panel { display:flex; flex-direction:column; height:clamp(420px, 68dvh, 860px); overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
+/* Kéo khung hội thoại gần hết phần chiều cao còn lại của màn hình, vẫn chừa khoảng thở cuối trang. */
+.chat-panel { display:flex; flex-direction:column; height:clamp(520px, calc(100dvh - 200px), 980px); overflow:hidden; border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
 /* G1 — dải năng lực. Không phải trang trí: nó là chỗ DUY NHẤT phạm vi của trợ lý được nhắc lại
    trong lúc người bệnh đang thực sự trò chuyện với nó (disclaimer W-02 chỉ hiện một lần đầu phiên).
    Đừng gỡ, đừng rút gọn thành "AI hỗ trợ". */
@@ -425,9 +508,6 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .typing-dots i { width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.35; animation:vmt-bounce 1.25s infinite ease-in-out; }
 .typing-dots i:nth-child(2) { animation-delay:.18s; }
 .typing-dots i:nth-child(3) { animation-delay:.36s; }
-.symptom-chips { display:flex; flex:none; flex-wrap:wrap; gap:7px; padding:0 24px 14px; }
-.symptom-chips button { border:1px solid var(--line-strong); border-radius:var(--r-pill); padding:6px 12px; color:var(--muted-2); background:var(--surface); font-size:13px; }
-.symptom-chips button:hover { border-color:#9cc3e9; color:var(--blue); background:var(--blue-soft); }
 .chat-composer { display:flex; flex:none; align-items:center; gap:10px; flex-wrap:wrap; padding:14px 18px; border-top:1px solid var(--line); }
 .chat-composer textarea { flex:1; min-width:180px; min-height:48px; max-height:120px; padding:12px 15px; border-radius:12px; background:var(--surface-soft); }
 .chat-composer .primary-button { min-height:48px; border-radius:12px; }
@@ -831,10 +911,10 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .patient-dashboard-shell { background:var(--surface-soft); }
 /* Lề ngang GIỐNG HỆT `.page` - dải này nằm ngoài `.page` nên nếu để công thức riêng thì chữ trong
    dải sẽ lệch khỏi mép nội dung bên dưới ở mọi bề rộng màn hình. */
-.patient-emergency-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px clamp(16px, 4vw, 72px); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
-.patient-emergency-bar > div { display:flex; align-items:center; gap:9px; }
+.patient-emergency-bar { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr); align-items:center; gap:16px; padding:9px clamp(16px, 4vw, 72px); border-bottom:1px solid #fecdd3; color:#881337; background:#fff1f2; font-size:13px; line-height:1.45; }
+.patient-emergency-bar > div { grid-column:2; display:flex; align-items:center; justify-content:center; gap:9px; text-align:center; }
 .patient-emergency-signal { width:8px; height:8px; flex:none; border-radius:50%; background:#e11d48; box-shadow:0 0 0 4px rgb(225 29 72 / .12); }
-.patient-emergency-bar a { display:inline-flex; align-items:center; gap:6px; flex:none; border-radius:8px; padding:6px 10px; color:#fff; background:#be123c; font-size:12px; font-weight:600; }
+.patient-emergency-bar a { grid-column:3; justify-self:end; display:inline-flex; align-items:center; gap:6px; flex:none; border-radius:8px; padding:6px 10px; color:#fff; background:#be123c; font-size:12px; font-weight:600; }
 .patient-emergency-bar a:hover { color:#fff; background:#9f1239; text-decoration:none; }
 .patient-dashboard { display:flex; flex-direction:column; gap:22px; }
 .patient-dashboard-top { display:grid; grid-template-columns:minmax(0, 1.7fr) minmax(300px, .9fr); gap:22px; }
@@ -1025,7 +1105,8 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .app-header nav { order:3; width:100%; }
   .header-divider { display:none; }
   .landing-nav-links { display:none; }
-  .patient-emergency-bar { align-items:flex-start; padding:10px 16px; font-size:12px; }
+  .patient-emergency-bar { grid-template-columns:1fr; justify-items:center; padding:10px 16px; font-size:12px; }
+  .patient-emergency-bar > div, .patient-emergency-bar a { grid-column:1; }
   .patient-emergency-bar > div { align-items:flex-start; }
   .patient-dashboard { gap:16px; }
   .patient-action-hero { min-height:0; padding:26px 22px; }
@@ -1045,6 +1126,7 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .role-select-card, .role-select-card.is-testing { grid-template-columns:1fr; grid-template-areas:"copy" "figure"; min-height:0; }
   .role-select-copy { padding:30px 22px; }
   .role-robot-figure { min-height:240px; padding:18px 18px 0; }
+  .robot-stage { --mascot-h:min(340px, 40vh); padding-bottom:8px; }
   .role-robot-figure img { max-height:300px; }
   .page { padding:18px 16px 28px; }
   .landing-section, .stat-row { padding:40px 20px; }
@@ -1053,7 +1135,7 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .cta-band { margin:0 20px 36px; padding:26px 22px; }
   .chat-panel { height:auto; min-height:70dvh; }
   .bubble { max-width:88%; }
-  .chat-log, .chat-composer, .capability-strip, .symptom-chips, .chat-history-note { padding-left:16px; padding-right:16px; }
+  .chat-log, .chat-composer, .capability-strip, .chat-history-note { padding-left:16px; padding-right:16px; }
   .chat-history-note { align-items:flex-start; flex-wrap:wrap; }
   .chat-history-note .link-button { width:100%; margin-left:0; text-align:left; }
   .redflag-head { flex-direction:column; gap:16px; }
@@ -1147,7 +1229,6 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
 .demo-access-option small { color:var(--muted); font-size:12.5px; line-height:1.45; }
 .demo-access-cta { flex:none; padding:5px 11px; border-radius:var(--r-pill); border:1px solid var(--blue-line); color:var(--blue-deep); background:var(--blue-soft); font-size:12.5px; font-weight:600; }
 .demo-access-note { margin:11px 0 0; }
-.demo-access-note code { padding:1px 5px; border-radius:5px; background:var(--surface-mute); font-size:12px; }
 @media (min-width:640px) {
   .demo-access-options { grid-template-columns:1fr 1fr; }
 }

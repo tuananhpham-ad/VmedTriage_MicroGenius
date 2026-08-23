@@ -6,9 +6,18 @@ import { escapeHtml, icon, logo, showToast } from "../shared.js";
 // thay bằng ảnh nhân viên y tế duyệt ca thật trước khi lên production.
 const TEAM_PHOTO = "/assets/landing-team.jpg";
 const AI_DOCTOR = "/assets/triage-ai-doctor-looking-left.png";
-// Robot cầm bảng checklist - dùng cho chế độ kiểm thử. Ảnh RIÊNG chứ không dùng lại ảnh bác sĩ: đổi
-// bên mà vẫn cùng một hình thì cú chuyển chỉ trông như trang bị giật, không như đổi sang một chỗ khác.
-const AI_ENGINEER = "/assets/engineer-testing.png";
+// Hai linh vật của màn chọn vai trò. Đây là bản đã CẮT SÁT THÂN và kéo về CÙNG một chiều cao pixel
+// (`scripts/`-less, dựng bằng PIL một lần) - hai ảnh gốc có lượng nền thừa khác nhau, nên để nguyên
+// thì cùng một khung CSS vẫn ra hai con robot to nhỏ khác nhau. Ảnh bác sĩ gốc vẫn giữ nguyên cho
+// landing (`AI_DOCTOR`), không đụng vào.
+const MASCOT_DOCTOR = "/assets/mascot-doctor.png";
+const MASCOT_ENGINEER = "/assets/mascot-engineer.png";
+// Cut-scene "chạy qua thay áo", render sẵn thành WebP động (`scripts/build_mascot_cutscene.py`).
+// Khoá theo con robot ĐÍCH: `MASCOT_FILM.engineer` là đoạn bác sĩ chạy đi và kỹ sư chạy vào.
+const MASCOT_FILM = { engineer: "/assets/mascot-swap-to-engineer.webp", doctor: "/assets/mascot-swap-to-doctor.webp" };
+const MASCOT_FILM_MS = 1240;
+/** 30 khung ở 25fps = 1200ms, cộng 40ms đệm: gỡ phim ra TRƯỚC khung cuối thì robot nhảy về tư thế
+ * đứng giữa chừng, và cú nhảy đó nằm đúng chỗ mắt đang nhìn. */
 
 /**
  * W-00P — trang giới thiệu công khai, thứ người chưa đăng nhập thấy đầu tiên.
@@ -155,19 +164,96 @@ export function renderRoleSelect(root, { navigate, onAuthenticated }) {
         <p class="eyebrow">Chế độ kiểm thử</p>
         <h1>Xem thử luồng của từng vai trò</h1>
         <p>Dành cho người kiểm thử và nghiệm thu: vào thẳng màn hình cần xem mà không phải dựng tài khoản thật.</p>
-        ${demoAccessPanel()}
+        ${demoAccessPanel({ compact: true })}
         <button class="link-button role-testing-back" type="button" data-testing-close>${icon("chevronLeft", 16)}<span>Quay lại chọn vai trò</span></button>
       </div>
       <figure class="role-robot-figure" data-role-figure>
-        <img src="${AI_DOCTOR}" alt="Trợ lý AI bác sĩ VMedTriage" data-role-image />
+        <div class="robot-stage" data-robot-stage>
+          <img class="robot-cutscene" data-cutscene alt="" aria-hidden="true" />
+          <span class="robot-swoosh" aria-hidden="true"></span>
+          <span class="robot-runner is-active" data-mascot="doctor">
+            <img src="${MASCOT_DOCTOR}" alt="Trợ lý AI bác sĩ VMedTriage" />
+          </span>
+          <span class="robot-runner" data-mascot="engineer" aria-hidden="true">
+            <img src="${MASCOT_ENGINEER}" alt="Robot kỹ sư VMedTriage cầm bảng kiểm thử" />
+          </span>
+        </div>
       </figure>
     </div>
   </section>`;
 
   const card = root.querySelector("[data-role-card]");
-  const image = root.querySelector("[data-role-image]");
+  const stage = root.querySelector("[data-robot-stage]");
+  const runners = { doctor: stage.querySelector('[data-mascot="doctor"]'), engineer: stage.querySelector('[data-mascot="engineer"]') };
+  const cutscene = root.querySelector("[data-cutscene]");
+  const motionOk = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const filmLoaded = new Set();
+  // Tải phim lúc trình duyệt RẢNH, không tải lúc dựng trang: hai file cộng lại hơn một megabyte, và
+  // đường quan trọng của màn này là hai nút chọn vai trò chứ không phải một hiệu ứng trang trí.
+  //
+  // Chỉ phát phim khi nó đã NẰM TRONG `filmLoaded`, chứ không phát rồi để `<img>` tự tải: ảnh tĩnh
+  // bị ẩn ngay khi phim bắt đầu, nên phát một file chưa tải xong nghĩa là sân khấu TRỐNG suốt thời
+  // gian tải. Chưa tải xong thì rơi về cú chạy bằng CSS - có sẵn, không phải chờ gì.
+  const idle = window.requestIdleCallback || ((run) => setTimeout(run, 1200));
+  idle(() => Object.values(MASCOT_FILM).forEach((url) => {
+    const probe = new Image();
+    probe.addEventListener("load", () => filmLoaded.add(url));
+    probe.src = url;
+  }));
   const panels = { roles: root.querySelector('[data-role-panel="roles"]'), testing: root.querySelector('[data-role-panel="testing"]') };
   const toggle = root.querySelector("[data-testing-open]");
+
+  let swapTimer = 0;
+  /**
+   * Đổi linh vật bằng một cú CHẠY QUA: con đang đứng chạy khuất về một bên, con kia chạy vào từ bên
+   * đối diện - đọc ra như nó chạy vào hậu trường thay áo rồi chạy ra, chứ không như một ảnh bị đổi
+   * `src`.
+   *
+   * `dir` là hướng con cũ chạy đi (-1 trái, +1 phải), luôn NGƯỢC với bên mà tấm thẻ đang chuyển ảnh
+   * tới: ảnh sang trái thì robot chạy khuất về trái rồi con mới xuất hiện từ phải. Cùng hướng thì
+   * hai chuyển động triệt tiêu nhau và cả cú lật trông như đứng yên.
+   *
+   * Dọn class bằng `setTimeout` chứ không bằng `animationend`: dưới `prefers-reduced-motion` không
+   * có animation nào chạy nên sự kiện đó KHÔNG BAO GIỜ tới, và hai linh vật sẽ kẹt lại cùng lúc
+   * trên màn hình.
+   */
+  const swapMascot = (next, dir) => {
+    const leaving = stage.querySelector(".robot-runner.is-active");
+    const entering = runners[next];
+    if (!leaving || leaving === entering) return;
+    clearTimeout(swapTimer);
+    stage.classList.remove("is-swapping", "is-cutscene");
+    stage.querySelectorAll(".robot-runner").forEach((runner) => runner.classList.remove("is-leaving", "is-entering"));
+    stage.style.setProperty("--dir", String(dir));
+    // Đổi con ĐANG hoạt động NGAY, trước khi diễn: lúc phim kết thúc và bị gỡ ra, thứ lộ ra bên dưới
+    // đã là ảnh tĩnh đúng con - không có khung hình nào phải chờ một lần gán class nữa.
+    leaving.classList.remove("is-active");
+    leaving.setAttribute("aria-hidden", "true");
+    entering.classList.add("is-active");
+    entering.removeAttribute("aria-hidden");
+
+    if (motionOk && filmLoaded.has(MASCOT_FILM[next])) {
+      // Gỡ `src` rồi gán lại: gán ĐÈ cùng một URL không làm ảnh động chạy lại từ khung đầu, và lần
+      // lật thứ hai sẽ chỉ thấy khung cuối đứng im. Gỡ ra rồi gán lại thì trình duyệt giải mã lại
+      // (lấy từ cache, không đi mạng) và phim chạy từ đầu.
+      cutscene.removeAttribute("src");
+      cutscene.src = MASCOT_FILM[next];
+      stage.classList.add("is-cutscene");
+      swapTimer = setTimeout(() => stage.classList.remove("is-cutscene"), MASCOT_FILM_MS);
+      return;
+    }
+
+    // Đường dự phòng: cú chạy bằng CSS. Chạy khi phim chưa tải xong, tải lỗi, hoặc người dùng đã tắt
+    // hiệu ứng ở cấp hệ điều hành - ba trường hợp khác nhau nhưng cùng cần một kết quả dùng được.
+    stage.classList.add("is-swapping");
+    leaving.classList.add("is-leaving");
+    entering.classList.add("is-entering");
+    swapTimer = setTimeout(() => {
+      leaving.classList.remove("is-leaving");
+      entering.classList.remove("is-entering");
+      stage.classList.remove("is-swapping");
+    }, 820);
+  };
 
   /**
    * Lật thẻ sang mặt kia. `is-switched` chỉ được bật ở lần lật ĐẦU TIÊN và không bao giờ tắt: các
@@ -180,8 +266,7 @@ export function renderRoleSelect(root, { navigate, onAuthenticated }) {
     card.classList.toggle("is-testing", testing);
     panels.roles.hidden = testing;
     panels.testing.hidden = !testing;
-    image.src = testing ? AI_ENGINEER : AI_DOCTOR;
-    image.alt = testing ? "Robot kỹ sư VMedTriage cầm bảng kiểm thử" : "Trợ lý AI bác sĩ VMedTriage";
+    swapMascot(testing ? "engineer" : "doctor", testing ? -1 : 1);
     toggle.setAttribute("aria-expanded", String(testing));
     // Đưa tiêu điểm sang mặt vừa mở: người dùng bàn phím vừa bấm một nút giờ đang bị `hidden`, và
     // tiêu điểm rơi về `body` nghĩa là họ phải Tab lại từ đầu trang.
@@ -321,7 +406,6 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
                 <button class="primary-button" type="submit"><span>${isRegister ? "Tạo tài khoản" : "Đăng nhập hệ thống"}</span>${!isRegister ? icon("chevronRight", 18) : ""}</button>
                 <p class="auth-switch">${isRegister ? 'Đã có tài khoản? <button type="button" data-mode="login">Đăng nhập</button>' : 'Chưa có tài khoản? <button type="button" data-mode="register">Đăng ký</button>'}</p>
               </form>
-              ${demoAccessPanel()}
               ${!isRegister ? `<a class="auth-emergency-link" href="tel:115">${icon("phone", 16)}<span>Trường hợp khẩn cấp, gọi ngay 115</span></a>` : ""}
             </div>
           </div>
@@ -362,13 +446,19 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
  * cũ: hai người demo cùng lúc mà chung tài khoản thì ca của người này hiện trong lịch sử người kia.
  * Server tắt được khối này bằng DEMO_LOGIN_ENABLED=false (khi đó nút trả 403 và hiện thông báo).
  */
-function demoAccessPanel() {
+function demoAccessPanel({ compact = false } = {}) {
   const options = [
     ["patient", "user", "Bệnh nhân/người nhà", "Khai báo triệu chứng và theo dõi phản hồi đã duyệt."],
     ["nurse", "shieldCheck", "Nhân viên y tế", "Xem hàng đợi ca và duyệt phản hồi cho người bệnh."],
   ];
-  return `<section class="demo-access" aria-labelledby="demo-access-title">
-    <div class="demo-access-head">${icon("pulse", 18)}<span><strong id="demo-access-title">Trải nghiệm theo vai trò</strong><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span></div>
+  // `compact`: bỏ phần tiêu đề trong khối. Ở màn chọn vai trò, tiêu đề trang ĐÃ nói đúng câu đó -
+  // để cả hai là đọc hai lần cùng một ý và đẩy tấm thẻ cao hơn mặt bên kia. Tiêu đề bị bỏ thì tên
+  // của `<section>` phải chuyển sang `aria-label`, nếu không khối này thành một vùng không tên.
+  const head = compact
+    ? ""
+    : `<div class="demo-access-head">${icon("pulse", 18)}<span><strong id="demo-access-title">Trải nghiệm theo vai trò</strong><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span></div>`;
+  return `<section class="demo-access${compact ? " is-compact" : ""}" ${compact ? 'aria-label="Trải nghiệm theo vai trò"' : 'aria-labelledby="demo-access-title"'}>
+    ${head}
     <div class="demo-access-options">
       ${options
         .map(
@@ -377,7 +467,7 @@ function demoAccessPanel() {
         )
         .join("")}
     </div>
-    <p class="demo-access-note">Mỗi lần dùng thử tạo một tài khoản riêng dạng <code>test-&lt;vai trò&gt;-&lt;ngày giờ&gt;</code>. Dữ liệu nhập ở đây là dữ liệu thử nghiệm, không phải hồ sơ y tế thật.</p>
+    <p class="demo-access-note">Mỗi lần dùng thử tạo một tài khoản riêng. Dữ liệu nhập ở đây là dữ liệu thử nghiệm, không phải hồ sơ y tế thật.</p>
   </section>`;
 }
 
