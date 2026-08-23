@@ -6,10 +6,21 @@ Lane phi lâm sàng không sinh red flag và không đổi `answers`; shadow mod
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
+from src import paths
+from src.config import get_settings
+from src.services.infra import provider_router
 from src.services.symptom_protocol import controller_shadow, non_clinical
 from src.services.symptom_protocol.non_clinical import NonClinicalLane
+from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase
+
+
+@pytest.fixture(autouse=True)
+def _isolated_log_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "LOGS_DIR", tmp_path)
 
 # --- §4.10: lane phi lâm sàng ---------------------------------------------------------------------
 
@@ -22,6 +33,30 @@ def test_a_lifestyle_question_without_symptoms_gets_the_lifestyle_lane(message: 
 @pytest.mark.parametrize("message", ["bạn là ai vậy", "du lieu cua toi co bao mat khong", "bao lâu thì có kết quả"])
 def test_a_question_about_the_system_gets_the_meta_lane(message: str):
     assert non_clinical.classify(message).lane is NonClinicalLane.META
+
+
+@pytest.mark.parametrize("message", [".", "/", "???"])
+def test_a_low_content_message_gets_a_specific_retry_lane(message: str):
+    assert non_clinical.classify(message).lane is NonClinicalLane.LOW_CONTENT
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Cho em hỏi xe buýt tuyến số 8 hiện tại còn chạy qua đường Nguyễn Trãi không",
+        "xe bus tuyến này còn đi qua Nguyễn Trãi không",
+    ],
+)
+def test_an_out_of_scope_question_gets_the_out_of_scope_lane(message: str):
+    assert non_clinical.classify(message).lane is NonClinicalLane.OUT_OF_SCOPE
+
+
+def test_an_opening_no_symptoms_statement_does_not_enter_the_clinical_lane():
+    assert non_clinical.classify("mình không thấy khó chịu").lane is NonClinicalLane.NO_SYMPTOMS
+
+
+def test_no_symptoms_does_not_hide_a_real_symptom():
+    assert non_clinical.classify("mình không thấy khó chịu, chỉ hơi đau đầu").is_non_clinical is False
 
 
 @pytest.mark.parametrize(
@@ -58,6 +93,102 @@ def test_an_unknown_lane_has_no_reply():
     """`NONE` -> chuỗi rỗng, caller đi tiếp đường lâm sàng. Trả một câu mặc định ở đây sẽ nuốt mọi
     tin nhắn không khớp từ khoá nào."""
     assert non_clinical.reply_for(NonClinicalLane.NONE) == ""
+
+
+def test_non_clinical_replies_can_vary_without_changing_lane_meaning():
+    first = non_clinical.reply_for(NonClinicalLane.OUT_OF_SCOPE, variant_key=1)
+    second = non_clinical.reply_for(NonClinicalLane.OUT_OF_SCOPE, variant_key=2)
+
+    assert first != second
+    for reply in (first, second):
+        assert "y tế" in reply.casefold()
+        assert "triệu chứng" in reply.casefold()
+
+
+@pytest.fixture
+def no_chitchat_llm(monkeypatch):
+    """Tắt tầng LLM của lane phi lâm sàng.
+
+    Ba bài dưới đây kiểm ĐƯỜNG ĐI (lượt này không được chạm vào checklist), không kiểm cách diễn đạt.
+    Tắt LLM để câu trả lời là bản tĩnh tất định - nếu không, mỗi lần đổi prompt là một lần ba bài này
+    đỏ vì lý do không liên quan gì tới thứ chúng bảo vệ."""
+    monkeypatch.setattr(get_settings(), "chitchat_llm_enabled", False)
+
+
+def test_opening_out_of_scope_question_is_answered_without_starting_a_checklist(
+    monkeypatch, no_chitchat_llm,
+):
+    """⚠️ Hợp đồng đổi 2026-08-23: lane phi lâm sàng nay CÓ gọi model để viết câu trả lời
+    (`chitchat.compose`). Thứ KHÔNG được đổi - và là thứ bài này giữ - là nó không bao giờ chạm tới
+    extractor, checklist hay snapshot. Spy ở đây vì thế bắt đúng `complete_stream` (bước synthesis
+    của đường lâm sàng), còn `complete` bị chặn bằng cách tắt cờ chitchat."""
+    spy = Mock(side_effect=AssertionError("Câu ngoài phạm vi không được đi vào đường lâm sàng"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(
+        session.session_id,
+        "Cho em hỏi xe buýt tuyến số 8 hiện tại còn chạy qua đường Nguyễn Trãi không",
+    )
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "y tế" in session.last_question.casefold()
+    assert "triệu chứng" in session.last_question.casefold()
+    spy.assert_not_called()
+
+
+def test_opening_punctuation_only_reply_is_not_sent_to_the_checklist(monkeypatch, no_chitchat_llm):
+    spy = Mock(side_effect=AssertionError("Tin chỉ có dấu câu không được đi vào đường lâm sàng"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, ".")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "triệu chứng" in session.last_question.casefold()
+    spy.assert_not_called()
+
+
+def test_opening_no_symptoms_statement_does_not_start_emergency_screening(
+    monkeypatch, no_chitchat_llm,
+):
+    spy = Mock(side_effect=AssertionError("Không có triệu chứng thì không được gọi checklist"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    monkeypatch.setattr(provider_router, "complete_stream", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "mình không thấy khó chịu")
+
+    assert session.phase is SessionPhase.OPENING
+    assert session.protocol_name == ""
+    assert session.current_cluster is None
+    assert "sức khỏe" in session.last_question.casefold() or "triệu chứng" in session.last_question.casefold()
+    assert "Khó thở nặng" not in session.last_question
+    spy.assert_not_called()
+
+
+def test_turning_the_chitchat_llm_off_restores_the_old_static_behaviour(monkeypatch, no_chitchat_llm):
+    """`INVARIANTS.md` §4: tắt cờ thì hệ thống phải chạy đúng như trước khi có tính năng. Ở đây nghĩa
+    là KHÔNG một lời gọi model nào cho lượt phi lâm sàng, và câu trả lời là bản tĩnh nguyên văn."""
+    spy = Mock(side_effect=AssertionError("Tắt cờ mà vẫn gọi model"))
+    monkeypatch.setattr(provider_router, "complete", spy)
+    store = ProtocolSessionStore(default_protocol=None)
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "chào bạn")
+
+    assert session.last_question in non_clinical.CHITCHAT_REPLIES
+    assert session.llm_used_last_turn is False
+    spy.assert_not_called()
 
 
 def test_non_clinical_protocols_stay_out_of_the_clinical_registry():

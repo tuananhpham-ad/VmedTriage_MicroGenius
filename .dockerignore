@@ -1,16 +1,43 @@
+# KHONG loai Dockerfile ra khoi day. Voi `docker build` tai may thi loai cung duoc (docker doc
+# Dockerfile rieng), nhung build tren cloud (ACR Tasks cua Azure, Cloud Build cua GCP) upload
+# nguyen thu muc len roi moi tim Dockerfile trong do - loai no ra la build chet ngay tu buoc dau.
+
 .git
 .gitignore
+.gitattributes
+
+# Secret - tuyet doi khong dua vao image
 .env
+.env.local
+.env.production
+
+# Moi truong ao va cache: nang, vo dung trong image, va lam cham buoc upload len cloud build
 .venv
+venv
 __pycache__
 *.pyc
+*.pyo
 .pytest_cache
 .ruff_cache
+
+# Du lieu sinh ra luc chay. runs/ va data/source_index/ duoc tai lai trong luc build
+# (xem Dockerfile) chu khong copy tu may.
+data/
+runs/
+logs/
+*.db
+*.sqlite3
+.eval_run/
+.ai-log/
+
+# Tai lieu, slide, notebook - khong can trong image
 docs/
 presentation/
+figures/
+notebooks/
 eval/
+tests/
 *.md
-!requirements.txt
-.dockerignore
-Dockerfile
+!README.md
+
 docker-compose.yml

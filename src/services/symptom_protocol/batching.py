@@ -24,6 +24,7 @@ tạo cơ hội cho nó lệch khỏi dữ liệu - đúng lớp bug C3.
 
 from __future__ import annotations
 
+from src.services.symptom_protocol import protocol as protocol_mod
 from src.services.symptom_protocol import stage_machine
 from src.services.symptom_protocol.models import QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for_stage
@@ -123,7 +124,7 @@ def _is_narrative_stage(protocol: SymptomProtocol, stage: str) -> bool:
     nhóm (`screening.py`) và luật dừng sớm + ngân sách (`stage_machine.should_stop`)."""
     order = protocol.stage_order
     try:
-        return order.index(stage) < order.index(protocol.gate_stages[0])
+        return order.index(stage) < order.index(protocol_mod.emergency_scan_stage(protocol))
     except ValueError:
         return False
 

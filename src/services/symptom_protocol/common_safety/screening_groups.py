@@ -23,6 +23,28 @@ from __future__ import annotations
 from src.services.symptom_protocol.models import ScreeningGroup
 
 
+def critical_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
+    """MỘT nhóm cho `clusters.critical_scan_clusters(stage)` - câu quét cấp cứu ở LƯỢT 1 (stage `E`).
+
+    Một nhóm chứ không phải ba: cả stage `E` phải đóng được bằng MỘT chữ "không", nếu không thì
+    nó chỉ dời ba lượt từ `3A` lên đầu chứ không rút ngắn được gì.
+
+    `probe_hint` được đọc NGUYÊN VĂN cho người bệnh (`screening.probe_question` ghép TĨNH, không qua
+    LLM) - và đây là danh sách dấu hiệu nguy kịch, lược mất một ý là mất một cơ hội phát hiện."""
+    return (
+        ScreeningGroup(
+            id="GE-CRIT",
+            stage=stage,
+            cluster_ids=("Q3-06", "Q3-07", "Q3-12"),
+            probe_hint=(
+                "Khó thở nặng hoặc tím tái; thở rít/chảy dãi khó nuốt; "
+                "hoặc chảy máu không cầm, nôn ra máu hay đi ngoài phân đen"
+            ),
+            negative_values={"breathing_difficulty": "none"},
+        ),
+    )
+
+
 def emergency_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
     """Nhóm cho `clusters.emergency_scan_clusters(stage)` - trừ Q3-01/Q3-03 (xem docstring module)."""
     return (
@@ -34,16 +56,6 @@ def emergency_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
                 "Cứng gáy, sợ ánh sáng, đau đầu dữ dội khác thường, thóp phồng (với trẻ nhỏ); "
                 "hoặc mới yếu tay/chân một bên, méo miệng, nói khó"
             ),
-        ),
-        ScreeningGroup(
-            id="G3A-RESP",
-            stage=stage,
-            cluster_ids=("Q3-06", "Q3-07"),
-            probe_hint=(
-                "Khó thở, tím môi hoặc đầu ngón tay, rút lõm lồng ngực/phập phồng cánh mũi/thở rên "
-                "(với trẻ nhỏ); hoặc thở rít khi hít vào, chảy dãi mà không nuốt được"
-            ),
-            negative_values={"breathing_difficulty": "none"},
         ),
         ScreeningGroup(
             id="G3A-CIRC",
@@ -62,11 +74,8 @@ def emergency_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:
         ScreeningGroup(
             id="G3A-BLEED",
             stage=stage,
-            cluster_ids=("Q3-11", "Q3-12"),
-            probe_hint=(
-                "Nổi ban đỏ hoặc tím trên da, ấn kính vào không mất; "
-                "hoặc chảy máu chân răng, chảy máu mũi, nôn ra máu, đi ngoài phân đen"
-            ),
+            cluster_ids=("Q3-11",),
+            probe_hint="Nổi ban đỏ hoặc tím trên da, ấn kính vào không mất",
         ),
         ScreeningGroup(
             id="G3A-ABDO",

@@ -25,25 +25,29 @@ ADULT: dict[str, object] = {
 # --- chế độ (b): render TẤT ĐỊNH theo field ------------------------------------------------------
 
 
-def test_the_three_value_snapshot_becomes_three_separate_blocks():
-    """`unknown` là dữ kiện nói "chỗ này chưa ai biết". Xoá nó đi thì phiếu đọc ra giống hệt như đã
-    hỏi và người bệnh nói không."""
+def test_only_true_and_false_values_are_rendered_to_summary_text():
+    """`unknown` vẫn được giữ nội bộ để biết thiếu gì, nhưng không được dùng để VIẾT summary."""
     answers = dict(ADULT, fever_reported="true", rigors="false")
 
     result = summary_render.field_summary(FEVER_PROTOCOL, answers)
+    text = result.as_text()
 
     assert any("sốt" in label.casefold() for label in result.reported)
     assert result.denied, "field = false phải vào nhóm PHỦ NHẬN, không biến mất"
-    assert result.unknown_safety, "field an toàn chưa hỏi phải hiện ra"
+    assert result.unknown_safety, "field an toàn chưa hỏi vẫn được giữ cho guard nội bộ"
+    assert "Triệu chứng ghi nhận" in text
+    assert "Người bệnh phủ nhận" in text
+    assert "Chưa xác định" not in text
+    assert "unknown" not in text.casefold()
 
 
 def test_only_safety_fields_show_up_as_unknown():
-    """CHỈ field an toàn: liệt kê cả 80 field chưa hỏi thì điều dưỡng phải đọc 80 dòng để tìm 3 dòng
-    có nghĩa, và như vậy là làm hỏng chính mục đích của khối này."""
+    """Unknown chỉ còn là dữ liệu guard nội bộ, không phải block được render vào summary."""
     result = summary_render.field_summary(FEVER_PROTOCOL, dict(ADULT))
     safety = {FEVER_PROTOCOL.fields_by_key[key].label for key in FEVER_PROTOCOL.safety_signal_fields}
 
     assert set(result.unknown_safety).issubset(safety)
+    assert result.as_text() == ""
 
 
 def test_an_empty_block_is_not_rendered():
@@ -158,6 +162,16 @@ def test_an_empty_field_is_not_rendered_but_a_false_one_is():
 
     assert blocks["A"]["Phiếu đã đầy đủ"] is False
     assert "Khởi phát" not in blocks.get("A", {})
+
+
+def test_isbar_does_not_render_unknown_or_missing_information():
+    blocks = summary_render.to_isbar(
+        _summary(allergies="unknown", missing_information=["cyanosis"], is_complete=False),
+    )
+
+    assert "Dị ứng" not in blocks.get("B", {})
+    assert "Thông tin còn thiếu" not in blocks.get("A", {})
+    assert blocks["A"]["Phiếu đã đầy đủ"] is False
 
 
 def test_the_triage_label_says_plainly_that_code_filled_it():

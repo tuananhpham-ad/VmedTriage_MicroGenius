@@ -1,7 +1,7 @@
 .PHONY: run test lint format typecheck check eval clean
 
 run:
-	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.main:app --host 127.0.0.1 --port 8000
 
 test:
 	pytest tests/ -v

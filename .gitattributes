@@ -1,0 +1,9 @@
+# Giữ LF cho mọi thứ container Linux phải chạy được.
+#
+# Máy Windows của team đang đặt core.autocrlf=true: git tự đổi LF -> CRLF mỗi lần checkout. Với
+# file Python thì vô hại, nhưng một script bash có CRLF sẽ chết ngay dòng đầu trong container
+# ("bad interpreter: /usr/bin/env bash^M"), và scripts/deploy_hf_space.sh copy file y nguyên từ
+# cây làm việc lên Space nên lỗi đó đi thẳng lên bản deploy.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf

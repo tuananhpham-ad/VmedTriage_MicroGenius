@@ -1,6 +1,7 @@
 """Regression transcript của §13 "Definition of Done" (§9 P0.4).
 
     User: Tôi bị sốt.
+    User: Không, mình không có dấu hiệu nào trong số đó cả.   (quét cấp cứu, thêm 2026-08-22)
     User: Mình là người lớn, nam, 20 tuổi.
     User: Mình quên mất, mình không sốt.
     User: Bây giờ bạn đang hỏi tôi cái gì vậy?
@@ -34,6 +35,28 @@ _TURNS: list[tuple[str, dict[str, tuple[object, str]], str]] = [
     (
         "Tôi bị sốt.",
         {"fever_reported": ("true", "Tôi bị sốt"), "chief_complaint": ("sốt", "Tôi bị sốt")},
+        "answered",
+    ),
+    # Lượt này thêm ngày 2026-08-22: từ khi có stage `E`, câu hỏi CHỦ ĐỘNG đầu tiên là quét cấp cứu
+    # phổ quát chứ không phải hỏi tuổi. Phải trả lời nó thì ba lượt còn lại của §13 mới chạy tới -
+    # và nó đứng SAU lượt mở chứ không phải trước: schema của lượt mở là bản RÚT GỮN, không
+    # chứa `chest_indrawing`/`nasal_flaring_grunting` nên cụm Q3-06 không đóng được ở đó.
+    # đây là stage GATE, nó không được phép bị bước qua, và đó là đúng thiết kế.
+    #
+    # Câu phủ định GỘP ("không có dấu hiệu nào trong số đó") chứ KHÔNG liệt kê lại từng dấu hiệu:
+    # liệt kê lại thì `text_safety_signals` bắt "không thở" bên trong "không thở rít" và escalate
+    # nhầm - một lỗi L0 có THẬT, ghi lại ở đây để không ai "sửa" fixture này ngược trở lại.
+    (
+        "Không, mình không có dấu hiệu nào trong số đó cả.",
+        {
+            "breathing_difficulty": ("none", "không có dấu hiệu nào trong số đó"),
+            "cyanosis": ("false", "không có dấu hiệu nào trong số đó"),
+            "chest_indrawing": ("false", "không có dấu hiệu nào trong số đó"),
+            "nasal_flaring_grunting": ("false", "không có dấu hiệu nào trong số đó"),
+            "stridor_or_drooling": ("false", "không có dấu hiệu nào trong số đó"),
+            "mucosal_bleeding": ("false", "không có dấu hiệu nào trong số đó"),
+            "gi_bleeding": ("false", "không có dấu hiệu nào trong số đó"),
+        },
         "answered",
     ),
     (
@@ -135,7 +158,7 @@ def test_the_next_question_is_an_open_chief_complaint_not_a_presupposition(trans
     """§13 mục 4: ngay SAU lượt rút lời khai, câu hỏi phải là câu MỞ về vấn đề chính - không mặc
     định người bệnh đang đau hay khó chịu ở một vùng nào đó."""
     _session, _prompts, asked = transcript
-    after_retraction = asked[2]
+    after_retraction = asked[3]  # lượt 0 là quét cấp cứu, ba lượt §13 đứng sau
     assert after_retraction is not None
     assert "G1-01" in _cluster_ids(after_retraction)
 

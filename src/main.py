@@ -8,7 +8,7 @@ from src.api.routers.fever_intake import router as fever_intake_router
 from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
-from src.database import configure_database, create_tables, dispose_database
+from src.database import configure_database, create_tables, dispose_database, normalize_database_url
 from src.middleware.auth import RoleAuthorizationMiddleware
 from src.services.infra import provider_router
 from src.ui.static_files import build_demo_static_app
@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("JWT_SECRET_KEY must be changed in production")
         if not settings.nurse_registration_code:
             raise RuntimeError("NURSE_REGISTRATION_CODE must be configured in production")
+        if normalize_database_url(settings.database_url).startswith("sqlite"):
+            raise RuntimeError("DATABASE_URL must point to a deployable Postgres database in production")
     _configure_app_logging(settings.log_level)
     configure_database(settings.database_url)
     create_tables()

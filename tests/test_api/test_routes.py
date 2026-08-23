@@ -249,13 +249,17 @@ async def test_chat_non_fever_case_is_not_labelled_as_fever(client, patient_head
 
 
 @pytest.mark.asyncio
-async def test_chat_opening_turn_repeats_open_question_when_message_is_too_poor(
+async def test_chat_opening_turn_answers_a_greeting_without_starting_the_checklist(
     client, patient_headers, scripted_llm,
 ):
-    """"xin chào" chưa đủ để chọn protocol - phải hỏi lại câu mở, KHÔNG lao vào bộ câu hỏi lâm sàng.
+    """"xin chào" chưa đủ để chọn protocol - KHÔNG được lao vào bộ câu hỏi lâm sàng.
 
     Nhảy sang "bé hay người lớn, bao nhiêu tuổi" khi người ta mới chào là cách nhanh nhất để người
-    bệnh bỏ cuộc, và tệ hơn: protocol lúc đó bị chọn bằng cách đoán."""
+    bệnh bỏ cuộc, và tệ hơn: protocol lúc đó bị chọn bằng cách đoán.
+
+    ⚠️ Đổi 2026-08-23: bài này trước đây đòi câu trả lời là NGUYÊN VĂN câu mở ("khó chịu thế nào").
+    Lane chitchat (§4.10) nay trả lời lời chào rồi mới kéo về hỏi bệnh, nên phần được kiểm là ĐƯỜNG
+    ĐI (chưa vào checklist) chứ không phải câu chữ."""
     scripted_llm({})
     response = await client.post(
         "/api/v1/chat", json={"message": "xin chào"}, headers=patient_headers,
@@ -264,7 +268,10 @@ async def test_chat_opening_turn_repeats_open_question_when_message_is_too_poor(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "collecting_information"
-    assert "khó chịu thế nào" in data["response"]
+    # Chua vao protocol nao thi chua co structured_data - lượt mở không dựng phiếu.
+    assert data["structured_data"] is None
+    reply = data["response"].casefold()
+    assert "khó chịu" in reply or "sức khỏe" in reply
 
 
 @pytest.mark.asyncio

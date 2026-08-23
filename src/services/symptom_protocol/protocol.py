@@ -42,10 +42,17 @@ class SymptomProtocol:
     stage_order: tuple[str, ...]
     """Thứ tự stage cố định, vd `("0","1","2","3A","3B","4","5")`."""
 
-    gate_stages: tuple[str, str]
-    """2 stage dùng hướng C (extract -> rule-gate -> next_question tách biệt): (scan khẩn cấp, scan
-    sớm/tự chăm sóc). Stage thứ 2 tự động bị skip nếu stage thứ 1 còn dấu hiệu khẩn cấp chưa loại trừ
-    (đúng nguyên tắc "chỉ quét early-visit khi emergency-scan đã sạch")."""
+    gate_stages: tuple[str, ...]
+    """Các stage dùng hướng C (extract -> rule-gate -> next_question tách biệt). Tối thiểu 2: scan
+    khẩn cấp và scan sớm/tự chăm sóc. Stage scan sớm tự động bị skip nếu stage scan khẩn cấp còn dấu
+    hiệu chưa loại trừ (đúng nguyên tắc "chỉ quét early-visit khi emergency-scan đã sạch").
+
+    ⚠️ **Thứ tự trong tuple KHÔNG còn mang nghĩa "stage nào là scan khẩn cấp".** Trước 2026-08-22,
+    bốn chỗ trong hệ thống đọc `gate_stages[0]` như "stage quét cấp cứu"; khi stage `E` được chèn lên
+    đầu `stage_order`, cách đọc theo VỊ TRÍ đó vỡ im lặng (tập field an toàn của `ranking` co lại,
+    vùng gộp của `batching` thành rỗng). Dùng `emergency_scan_stage` / `early_visit_scan_stage` bên
+    dưới - chúng khai TƯỜNG MINH thay vì suy từ chỉ số."""
+
 
     budget: dict[str, tuple[int, int]]
     budget_floor_stage: str
@@ -170,7 +177,52 @@ class SymptomProtocol:
     onset_field: str = ""
     severity_field: str = ""
 
+    emergency_scan_stage: str = ""
+    """Stage quét dấu hiệu đỏ tuyệt đối. Rỗng = rơi về `gate_stages[0]` (tương thích ngược).
+
+    Tồn tại vì "gate" và "quét cấp cứu" là HAI khái niệm mà trước đây trùng nhau do tình cờ về thứ
+    tự. `ranking.safety_field_keys` suy tập field an toàn từ stage này, `batching` lấy nó làm mốc
+    vùng được phép gộp, và hai protocol dựng `screening_groups` quanh nó - đọc nhầm stage ở bất kỳ
+    chỗ nào trong bốn chỗ đó đều làm mất trọng số an toàn hoặc tắt batching, mà không chỗ nào báo lỗi."""
+
+    early_visit_scan_stage: str = ""
+    """Stage quét dấu hiệu "cần khám sớm". Rỗng = rơi về `gate_stages[1]`."""
+
+    critical_scan_stage: str = ""
+    """Stage quét cấp cứu PHỔ QUÁT, hỏi trước cả nhân khẩu (stage `E`). Rỗng = protocol không có.
+
+    Tách khỏi `emergency_scan_stage` vì hai stage này khác nhau ở ĐIỀU KIỆN hỏi, không ở mức độ nguy
+    hiểm: `E` chỉ chứa dấu hiệu không phụ thuộc tuổi/giới nên hỏi được ngay lượt 1; `3A` chứa phần còn
+    lại, phải biết tuổi mới hỏi đúng. Cả hai đều là field an toàn với `ranking`."""
+
     default_credential: LLMCredential | None = None
+
+
+def emergency_scan_stage(protocol: SymptomProtocol) -> str:
+    """Stage quét dấu hiệu đỏ tuyệt đối của protocol này.
+
+    MỘT nguồn cho khái niệm đó, đúng như `stage_machine.is_filled` là một nguồn cho "đã điền". Trước
+    2026-08-22 khái niệm này được suy từ `gate_stages[0]` ở bốn chỗ độc lập, và cả bốn đều đọc sai
+    ngay khi có stage gate thứ ba - `ranking` mất tập field an toàn, `batching` mất vùng gộp, hai
+    protocol gắn `screening_groups` nhầm stage. Không chỗ nào trong bốn chỗ đó báo lỗi khi sai."""
+    return protocol.emergency_scan_stage or protocol.gate_stages[0]
+
+
+def emergency_scan_stages(protocol: SymptomProtocol) -> frozenset[str]:
+    """MọI stage mang dấu hiệu đỏ tuyệt đối - nguồn của `ranking.safety_field_keys`.
+
+    Khai TƯỜNG MINH thay vì suy "mọi gate trừ gate khám sớm": có protocol khai hai gate TRÙNG tên
+    (`gate_stages=("2","2")`), và phép trừ theo giá trị khi đó trả về tập RỖNG - tức là mất sạch trọng
+    số an toàn mà không báo lỗi."""
+    stages = {emergency_scan_stage(protocol)}
+    if protocol.critical_scan_stage:
+        stages.add(protocol.critical_scan_stage)
+    return frozenset(stages)
+
+
+def early_visit_scan_stage(protocol: SymptomProtocol) -> str:
+    """Stage quét dấu hiệu "cần khám sớm". Cùng lý do tồn tại với `emergency_scan_stage`."""
+    return protocol.early_visit_scan_stage or protocol.gate_stages[1]
 
 
 def clusters_for_stage(protocol: SymptomProtocol, stage: str) -> tuple[QuestionCluster, ...]:

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src.services.symptom_protocol import protocol as protocol_mod
 from src.services.symptom_protocol.models import QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for_stage
 from src.services.symptom_protocol.stage_machine import MANDATORY_TIERS, field_is_settled
@@ -66,17 +67,17 @@ class RankingContext:
 def safety_field_keys(protocol: SymptomProtocol) -> frozenset[str]:
     """Field được coi là an toàn cốt lõi của protocol này: field của các cụm thuộc stage QUÉT ĐỎ.
 
-    Suy ra từ dữ liệu ĐÃ khai báo (`gate_stages[0]` + `clusters`) chứ không thêm một danh sách mới:
+    Suy ra từ dữ liệu ĐÃ khai báo (`emergency_scan_stage` + `clusters`) chứ không thêm một danh sách mới:
     một danh sách thứ hai sẽ lệch khỏi bảng câu hỏi ngay lần đầu ai đó sửa protocol.
 
     KHÔNG dùng `protocol.safety_signal_fields` cho việc này: tập đó trộn hai nhóm khác nhau (field đỏ
     tuyệt đối VÀ field "hay được nói sớm" như nhiệt độ, ngày khởi phát), nên dùng nó ở đây sẽ gắn
     nhãn an toàn cho cụm hỏi nhiệt độ."""
-    emergency_scan_stage = protocol.gate_stages[0]
+    scan_stages = protocol_mod.emergency_scan_stages(protocol)
     return frozenset(
         key
         for cluster in protocol.clusters
-        if cluster.stage == emergency_scan_stage
+        if cluster.stage in scan_stages
         for key in cluster.fields
     )
 

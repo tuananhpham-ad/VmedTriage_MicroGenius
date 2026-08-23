@@ -99,6 +99,39 @@ def test_universal_red_flags_escalate_on_generic_protocol():
     assert result.triage_level == "EMERGENCY"
 
 
+def test_high_risk_chest_pain_combo_escalates_on_generic_protocol():
+    result = rule_engine.evaluate(
+        GENERIC_PROTOCOL,
+        {
+            "chief_complaint": "đau ngực",
+            "complaint_site": "ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+            "consciousness_level": "drowsy_but_rousable",
+        },
+    )
+
+    assert result.triage_level == "EMERGENCY"
+    assert result.triggered_rules == ("R-E-22",)
+    assert result.reason_codes == ("RF-45",)
+
+
+def test_chest_pain_combo_requires_altered_alertness():
+    result = rule_engine.evaluate(
+        GENERIC_PROTOCOL,
+        {
+            "chief_complaint": "đau ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+            "consciousness_level": "alert",
+        },
+    )
+
+    assert result.triage_level != "EMERGENCY"
+
+
 # --- chọn protocol -------------------------------------------------------------------------------
 
 
@@ -151,7 +184,15 @@ def test_new_session_starts_in_opening_phase_with_the_static_question():
     assert session.last_question == registry.OPENING_QUESTION
 
 
-def test_poor_opening_message_repeats_the_open_question_and_picks_no_protocol(monkeypatch):
+def test_a_greeting_is_answered_and_still_picks_no_protocol(monkeypatch):
+    """⚠️ Hợp đồng đổi 2026-08-23. Trước đây bài này tên là
+    `test_poor_opening_message_repeats_the_open_question_and_picks_no_protocol` và khẳng định
+    `last_question == registry.OPENING_QUESTION` - tức là người bệnh chào thì hệ thống hỏi lại đúng
+    câu vừa hỏi. Đó là thứ lane chitchat (§4.10) sinh ra để sửa: lời chào nay được TRẢ LỜI.
+
+    Phần KHÔNG được đổi - và là phần bài này bảo vệ: "xin chào" vẫn không chọn nổi protocol nào, nên
+    phiên phải ở nguyên lượt mở. Nhảy sang "bé hay người lớn, bao nhiêu tuổi" khi người ta mới chào
+    là cách nhanh nhất để người bệnh bỏ cuộc, và protocol lúc đó bị chọn bằng cách đoán."""
     _fake_llm(monkeypatch, {})
     store = _open_store()
     session = store.start_session()
@@ -160,7 +201,10 @@ def test_poor_opening_message_repeats_the_open_question_and_picks_no_protocol(mo
 
     assert session.phase is SessionPhase.OPENING
     assert session.protocol_name == ""
-    assert session.last_question == registry.OPENING_QUESTION
+    assert session.current_cluster is None
+    assert session.answers == {}
+    # Trả lời gì cũng được, miễn kéo người bệnh về hướng lâm sàng.
+    assert "sức khỏe" in session.last_question.casefold() or "khó chịu" in session.last_question.casefold()
 
 
 def test_opening_message_about_fever_selects_the_fever_protocol(monkeypatch):
@@ -197,6 +241,37 @@ def test_red_flag_in_the_opening_message_escalates_immediately(monkeypatch):
     assert session.state is SessionState.EMERGENCY
     assert session.triage_level == "EMERGENCY"
     assert "115" in session.last_question
+
+
+def test_high_risk_chest_pain_stops_the_session_instead_of_continuing_checklist(monkeypatch):
+    _fake_llm(monkeypatch, {"consciousness_level": ("drowsy_but_rousable", "không tỉnh táo lắm")})
+    store = _open_store()
+    session = store.start_session(protocol_name=GENERIC_PROTOCOL.name)
+    session.answers.update(
+        {
+            "age_value": "30",
+            "age_unit": "year",
+            "sex": "male",
+            "reporter_type": "self",
+            "chief_complaint": "đau ngực",
+            "complaint_site": "ngực",
+            "complaint_severity": "7",
+            "complaint_progression": "worse",
+            "breathing_difficulty": "mild",
+        }
+    )
+    cluster = next(item for item in GENERIC_PROTOCOL.clusters if item.id == "Q3-01")
+    session.stage = cluster.stage
+    session.current_cluster = cluster
+
+    session = store.submit_message(session.session_id, "mình không tỉnh táo lắm")
+
+    assert session.state is SessionState.EMERGENCY
+    assert session.stop_reason == "RED_FLAG"
+    assert session.current_cluster is None
+    assert session.triage_level == "EMERGENCY"
+    assert session.triggered_rules == ["text_safety_signals:altered_mental_status"]
+    assert session.reason_codes == ["TEXT_SIGNAL_ALTERED_MENTAL_STATUS"]
 
 
 def test_opening_turn_rejects_a_negation_the_patient_never_uttered(monkeypatch):

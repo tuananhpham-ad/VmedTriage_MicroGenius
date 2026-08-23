@@ -118,3 +118,18 @@ class ConversationRow(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     """`Session` đã serialize (`conversation_store.dump_session`). Cột JSON vì cùng lý do với
     `TriageCaseRow.payload`: hình dạng `Session` còn đang đổi theo sprint."""
+    nurse_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    """Phiếu bàn giao (`HandoffSummary`) của phiên đã đóng - cột riêng cho Memory **M3** (§4.9,
+    `F04_memory.md` §3).
+
+    **Vì sao là cột riêng chứ không đọc lại từ `payload`.** Mở một hội thoại mới phải lấy được 3
+    phiên gần nhất của cùng người dùng để agent hỏi thăm; đọc `payload` nghĩa là nạp và dựng lại
+    trọn `Session` của cả ba phiên (kèm cụm, ledger, metrics) chỉ để lấy đúng một dòng "lần trước
+    kể bị gì". Đó là công việc của một truy vấn, không phải của một lần khôi phục phiên.
+
+    **`None` là bình thường, không phải lỗi:** phiên còn đang dở chưa có phiếu, và phiếu chỉ được
+    sinh khi phiên đã đóng (`_attach_narrative`, ADR-006).
+
+    ⚠️ Nội dung ở đây là PHI và nó sống LÂU HƠN phiên sinh ra nó. Consent + retention là điều kiện
+    3 của §3 `F04_memory.md`, và là câu hỏi cho PM - `Settings.long_memory_enabled` mặc định TẮT cho
+    tới khi có câu trả lời bằng văn bản."""
