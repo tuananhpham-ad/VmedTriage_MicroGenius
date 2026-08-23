@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
 from src.main import app
-from src.services.infra.account_mailer import account_mailer
+from src.services.infra.account_mailer import DELIVERED, account_mailer
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +90,13 @@ async def _create_session(client: AsyncClient, role: str) -> dict[str, str]:
 
     delivered_codes: list[str] = []
     original_sender = account_mailer.send_email_verification_code
-    account_mailer.send_email_verification_code = lambda *, recipient, code: delivered_codes.append(code)
+    # Tra DELIVERED chu khong phai None: `register`/`resend` doc `.delivered` de biet thu co di
+    # khong - mot stub tra None se lam route no `AttributeError` thay vi chay duong thanh cong.
+    def _capture(*, recipient, code):
+        delivered_codes.append(code)
+        return DELIVERED
+
+    account_mailer.send_email_verification_code = _capture
     try:
         resend_response = await client.post(
             "/api/v1/auth/email-verification/resend", json={"email": email}

@@ -91,6 +91,21 @@ class Settings(BaseSettings):
     role_order_source_verdict: str = os.getenv("ROLE_ORDER_SOURCE_VERDICT", "")
     role_order_source_explain: str = os.getenv("ROLE_ORDER_SOURCE_EXPLAIN", "")
     role_order_chitchat: str = os.getenv("ROLE_ORDER_CHITCHAT", "")
+    role_order_context_summary: str = os.getenv("ROLE_ORDER_CONTEXT_SUMMARY", "")
+    """M2 - model nén hội thoại đang diễn ra. Rỗng = kế thừa thứ tự toàn cục."""
+    role_order_followup_question: str = os.getenv("ROLE_ORDER_FOLLOWUP_QUESTION", "")
+    """M3 - model viết câu hỏi thăm mở đầu hội thoại mới. Rỗng = kế thừa thứ tự toàn cục."""
+
+    # Bộ lọc phạm vi y tế rẻ (`non_clinical.classify_with_zero_shot`) đứng TRƯỚC LLM domain
+    # classifier - model NLI nhỏ qua HF Inference API, không sinh văn bản nên rẻ và nhanh hơn một
+    # lượt chat completion. Mặc định TẮT: đây là dịch vụ phụ trợ chưa qua eval, bật nhầm trong test
+    # sẽ gọi mạng thật vì `HUGGINGFACE_API_KEY` có thể đã có sẵn trong `.env` của máy dev.
+    enable_hf_zero_shot_domain_classifier: bool = False
+    huggingface_api_key: str = Field(
+        default="", validation_alias=AliasChoices("HUGGINGFACE_API_KEY", "HF_API_KEY")
+    )
+    hf_zero_shot_model_name: str = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
+    hf_zero_shot_timeout_seconds: float = Field(default=8.0, ge=0.5, le=60.0)
 
     # Công tắc ngắt cho các cơ chế hội thoại thêm vào ở P2-P3 (§9 P4 mục 5). Mặc định BẬT - đây là
     # đường quay lui, không phải nút bật tính năng.
@@ -135,28 +150,6 @@ class Settings(BaseSettings):
     `red_flag_branches.merge_findings`). Vì vậy công tắc này không vi phạm quy tắc "không có công
     tắc cho tầng an toàn" ở trên."""
 
-    # Lane phi lâm sàng (§4.10) — classifier bằng model + LLM trả lời chitchat
-    enable_hf_zero_shot_domain_classifier: bool = (
-        os.getenv("ENABLE_HF_ZERO_SHOT_DOMAIN_CLASSIFIER", "").strip().lower() in {"1", "true", "yes"}
-    )
-    """Tầng phân loại y-tế/phi-y-tế bằng model NLI zero-shot. **Mặc định TẮT.**
-
-    Biến này đã nằm trong `.env` từ trước nhưng chưa có dòng code nào đọc - đây là chỗ nối nó vào.
-
-    Công tắc này KHÔNG phải công tắc cho tầng an toàn: model đứng SAU `non_clinical.classify` thuần
-    code và chỉ được hỏi khi tầng đó không quyết được. Tắt nó đi, hệ thống chạy đúng như hôm nay."""
-    hf_zero_shot_model_name: str = os.getenv(
-        "HF_ZERO_SHOT_MODEL_NAME", "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli",
-    )
-    """Model NLI đa ngữ. Đa ngữ là điểm mấu chốt: danh sách cụm từ trong `non_clinical` đều là tiếng
-    Việt không dấu, nên "hello" / "how are you" không có cửa nào được nhận ra."""
-    hf_zero_shot_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
-    """Điểm tối thiểu để CHẤP NHẬN phán quyết phi lâm sàng của model.
-
-    Dưới ngưỡng thì coi như model không biết, và "không biết" ở lane này phải rơi về **đường lâm
-    sàng**: định tuyến nhầm một câu tán gẫu vào bộ câu hỏi chỉ tốn một câu hỏi thừa, còn định tuyến
-    nhầm một triệu chứng vào chitchat là bỏ một ca."""
-
     chitchat_llm_enabled: bool = os.getenv("CHITCHAT_LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
     """LLM viết câu trả lời cho lượt phi lâm sàng thay vì đọc văn bản tĩnh. Mặc định BẬT.
 
@@ -186,6 +179,18 @@ class Settings(BaseSettings):
     (bất biến 9). Cờ này chỉ quyết định agent có ĐƯỢC HỎI THĂM hay không."""
     long_memory_recent_conversations: int = Field(default=3, ge=1, le=10)
     """Số phiên gần nhất được lấy để hỏi thăm."""
+    followup_question_llm_enabled: bool = os.getenv(
+        "FOLLOWUP_QUESTION_LLM_ENABLED", "true"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    """M3 - để MODEL viết câu hỏi thăm thay vì đọc câu tĩnh. Mặc định BẬT.
+
+    Bật được vì nó không nằm trên đường an toàn và bị siết ở CẢ HAI đầu bằng code
+    (`followup_writer`): đầu vào chỉ có nhãn than phiền đã chắt lọc (không phiếu bàn giao, không mức
+    ưu tiên), đầu ra bị guard kiểm rồi mới tới người bệnh. Mọi đường thất bại - tắt cờ, model chết,
+    trượt guard - đều rơi về đúng câu tĩnh `history_recall.greeting`, tức là hành vi trước khi có nó.
+
+    ⚠️ Cờ này KHÔNG bật được M3: nó chỉ chọn ai viết câu hỏi thăm. Có hỏi thăm hay không vẫn do
+    `long_memory_enabled` quyết định."""
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "")
@@ -197,9 +202,20 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_expire_minutes: int = Field(default=60, ge=5, le=10080)
     nurse_registration_code: str = os.getenv("NURSE_REGISTRATION_CODE", "")
+    demo_login_enabled: bool = os.getenv("DEMO_LOGIN_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    """Cho phép POST /auth/demo-login tạo tài khoản dùng thử `test-<role>-<datetime>`.
+
+    Bật mặc định vì demo/nghiệm thu cần vào được cả hai vai trò mà không phải đăng ký email thật.
+    Tài khoản demo bỏ qua bước xác thực email VÀ bỏ qua mã đăng ký nhân viên y tế, nên môi trường
+    production thật phải đặt DEMO_LOGIN_ENABLED=false."""
     password_reset_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     password_reset_base_url: str = os.getenv("PASSWORD_RESET_BASE_URL", "http://localhost:8000")
-    email_verification_code_expire_minutes: int = Field(default=10, ge=5, le=60)
+    email_verification_code_expire_minutes: int = Field(default=30, ge=5, le=60)
+    """Hạn của mã xác thực email. Nâng 10 -> 30 phút (2026-08-23).
+
+    10 phút là ngắn hơn thời gian Gmail hay giữ thư ở hàng đợi lúc tải cao. Người dùng nhận mã lúc
+    nó đã hết hạn thì nhìn thấy đúng một thứ: "mã không hợp lệ" - không phân biệt được với gõ sai,
+    và họ bỏ cuộc thay vì bấm gửi lại."""
 
     # Leave SMTP_HOST empty during development to write email contents to the server log.
     smtp_host: str = os.getenv("SMTP_HOST", "")
@@ -208,6 +224,15 @@ class Settings(BaseSettings):
     smtp_password: str = os.getenv("SMTP_PASSWORD", "")
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
     smtp_use_tls: bool = True
+    """STARTTLS trên cổng 587 - nâng cấp một kết nối thường lên mã hoá."""
+    smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "").strip().lower() in {"1", "true", "yes"}
+    """SMTPS: TLS ngầm định ngay từ đầu, thường trên cổng 465.
+
+    Có mặt vì nhiều nền tảng PaaS chặn outbound 587 nhưng mở 465, và trước đây không có đường nào để
+    thử cổng còn lại - lỗi hiện ra thành "đăng ký xong không đăng nhập được".
+
+    Cổng 465 TỰ suy ra SSL kể cả khi cờ này tắt (`AccountMailer._connect`): bắt người triển khai vừa
+    đổi cổng vừa nhớ bật thêm một cờ là một cái bẫy chứ không phải một lựa chọn."""
 
     # Weaviate Cloud (optional best-effort case persistence; pipeline degrades gracefully if unset)
     weaviate_url: str = os.getenv("WEAVIATE_URL", "")

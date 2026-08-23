@@ -16,6 +16,7 @@ from src.database import get_db_session
 from src.graph_triage import service as graph_triage_service
 from src.models.auth import (
     ChangePasswordRequest,
+    DemoLoginRequest,
     EmailVerificationConfirmRequest,
     LoginRequest,
     MessageResponse,
@@ -41,13 +42,20 @@ from src.models.schemas import (
 from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY, PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
 from src.services.infra.auth import (
+    DemoLoginDisabledError,
     EmailNotVerifiedError,
     InvalidCredentialsError,
     NurseRegistrationDeniedError,
     UserAlreadyExistsError,
     auth_service,
 )
-from src.services.sessions import red_flag_sla, summary_render, symptom_case_bridge, symptom_session
+from src.services.sessions import (
+    history_recall,
+    red_flag_sla,
+    summary_render,
+    symptom_case_bridge,
+    symptom_session,
+)
 from src.services.sessions.hitl_review import human_review_service
 from src.services.stores.approval_store import AuditLogEntry, approval_store
 from src.services.stores.case_store import case_store
@@ -76,7 +84,16 @@ def register(request: RegisterRequest, db: Session = Depends(get_db_session)) ->
     except NurseRegistrationDeniedError as error:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     verification_code = auth_service.create_email_verification_code(db, user)
-    account_mailer.send_email_verification_code(recipient=user.email, code=verification_code)
+    delivery = account_mailer.send_email_verification_code(recipient=user.email, code=verification_code)
+    if not delivery.delivered:
+        # KHÔNG rollback tài khoản: người dùng đã điền xong form, và họ còn đường gửi lại mã. Nhưng
+        # phải hét lên trong log - đây là lỗi hạ tầng sẽ biểu hiện thành "đăng ký xong không đăng
+        # nhập được", và nếu không tìm được nó ở đây thì sẽ đi tìm nhầm chỗ ở tầng auth.
+        logger.error(
+            "REGISTER OK nhưng KHÔNG gửi được mã xác thực cho %s (%s). "
+            "Người dùng này sẽ không đăng nhập được cho tới khi xác thực được email.",
+            user.email, delivery.reason,
+        )
     return UserResponse.model_validate(user)
 
 
@@ -113,6 +130,27 @@ def login_alias(request: LoginRequest, db: Session = Depends(get_db_session)) ->
     return login(request, db)
 
 
+@router.post("/auth/demo-login", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def demo_login(request: DemoLoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Cấp một tài khoản dùng thử MỚI cho vai trò được chọn và đăng nhập luôn.
+
+    Dùng cho demo/nghiệm thu: mỗi lần bấm là một tài khoản `test-<role>-<yyyymmdd-hhmmss>` riêng
+    trong DB, nên phiên của hai người demo không lẫn vào nhau. Tắt bằng DEMO_LOGIN_ENABLED=false."""
+    try:
+        user = auth_service.create_demo_user(db, request.role)
+    except DemoLoginDisabledError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except UserAlreadyExistsError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    logger.info("DEMO LOGIN: tạo tài khoản dùng thử %s (role=%s)", user.username, user.role.value)
+    access_token, expires_in = auth_service.create_access_token(user)
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=expires_in,
+        user=UserResponse.model_validate(user),
+    )
+
+
 @router.post("/auth/email-verification/confirm", response_model=MessageResponse)
 def confirm_email_verification(
     payload: EmailVerificationConfirmRequest, db: Session = Depends(get_db_session)
@@ -124,10 +162,27 @@ def confirm_email_verification(
 
 @router.post("/auth/email-verification/resend", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
 def resend_email_verification(payload: PasswordResetRequest, db: Session = Depends(get_db_session)) -> MessageResponse:
+    """Gửi lại mã xác thực. Trả **503 khi hệ thống thư đang hỏng** thay vì 202 dối.
+
+    Thông điệp thành công vẫn cố ý mơ hồ ("nếu tài khoản tồn tại") để không ai dò được email nào đã
+    đăng ký. 503 KHÔNG phá tính chất đó: nó chỉ nói về máy chủ thư, và được trả về **kể cả khi email
+    không tồn tại** - lúc đó `probe()` hỏi thẳng SMTP thay vì gửi gì. Nhờ vậy 503 ⇔ "SMTP hỏng",
+    không suy ra được gì về tài khoản.
+
+    Đây là chỗ người dùng đang kẹt sẽ tới khi không nhận được thư, nên nó là chỗ tệ nhất để nói dối:
+    nghe 202 ba lần rồi vẫn không có thư thì họ nghĩ email mình gõ sai, chứ không nghĩ hệ thống hỏng."""
     result = auth_service.resend_email_verification_code(db, str(payload.email))
     if result is not None:
         user, code = result
-        account_mailer.send_email_verification_code(recipient=user.email, code=code)
+        delivery = account_mailer.send_email_verification_code(recipient=user.email, code=code)
+    else:
+        delivery = account_mailer.probe()
+    if not delivery.delivered and delivery.reason != "development_console":
+        logger.error("Không gửi lại được mã xác thực: %s", delivery.reason)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Hệ thống gửi email đang gặp sự cố. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.",
+        )
     return MessageResponse(message="Nếu tài khoản chưa xác thực tồn tại, chúng tôi đã gửi mã mới.")
 
 
@@ -296,6 +351,11 @@ def _remember_nurse_summary(session, triage_case: TriageCase, *, patient_id: int
     conversation_store.save_nurse_summary(
         session.session_id, user_id=patient_id, summary=triage_case.summary.model_dump(mode="json"),
     )
+    # Phiếu vừa lưu là phiếu MỚI NHẤT trong ba phiếu sẽ được chắt lọc, nên chắt lọc lại ngay tại đây
+    # chứ không đợi lượt mở lần sau. Đây là chỗ RẢNH duy nhất biết chắc cả hai điều kiện: phiên đã
+    # đóng, và phiếu của nó đã nằm trong DB (chắt lọc TRƯỚC `save_nurse_summary` sẽ đọc trúng bộ ba
+    # cũ, thiếu đúng phiên vừa xong - phiên đáng hỏi thăm nhất).
+    history_recall.refresh_for_user(patient_id)
 
 
 _case_locks: dict[str, asyncio.Lock] = {}

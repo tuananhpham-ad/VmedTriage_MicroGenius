@@ -7,6 +7,7 @@ import {
   formatDate,
   icon,
   identityBlock,
+  paragraphs,
   priorityClass,
   priorityDot,
   priorityLabels,
@@ -16,10 +17,6 @@ import {
   statusLabels,
   symptomGroupLabels,
 } from "../shared.js";
-
-const commonSymptoms = [
-  ["Sốt", "Tôi bị sốt."], ["Đau bụng", "Tôi bị đau bụng."], ["Đau ngực", "Tôi bị đau ngực."], ["Khó thở", "Tôi cảm thấy khó thở."], ["Đau đầu", "Tôi bị đau đầu."],
-];
 
 // G1 "make capabilities explicit" — nguyên văn của bản thiết kế, dùng ở CẢ W-02 (mục 1) và dải năng
 // lực của W-03. Một hằng số cho cả hai chỗ: hai bản chép tay lệch nhau nghĩa là phạm vi của trợ lý
@@ -488,8 +485,7 @@ export function renderPatientChat(root, { navigate, logout }) {
           <div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div>
           ${viewingHistory ? `<div class="chat-history-note">${icon("lock", 17)}<span>Đây là lịch sử trao đổi đã lưu của ca này. Bạn không thể gửi thêm tin nhắn tại đây.</span><button class="link-button" type="button" data-history-back>Quay lại Kết quả của tôi</button></div>`
           : state.patientForcedComplete ? `<div class="chat-history-note">${icon("lock", 17)}<span>Bạn đã xác nhận khai báo xong triệu chứng. Thông tin đã được chuyển cho nhân viên y tế, bạn không thể gửi thêm tin nhắn tại đây.</span></div>`
-          : `<div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div>
-          <form id="chat-form" class="chat-composer">
+          : `<form id="chat-form" class="chat-composer">
             <label class="sr-only" for="patient-message">Mô tả triệu chứng</label>
             <textarea id="patient-message" name="message" rows="1" maxlength="5000" placeholder="Mô tả triệu chứng của bạn..."${busy}></textarea>
             <button class="primary-button" type="submit"${busy}>${icon("send", 18)}<span>${state.patientBusy ? "Đang gửi…" : "Gửi"}</span></button>
@@ -514,13 +510,6 @@ export function renderPatientChat(root, { navigate, logout }) {
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
   root.querySelector("[data-history-back]")?.addEventListener("click", () => navigate("patient-cases"));
   root.querySelector("[data-cases-back]")?.addEventListener("click", () => navigate("patient-cases"));
-  root.querySelectorAll("[data-symptom]").forEach((button) =>
-    button.addEventListener("click", () => {
-      const input = root.querySelector("#patient-message");
-      input.value = button.dataset.symptom;
-      input.focus();
-    }),
-  );
   const form = root.querySelector("#chat-form");
   form?.addEventListener("submit", (event) => submitMessage(event, root, { navigate, logout }));
   // Enter gửi, Shift+Enter xuống dòng — đúng hành vi bản thiết kế mô tả cho ô nhập.
@@ -633,7 +622,10 @@ function messageMarkup(message) {
   if (message.role === "system") {
     return `<div class="bubble is-system">${icon("check", 14)}<span>${escapeHtml(message.text)}</span></div>`;
   }
-  return `<div class="bubble is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`;
+  // Bong bóng đang stream giữ nguyên văn bản thô: con trỏ nhấp nháy là `::after` của chính div này,
+  // mà chèn `<p>` vào giữa sẽ đẩy nó xuống dòng riêng sau mỗi mẩu chữ mới về.
+  if (message.role === "streaming") return `<div class="bubble is-streaming">${escapeHtml(message.text)}</div>`;
+  return `<div class="bubble is-${escapeHtml(message.role)}">${paragraphs(message.text)}</div>`;
 }
 
 // Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`) ngày 2026-08-14:

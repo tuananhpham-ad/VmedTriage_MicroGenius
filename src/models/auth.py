@@ -14,7 +14,7 @@ def validate_strong_password(value: str) -> str:
     return value
 
 
-_DEFAULT_AVATAR_DATA_URL = "data:image/png;base64,AAAAAAAAAAAAAAAA"
+DEFAULT_AVATAR_DATA_URL = "data:image/png;base64,AAAAAAAAAAAAAAAA"
 
 
 class RegisterRequest(BaseModel):
@@ -24,7 +24,7 @@ class RegisterRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     date_of_birth: date = date(1900, 1, 1)
     gender: Gender = Gender.PREFER_NOT_TO_SAY
-    avatar_data_url: str = Field(default=_DEFAULT_AVATAR_DATA_URL, min_length=30, max_length=2_000_000)
+    avatar_data_url: str = Field(default=DEFAULT_AVATAR_DATA_URL, min_length=30, max_length=2_000_000)
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     terms_accepted: bool
@@ -95,6 +95,16 @@ class LoginRequest(BaseModel):
 
     email: str = Field(min_length=1, max_length=320, description="Email, số điện thoại hoặc tên đăng nhập")
     password: str = Field(min_length=1, max_length=128)
+
+
+class DemoLoginRequest(BaseModel):
+    """Đăng nhập dùng thử theo vai trò — không có mật khẩu, không có email thật.
+
+    Mỗi lần gọi tạo MỘT tài khoản mới `test-<role>-<yyyymmdd-hhmmss>` chứ không dùng lại tài khoản
+    cũ: hai người demo cùng lúc mà chung một tài khoản thì ca của người này hiện trong lịch sử của
+    người kia."""
+
+    role: UserRole = UserRole.PATIENT
 
 
 class PasswordResetRequest(BaseModel):

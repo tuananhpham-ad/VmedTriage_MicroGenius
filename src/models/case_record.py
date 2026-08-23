@@ -133,3 +133,36 @@ class ConversationRow(Base):
     ⚠️ Nội dung ở đây là PHI và nó sống LÂU HƠN phiên sinh ra nó. Consent + retention là điều kiện
     3 của §3 `F04_memory.md`, và là câu hỏi cho PM - `Settings.long_memory_enabled` mặc định TẮT cho
     tới khi có câu trả lời bằng văn bản."""
+
+
+class FollowupQuestionRow(Base):
+    """Câu hỏi thăm ĐÃ CHẮT LỌC SẴN cho một người dùng — Memory **M3**, phần "hỏi luôn khi mở".
+
+    **Vì sao lưu câu hỏi chứ không tính lại lúc mở hội thoại.** Lượt mở là lượt duy nhất người bệnh
+    phải chờ mà chưa nhận lại được gì; nhét vào đó một truy vấn 3 hàng + một lần chắt lọc là bắt họ
+    trả phí cho một tính năng xã giao. Câu hỏi được sinh ở chỗ RẢNH (lúc phiên trước vừa đóng), lượt
+    mở chỉ còn một lần `SELECT` theo khoá chính.
+
+    **Một hàng cho mỗi người dùng, không phải một hàng cho mỗi lần sinh.** Thứ cần trả lời ở lượt mở
+    là "câu hỏi thăm HIỆN TẠI của người này", không phải lịch sử các câu hỏi thăm - và một bảng chỉ
+    thêm sẽ phải kèm một câu `ORDER BY ... LIMIT 1` đúng ở chỗ vừa bỏ công làm cho rẻ.
+
+    ⚠️ `question` là văn bản dẫn xuất từ PHI (nó nêu lại than phiền chính người bệnh đã kể). Nó sống
+    dưới cùng chính sách retention với `ConversationRow.nurse_summary_json`, và cùng công tắc
+    `LONG_MEMORY_ENABLED`."""
+
+    __tablename__ = "followup_questions"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    """Khoá chính là `user_id` - KHÔNG có hàng nào cho khách (`user_id = 0`): "chưa biết là ai" thì
+    không có ai để hỏi thăm, và gộp mọi phiên khách vào một hàng là rò dữ liệu giữa người lạ."""
+    question: Mapped[str] = mapped_column(Text, default="")
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    """Dùng để BỎ câu hỏi đã quá hạn ở lượt đọc. Câu hỏi được sinh một lần rồi nằm đó chờ; nếu người
+    bệnh ba tháng sau mới quay lại thì thứ đang chờ họ là một câu hỏi thăm lạc đề."""
+    asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    """`None` = chưa hỏi. Hỏi xong thì đóng dấu, vì hỏi thăm là một câu HỎI chứ không phải một lời
+    chào: lặp lại đúng câu đó ở mọi lần mở hội thoại biến nó thành tiếng ồn."""
+    source_conversation_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    """Các phiên đã được chắt lọc ra câu hỏi này - để truy được "câu này từ đâu ra" khi có ai hỏi,
+    và để không phải đoán bằng cách dựng lại lịch sử tại thời điểm đó."""

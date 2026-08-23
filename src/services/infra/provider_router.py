@@ -202,6 +202,26 @@ không đụng tới quyết định nào - nên đây là ứng viên số mộ
 `ROLE_ORDER_CHITCHAT`. Fallback: văn bản TĨNH của `non_clinical.reply_for`, tức là hành vi trước khi
 có vai trò này."""
 
+ROLE_CONTEXT_SUMMARY = "context_summary"
+"""Nén phần ĐẦU của hội thoại đang diễn ra thành vài câu - short memory M2 (`compaction.py`).
+
+Tách khỏi `ROLE_SYNTHESIS` (chỗ nó nằm nhờ trước đây) vì hai việc chỉ giống nhau ở chỗ "đều sinh văn
+bản": diễn đạt lại câu hỏi làm việc trên MỘT cụm rule engine vừa chọn, còn nén làm việc trên hàng
+chục lượt và sai ở đây thì mất nguyên phần đầu bối cảnh. Gộp một vai trò nghĩa là không bao giờ đọc
+được số liệu riêng của cái nào, và đổi model cho cái này là vô tình đổi cho cả cái kia.
+
+Fallback: bản tóm tắt TẤT ĐỊNH (ghép nguyên văn lời người bệnh) - kém súc tích nhưng không bịa được."""
+
+ROLE_FOLLOWUP_QUESTION = "followup_question"
+"""Viết câu hỏi thăm mở đầu hội thoại MỚI từ phiếu bàn giao của các phiên CŨ - long memory M3.
+
+Khác `ROLE_CONTEXT_SUMMARY` ở đúng thứ khiến nó nguy hiểm hơn: đầu vào là dữ liệu của những phiên đã
+đóng (PHI sống lâu hơn phiên sinh ra nó) và đầu ra ĐI THẲNG tới người bệnh mà không có lượt nào của
+điều dưỡng ở giữa. Vì thế đầu ra của nó bị `followup_writer._accept` kiểm bằng CODE (nhãn phải là
+nhãn đã chắt lọc, không chữ số, không mức ưu tiên, đúng một câu hỏi) chứ không bằng prompt.
+
+Fallback: câu TĨNH của `history_recall.greeting` - tức là hành vi trước khi có vai trò này."""
+
 ROLES: tuple[str, ...] = (
     ROLE_FACT_EXTRACTOR,
     ROLE_SYNTHESIS,
@@ -210,6 +230,8 @@ ROLES: tuple[str, ...] = (
     ROLE_SOURCE_VERDICT,
     ROLE_SOURCE_EXPLAIN,
     ROLE_CHITCHAT,
+    ROLE_CONTEXT_SUMMARY,
+    ROLE_FOLLOWUP_QUESTION,
 )
 
 _ROLE_ORDER_ATTRS: dict[str, str] = {
@@ -220,6 +242,8 @@ _ROLE_ORDER_ATTRS: dict[str, str] = {
     ROLE_SOURCE_VERDICT: "role_order_source_verdict",
     ROLE_SOURCE_EXPLAIN: "role_order_source_explain",
     ROLE_CHITCHAT: "role_order_chitchat",
+    ROLE_CONTEXT_SUMMARY: "role_order_context_summary",
+    ROLE_FOLLOWUP_QUESTION: "role_order_followup_question",
 }
 
 
@@ -548,7 +572,7 @@ def complete(
                 described = describe_provider_error(spec.name, exc, model=model)
                 errors.append(described)
                 logger.warning("provider.failed %s", described)
-                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note=described)
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, role=role, note=described)
                 _record_role_usage(role, spec.name, None, ok=False)
                 if _status_code_of(exc) in _KEY_LEVEL_STATUSES:
                     break  # lỗi của key, không phải của model -> sang provider khác luôn
@@ -559,7 +583,7 @@ def complete(
             if not text:
                 errors.append(f"{spec.name}/{label}: trả về nội dung rỗng")
                 logger.warning("provider.empty_response name=%s model=%s", spec.name, label)
-                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note="nội dung rỗng")
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, role=role, note="nội dung rỗng")
                 _record_role_usage(role, spec.name, None, ok=False)
                 continue
 
@@ -568,7 +592,9 @@ def complete(
                 "provider.selected provider=%s model=%s role=%s latency_ms=%d",
                 spec.name, label, role or "-", latency_ms,
             )
-            console_log.llm_attempt(provider=spec.name, model=label, ok=True, latency_ms=latency_ms)
+            console_log.llm_attempt(
+                provider=spec.name, model=label, ok=True, latency_ms=latency_ms, role=role, output=text,
+            )
             return CompletionResult(text=text, provider=spec.name, model=label)
 
         if out_of_budget:
@@ -679,6 +705,7 @@ def _stream_one(
     started = time.monotonic()
     stream = getattr(provider, "complete_stream", None)
     emitted = False
+    chunks: list[str] = []
     try:
         if stream is None:
             # Không hỗ trợ streaming -> vẫn giữ đúng hợp đồng iterator, chỉ là đúng một mẩu.
@@ -687,11 +714,13 @@ def _stream_one(
             if not text:
                 raise RuntimeError("trả về nội dung rỗng")
             emitted = True
+            chunks.append(text)
             yield text
         else:
             for piece in stream(messages, model=model, temperature=temperature):
                 if piece:
                     emitted = True
+                    chunks.append(piece)
                     yield piece
             if not emitted:
                 raise RuntimeError("trả về nội dung rỗng")
@@ -706,7 +735,9 @@ def _stream_one(
         "provider.selected provider=%s model=%s latency_ms=%d mode=stream",
         provider_name, label, latency_ms,
     )
-    console_log.llm_attempt(provider=provider_name, model=label, ok=True, latency_ms=latency_ms)
+    console_log.llm_attempt(
+        provider=provider_name, model=label, ok=True, latency_ms=latency_ms, output="".join(chunks),
+    )
 
 
 def _complete_with_credential(
@@ -772,7 +803,9 @@ def _complete_with_credential(
             "provider.selected provider=%s model=%s latency_ms=%d source=user_credential",
             credential.provider, label, latency_ms,
         )
-        console_log.llm_attempt(provider=credential.provider, model=label, ok=True, latency_ms=latency_ms)
+        console_log.llm_attempt(
+            provider=credential.provider, model=label, ok=True, latency_ms=latency_ms, output=text,
+        )
         return CompletionResult(text=text, provider=credential.provider, model=label)
 
     if out_of_budget:

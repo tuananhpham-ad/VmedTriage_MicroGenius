@@ -37,7 +37,6 @@ from src.services.symptom_protocol import (
     coverage,
     dialogue,
     flags,
-    lane_model,
     non_clinical,
     red_flag_branches,
     registry,
@@ -259,6 +258,27 @@ _JOKING_RETRY_PREFIXES = (
 )
 """Biến thể cho lượt đùa/tục/non-answer. Nội dung phải luôn: không trách, không suy diễn triệu chứng,
 và quay lại đúng câu vừa hỏi."""
+
+
+def _unwrap_retry_prompt(text: str) -> str:
+    """Lấy lại câu hỏi gốc nếu lượt trước đã là một câu nhắc lại non-answer.
+
+    `session.last_question` lưu nguyên tin nhắn assistant cuối cùng. Nếu người dùng tiếp tục gửi "haha",
+    dùng thẳng giá trị đó sẽ tạo chuỗi prefix chồng prefix. Helper này bóc các prefix đã biết cho tới khi
+    chỉ còn câu hỏi đang chờ trả lời.
+    """
+    current = (text or "").strip()
+    changed = True
+    while changed and current:
+        changed = False
+        for prefix in _JOKING_RETRY_PREFIXES:
+            if current.startswith(prefix):
+                current = current[len(prefix):].strip()
+                changed = True
+                if current.startswith(":"):
+                    current = current[1:].strip()
+                break
+    return current
 
 
 def _catch_all_cluster(protocol: SymptomProtocol, stage: str) -> QuestionCluster:
@@ -523,24 +543,56 @@ class ProtocolSessionStore:
         # Sau, vì `scan.short_circuit` đã thoát ở trên: một tin nhắn vừa mang dấu hiệu cấp cứu vừa
         # nói "thôi khỏi" phải escalate, không được đọc thành ý định dừng (§1 bất biến 3).
         intent = user_intent.classify(cleaned)
-        # Lane phi lâm sàng (§4.10) - SAU L0, nên nó không có cơ hội nuốt một tín hiệu đỏ. Chỉ nhận
-        # lượt CHƯA có cụm nào đang chờ trả lời: giữa chừng bộ câu hỏi, một câu "cảm ơn nhé" là lời
-        # cảm ơn KÈM câu trả lời, không phải một lượt tán gẫu - cắt nó ra khỏi luồng lâm sàng sẽ làm
-        # mất chính dữ kiện người bệnh vừa nói.
-        lane = (
-            self._route_non_clinical(cleaned)
-            if session.current_cluster is None or session.phase is SessionPhase.OPENING
-            else non_clinical.NonClinicalVerdict()
-        )
-        if lane.is_non_clinical:
-            return self._answer_non_clinical(session, cleaned, lane)
+        # Lane phi lâm sàng (§4.10) - SAU L0, nên nó không có cơ hội nuốt một tín hiệu đỏ. Matcher
+        # deterministic được phép chạy cả khi đang có câu hỏi dở: nếu user hỏi chuyện bia/shop/xe bus
+        # giữa checklist thì đó là non-answer và phải nhắc lại câu đang hỏi, không đưa vào extractor.
+        lane = non_clinical.classify(cleaned)
+        if (
+            not lane.is_non_clinical
+            and session.phase is SessionPhase.OPENING
+            and session.current_cluster is None
+            and user_intent.is_joking_non_answer(cleaned)
+        ):
+            lane = non_clinical.NonClinicalVerdict(
+                lane=non_clinical.NonClinicalLane.LOW_CONTENT,
+                matched=("joking_non_answer",),
+            )
+        if (
+            not lane.is_non_clinical
+            and session.phase is SessionPhase.OPENING
+            and session.current_cluster is None
+            and not controller.is_greeting_only(cleaned)
+        ):
+            lane = non_clinical.classify_with_model(cleaned, credential=session.credential)
 
         if (
             session.phase is SessionPhase.COLLECTING
             and session.current_cluster is not None
-            and user_intent.is_joking_non_answer(cleaned)
+            and (
+                user_intent.is_joking_non_answer(cleaned)
+                or lane.lane in {
+                    non_clinical.NonClinicalLane.LOW_CONTENT,
+                    non_clinical.NonClinicalLane.OUT_OF_SCOPE,
+                    non_clinical.NonClinicalLane.LIFESTYLE,
+                    non_clinical.NonClinicalLane.META,
+                }
+            )
         ):
             return self._answer_joking_non_answer(session, cleaned)
+        # Lane phi lâm sàng chỉ được CẮT lượt khi chưa có cụm nào đang chờ trả lời.
+        #
+        # Giữa chừng bộ câu hỏi thì đã có hai đường đúng hơn, và cả hai đứng trên dòng này:
+        # LOW_CONTENT/OUT_OF_SCOPE/LIFESTYLE/META rơi vào nhánh nhắc-lại-câu-đang-hỏi ngay phía trên,
+        # còn CHITCHAT đi tiếp đường lâm sàng - `controller.is_greeting_only` đã nhận ra lượt chào và
+        # bỏ hẳn bước trích xuất, nên nó tốn ĐÚNG một lời gọi model thay vì hai
+        # (`test_a_greeting_turn_costs_one_model_call_instead_of_two`, ~3.8s/lượt tiết kiệm được).
+        #
+        # Không có điều kiện này thì một câu "cảm ơn nhé" giữa checklist bị kéo sang lane tán gẫu, và
+        # câu hỏi lâm sàng đang treo biến mất khỏi hội thoại.
+        if lane.is_non_clinical and (
+            session.current_cluster is None or session.phase is SessionPhase.OPENING
+        ):
+            return self._answer_non_clinical(session, cleaned, lane)
         self._run_model_red_flag_branch(session, cleaned)
 
         is_opening = session.phase is SessionPhase.OPENING
@@ -858,19 +910,6 @@ class ProtocolSessionStore:
             },
         )
 
-    @staticmethod
-    def _route_non_clinical(message: str) -> non_clinical.NonClinicalVerdict:
-        """Sàn keyword trước, model sau — và model CHỈ được hỏi khi sàn không quyết được.
-
-        Hai tầng chứ không phải một, vì chúng giỏi hai việc khác nhau: keyword chính xác tuyệt đối
-        trên những gì nó biết và mù hoàn toàn với phần còn lại; model phủ được phần đuôi dài (kể cả
-        tiếng nước ngoài - nó đa ngữ) nhưng không bao giờ chắc chắn 100%.
-
-        Thứ tự này là thứ giữ cho tầng model không đụng được vào an toàn: tin nhắn đã có dấu hiệu
-        lâm sàng thì `keyword_verdict.is_undecided` là `False`, và model không hề được gọi."""
-        keyword = non_clinical.classify(message)
-        return lane_model.classify(message, keyword_verdict=keyword)
-
     def _answer_non_clinical(
         self, session: Session, message: str, lane: non_clinical.NonClinicalVerdict,
     ) -> Session:
@@ -937,7 +976,7 @@ class ProtocolSessionStore:
         console_log.user_message(session.session_id, message, turn=session.turn_count)
         session.conversation.append({"role": "user", "content": message})
         prefix = _JOKING_RETRY_PREFIXES[session.turn_count % len(_JOKING_RETRY_PREFIXES)]
-        previous = session.last_question or (
+        previous = _unwrap_retry_prompt(session.last_question) or (
             session.current_cluster.script_hint if session.current_cluster is not None else registry.OPENING_QUESTION
         )
         reply = f"{prefix}\n\n{previous}"

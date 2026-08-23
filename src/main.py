@@ -53,6 +53,15 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("NURSE_REGISTRATION_CODE must be configured in production")
         if normalize_database_url(settings.database_url).startswith("sqlite"):
             raise RuntimeError("DATABASE_URL must point to a deployable Postgres database in production")
+        if settings.demo_login_enabled:
+            # KHÔNG raise: bản demo/nghiệm thu chạy với app_env=production nhưng vẫn cần lối vào
+            # theo vai trò. Nhưng phải nói ra ở log khởi động, vì đây là cửa duy nhất tạo được tài
+            # khoản bỏ qua xác thực email và mã đăng ký nhân viên y tế.
+            logging.getLogger("vmedtriage").warning(
+                "DEMO_LOGIN_ENABLED đang BẬT ở môi trường production: ai cũng tạo được tài khoản "
+                "dùng thử (kể cả vai trò nhân viên y tế) qua POST /api/v1/auth/demo-login. "
+                "Đặt DEMO_LOGIN_ENABLED=false khi phục vụ người dùng thật."
+            )
     _configure_app_logging(settings.log_level)
     configure_database(settings.database_url)
     create_tables()
