@@ -132,7 +132,7 @@ export function renderAccess(root, { navigate }) {
  * nó là một nút ở CUỐI danh sách, và mở ra bằng cách lật chính tấm thẻ này: ảnh sang trái, phần mô
  * tả chế độ kiểm thử sang phải.
  */
-export function renderRoleSelect(root, { navigate, onAuthenticated }) {
+export function renderRoleSelect(root, { navigate, onAuthenticated, panel = "roles" }) {
   root.innerHTML = `<section class="role-shell">
     <button class="back-button flow-back" type="button" data-back>${icon("chevronLeft", 16)}<span>Quay lại</span></button>
     <div class="role-select-card" data-role-card>
@@ -260,18 +260,34 @@ export function renderRoleSelect(root, { navigate, onAuthenticated }) {
    * keyframe trượt nằm dưới class đó, nên lần render đầu của trang không có hiệu ứng nào - một trang
    * tự trượt vào khi vừa mở đọc như lỗi tải, không như một cú chuyển do người dùng bấm.
    */
-  const showPanel = (name) => {
+  const applyPanel = (name) => {
     const testing = name === "testing";
-    card.classList.add("is-switched");
     card.classList.toggle("is-testing", testing);
     panels.roles.hidden = testing;
     panels.testing.hidden = !testing;
-    swapMascot(testing ? "engineer" : "doctor", testing ? -1 : 1);
     toggle.setAttribute("aria-expanded", String(testing));
+    return testing;
+  };
+
+  const showPanel = (name) => {
+    card.classList.add("is-switched");
+    const testing = applyPanel(name);
+    swapMascot(testing ? "engineer" : "doctor", testing ? -1 : 1);
     // Đưa tiêu điểm sang mặt vừa mở: người dùng bàn phím vừa bấm một nút giờ đang bị `hidden`, và
     // tiêu điểm rơi về `body` nghĩa là họ phải Tab lại từ đầu trang.
     panels[testing ? "testing" : "roles"].querySelector("button")?.focus();
   };
+
+  // Mở thẳng mặt kiểm thử khi người dùng vào từ lối tắt ở màn đăng nhập. Dựng bằng `applyPanel` chứ
+  // không bằng `showPanel`: đây là trạng thái ĐẦU của trang, nên không có cú lật nào để diễn - chạy
+  // hiệu ứng trượt và cú đổi linh vật ở đây đọc ra như trang tự động nhảy chứ không như người dùng bấm.
+  if (panel === "testing") {
+    applyPanel("testing");
+    runners.doctor.classList.remove("is-active");
+    runners.doctor.setAttribute("aria-hidden", "true");
+    runners.engineer.classList.add("is-active");
+    runners.engineer.removeAttribute("aria-hidden");
+  }
 
   root.querySelector("[data-back]").addEventListener("click", () => navigate("access"));
   root.querySelectorAll("[data-role]").forEach((button) => button.addEventListener("click", () => navigate("auth", { role: button.dataset.role })));
@@ -407,6 +423,7 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
                 <p class="auth-switch">${isRegister ? 'Đã có tài khoản? <button type="button" data-mode="login">Đăng nhập</button>' : 'Chưa có tài khoản? <button type="button" data-mode="register">Đăng ký</button>'}</p>
               </form>
               ${!isRegister ? `<a class="auth-emergency-link" href="tel:115">${icon("phone", 16)}<span>Trường hợp khẩn cấp, gọi ngay 115</span></a>` : ""}
+              ${!isRegister ? `<button class="auth-testing-link" type="button" data-testing>${icon("pulse", 16)}<span>Bạn đang kiểm thử hệ thống? <b>Đăng nhập để test</b></span>${icon("chevronRight", 16)}</button>` : ""}
             </div>
           </div>
         </div>
@@ -416,6 +433,10 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
     const form = root.querySelector("#auth-form");
     root.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => { mode = button.dataset.mode; draw(); }));
     root.querySelector("[data-back]")?.addEventListener("click", () => navigate("role-select"));
+    // Lối tắt sang mặt kiểm thử của màn chọn vai trò. Đi qua `navigate` chứ không dựng lại khối
+    // "dùng thử" ngay tại đây: hai chỗ cùng một khối thì người kiểm thử phải đoán xem chỗ nào mới,
+    // và mọi thay đổi sau này phải sửa hai lần.
+    root.querySelector("[data-testing]")?.addEventListener("click", () => navigate("role-select", { panel: "testing" }));
     root.querySelector("[data-forgot]")?.addEventListener("click", () => renderForgotPassword(root, { navigate, back: draw }));
     root.querySelectorAll("[data-password-toggle]").forEach((button) =>
       button.addEventListener("click", () => {

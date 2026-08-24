@@ -1,9 +1,9 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
-import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260824f";
-import { renderDisclaimer, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260824f";
-import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260824f";
-import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260824f";
+import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260824g";
+import { renderDisclaimer, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260824g";
+import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260824g";
+import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260824g";
 
 const app = document.querySelector("#app");
 
@@ -39,7 +39,7 @@ function render(view, options = {}) {
   if (view === "access") renderAccess(app, { navigate, logout });
   // `onAuthenticated` vì màn chọn vai trò có khối "dùng thử" tạo tài khoản tạm rồi vào thẳng luồng -
   // cùng một đường với nút "Dùng thử" ở màn đăng nhập.
-  if (view === "role-select") renderRoleSelect(app, { navigate, onAuthenticated });
+  if (view === "role-select") renderRoleSelect(app, { navigate, onAuthenticated, panel: options.panel });
   if (view === "auth") renderAuth(app, { navigate, role: options.role || state.role || "patient", onAuthenticated });
   if (view === "verify") renderVerification(app, { navigate, email: options.email || state.pendingVerificationEmail });
   if (view === "reset") renderPasswordReset(app, { navigate, token: options.token || new URLSearchParams(location.search).get("reset_token") });
