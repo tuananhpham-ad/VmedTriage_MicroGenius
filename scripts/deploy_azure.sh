@@ -27,6 +27,14 @@ IMAGE_TAG="${IMAGE_TAG:-v1}"
 # UnicodeEncodeError giua chung. Ep utf-8 cho moi lenh az ben duoi.
 export PYTHONIOENCODING=utf-8
 
+# MSYS/Git Bash tu dich MOI tham so trong giong duong dan POSIX sang duong dan Windows truoc khi
+# giao cho az.exe. Khong tat thi "GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs" den Azure duoi dang
+# "C:/Program Files/Git/app/runs" - container Linux khong co duong dan do, Fusion khong nap duoc,
+# va MAT AI DE XUAT ma khong he bao loi o buoc deploy. Da xay ra that tren revision 0000004
+# (2026-08-24). Hai bien duoi tat viec dich do cho ca hai the he MSYS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="deploy/azure/env"
 
