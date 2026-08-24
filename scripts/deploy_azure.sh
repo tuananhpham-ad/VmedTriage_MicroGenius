@@ -62,9 +62,21 @@ done < "$ENV_FILE"
 echo "[1/6] doc $ENV_FILE: ${#ENV_ARGS[@]} bien"
 
 echo "[2/6] resource provider + resource group + environment"
-az provider register --namespace Microsoft.App --wait
-az provider register --namespace Microsoft.OperationalInsights --wait
-az provider register --namespace Microsoft.ContainerRegistry --wait
+# Chi register khi CHUA Registered. `az provider register` la thao tac cap SUBSCRIPTION: nguoi chi
+# co Contributor pham vi resource group (cach chia se dung cho dong doi - xem docs/DEPLOYMENT.md)
+# se an AuthorizationFailed va `set -e` giet ca script ngay tai day, du ba provider deu da dang ky
+# tu lan deploy dau cua chu subscription. Doc trang thai truoc, chi goi khi that su can.
+for ns in Microsoft.App Microsoft.OperationalInsights Microsoft.ContainerRegistry; do
+  state="$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || true)"
+  if [[ "$state" == "Registered" ]]; then
+    echo "      $ns: da Registered"
+  else
+    az provider register --namespace "$ns" --wait \
+      || { echo "  !! Khong register duoc $ns (can quyen cap subscription)." >&2
+           echo "     Nho chu subscription chay: az provider register --namespace $ns --wait" >&2
+           exit 2; }
+  fi
+done
 # Chi tao resource group khi CHUA co. `az group create` tren mot group da ton tai o vung khac tra
 # ve InvalidResourceGroupLocation va giet ca script - trong khi vung cua group hoan toan khong quan
 # trong: no chi la nhan metadata, tai nguyen ben trong (environment, app, registry) moi thuc su nam

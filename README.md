@@ -74,6 +74,7 @@ Luồng production thật là `/api/v1/chat` (xem `src/api/routes.py` + `src/ser
 - **Auth & phân quyền:** [docs/AUTH.md](docs/AUTH.md) — flow đăng ký/đăng nhập 2 role (`patient`/`nurse`), curl mẫu cho PowerShell/bash.
 - **API reference đầy đủ:** [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md), [docs/openapi.yaml](docs/openapi.yaml).
 - **Kiến trúc:** [ARCHITECTURE.md](ARCHITECTURE.md), [docs/architecture_diagram.md](docs/architecture_diagram.md).
+- **Deploy:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Azure Container Apps (đầy đủ, có graph triage) hoặc Render free; bí mật cần xin, ràng buộc vùng, bảng lỗi thường gặp.
 
 ### Sample query — chat triage
 
