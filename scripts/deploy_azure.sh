@@ -18,7 +18,16 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-vmedtriage-rg}"
 # chinh sach "Allowed resource deployment regions" gioi han dung 5 vung - koreacentral,
 # malaysiawest, eastasia, indiasouthcentral, japaneast. Vung ngoai danh sach hong voi loi
 # RequestDisallowedByAzure ngay o buoc tao Log Analytics workspace.
-LOCATION="${LOCATION:-eastasia}"
+#
+# TRONG 5 VUNG DO, KHONG DUOC CHON eastasia. Hong Kong nam ngoai danh sach phuc vu cua CA OpenAI lan
+# Google Gemini: OpenAI tra 403, Gemini tra 400 FAILED_PRECONDITION ("User location is not supported
+# for the API use"). Cung key do, cung code do, chay o may tai Viet Nam thi ca hai deu 200. DeepSeek
+# (Trung Quoc) van song, nen app KHONG chet han - no chi mat dung nhanh GPT-direct cua C6, va vi
+# service.py:288-290 tra None khi nhanh do hong, MOI CA KHONG PHAI CAP CUU BIEN MAT KHOI HANG DOI
+# DIEU DUONG. Trieu chung nhin thay: "nurse chi nhan duoc ca red-flag". Da xay ra that tren
+# revision 0000005 (2026-08-24). Bon vung con lai (japaneast, koreacentral, malaysiawest,
+# indiasouthcentral) deu duoc ca hai nha cung cap phuc vu.
+LOCATION="${LOCATION:-japaneast}"
 ENVIRONMENT="${ENVIRONMENT:-vmedtriage-env}"
 APP_NAME="${APP_NAME:-vmedtriage}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
@@ -56,10 +65,30 @@ echo "[2/6] resource provider + resource group + environment"
 az provider register --namespace Microsoft.App --wait
 az provider register --namespace Microsoft.OperationalInsights --wait
 az provider register --namespace Microsoft.ContainerRegistry --wait
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
-az containerapp env show --name "$ENVIRONMENT" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null \
-  || az containerapp env create --name "$ENVIRONMENT" --resource-group "$RESOURCE_GROUP" \
-       --location "$LOCATION" --output none
+# Chi tao resource group khi CHUA co. `az group create` tren mot group da ton tai o vung khac tra
+# ve InvalidResourceGroupLocation va giet ca script - trong khi vung cua group hoan toan khong quan
+# trong: no chi la nhan metadata, tai nguyen ben trong (environment, app, registry) moi thuc su nam
+# o vung rieng cua chung. Nho vay deploy sang japaneast van dung lai duoc group tao tu thoi eastasia.
+az group show --name "$RESOURCE_GROUP" --output none 2>/dev/null \
+  || az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+# Environment KHONG doi vung duoc sau khi tao. Neu cai dang co nam o vung khac $LOCATION thi viec
+# dung lai no am tham vo hieu hoa moi thay doi LOCATION - app van chay o vung cu, va neu vung cu la
+# eastasia thi van mat AI de xuat. Dung lai va bao ro thay vi deploy nham.
+EXISTING_LOCATION="$(az containerapp env show --name "$ENVIRONMENT" --resource-group "$RESOURCE_GROUP" \
+  --query location -o tsv 2>/dev/null || true)"
+if [[ -z "$EXISTING_LOCATION" ]]; then
+  az containerapp env create --name "$ENVIRONMENT" --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" --output none
+  echo "      da tao environment $ENVIRONMENT tai $LOCATION"
+elif [[ "$(echo "$EXISTING_LOCATION" | tr -d ' ' | tr '[:upper:]' '[:lower:]')" != "$LOCATION" ]]; then
+  echo "  !! Environment '$ENVIRONMENT' dang o '$EXISTING_LOCATION', khong phai '$LOCATION'." >&2
+  echo "     Environment khong doi vung duoc. Deploy sang vung moi bang mot environment + app moi:" >&2
+  echo "       ENVIRONMENT=vmedtriage-$LOCATION-env APP_NAME=vmedtriage-$LOCATION ./scripts/deploy_azure.sh" >&2
+  echo "     (giu nguyen RESOURCE_GROUP de dung lai registry, khoi push lai vai GB)" >&2
+  exit 3
+else
+  echo "      dung environment san co: $ENVIRONMENT tai $EXISTING_LOCATION"
+fi
 
 echo "[3/6] container registry"
 # Ten ACR phai duy nhat toan cau va chi gom chu+so. Lay ten dang co trong resource group truoc,
@@ -108,6 +137,36 @@ fi
 
 URL="https://$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
   --query 'properties.configuration.ingress.fqdn' -o tsv)"
+
+# KIEM TRA SAU DEPLOY. Loi MSYS dich duong dan (xem comment o dau file) khong lam buoc nao ben tren
+# that bai - no deploy "thanh cong" voi mot bien SAI, roi Fusion im lang khong nap duoc artifact va
+# MAT AI DE XUAT ma khong co dong log loi nao o buoc deploy. Da xay ra that tren revision 0000004
+# (2026-08-24) va chi lo ra khi chay scripts/check_nurse_flow.py. Doc lai env DA LEN SERVER va bat
+# loi do ngay tai day, thay vi de no song im lim toi luc co nguoi thu luong that.
+echo
+echo "[kiem tra 1/2] doc lai bien moi truong tren server"
+# Loc bang regex o phia bash chu khong bang JMESPath: `contains(value, ':/')` bat nham ca https://
+# cua PASSWORD_RESET_BASE_URL / CORS_ORIGINS / DATABASE_URL. Dau hieu THAT cua duong dan bi MSYS
+# dich la gia tri BAT DAU bang mot ky tu o dia rieng le: "C:/..." hoac "C:\...".
+BAD="$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+  --query "properties.template.containers[0].env[?value!=null].[name,value]" -o tsv 2>/dev/null \
+  | awk -F'\t' '$2 ~ /^[A-Za-z]:[\/\\]/ {print $1}' || true)"
+if [[ -n "$BAD" ]]; then
+  echo "      !! CANH BAO: bien duoi day mang duong dan kieu Windows - MSYS da dich sai:" >&2
+  echo "$BAD" | sed 's/^/         /' >&2
+  echo "         Container Linux khong co duong dan do. Go bang:" >&2
+  echo "         az containerapp update -n $APP_NAME -g $RESOURCE_GROUP --remove-env-vars <TEN_BIEN>" >&2
+else
+  echo "      OK - khong bien nao bi dich thanh duong dan Windows"
+fi
+
+echo "[kiem tra 2/2] /health (min-replicas=0 nen lan goi dau phai cho cold start, co the vai phut)"
+curl -fsS -m 300 -o /dev/null -w "      HTTP %{http_code} sau %{time_total}s\n" "$URL/health" \
+  || echo "      !! /health khong tra loi. Xem log: az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --follow" >&2
+
 echo
 echo "Xong: $URL"
 echo "Neu PASSWORD_RESET_BASE_URL / CORS_ORIGINS trong $ENV_FILE chua phai URL nay thi sua roi chay lai."
+echo
+echo "Kiem tra luong that (benh nhan chat -> dieu duong -> AI de xuat):"
+echo "  python -m scripts.check_nurse_flow --base-url $URL"

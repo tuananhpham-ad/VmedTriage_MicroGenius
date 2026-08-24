@@ -59,7 +59,15 @@ ENV GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs \
 #
 # Artifact KHÔNG dùng "|| true" - thiếu nó là graph triage vô dụng, phải biết ngay lúc build.
 # Corpus thì có: một URL guideline chết chỉ làm corpus thiếu vài tài liệu.
-RUN python -m scripts.download_graph_artifacts
+#
+# CHỈ TẢI FUSION. Image này chạy GRAPH_TRIAGE_MODE=c6, và c6 chỉ đọc fusion_full/ (qua
+# `_fusion_label_for`). logreg_full/ + bert_full/ chỉ được nạp bởi `service.py::_get_agent`, hàm mà
+# duy nhất nhánh `ensemble` gọi tới. Tải cả 3 = thêm ~500 MB vào image và ~3 phút vào mỗi lần build
+# cho hai thư mục không ai mở.
+#
+# Build cho ensemble: `docker build --build-arg GRAPH_ARTIFACTS= ...` (để trống = tải cả 3).
+ARG GRAPH_ARTIFACTS=fusion_full
+RUN python -m scripts.download_graph_artifacts ${GRAPH_ARTIFACTS:+--only "$GRAPH_ARTIFACTS"}
 RUN python -m scripts.build_source_corpus || echo "[build] build_source_corpus: FAILED (bo qua)"
 
 # ---------- Stage 2: runtime ----------
