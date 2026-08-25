@@ -89,7 +89,6 @@ def build_narrative(
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": deterministic},
             ],
-            temperature=0.2,
             credential=credential,
             role=provider_router.ROLE_SYNTHESIS,
         )

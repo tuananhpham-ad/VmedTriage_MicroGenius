@@ -25,8 +25,10 @@ BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +214,42 @@ def _documented_rule_for(summary_text: str) -> dict[str, Any]:
     )
 
 
+@contextlib.contextmanager
+def _timed_c6_arm(arm: str, **span_metadata: Any):
+    """Mở một span Braintrust cho MỘT nhánh C6 và log `latency_ms` của nó ra console.
+
+    Hai đường ra vì chúng phục vụ hai người đọc khác nhau, và người đọc thứ hai luôn có mặt:
+
+    * span Braintrust - xem được cây lồng nhau (nhánh -> từng lời gọi LLM bên trong, do
+      `auto_instrument`), nhưng CHỈ khi có BRAINTRUST_API_KEY;
+    * dòng `graph_triage.c6_arm` ra stdout - luôn có, đi thẳng vào Log Analytics của Container Apps,
+      và là thứ duy nhất đọc được khi tracing tắt (local, CI, hoặc production chưa cắm key).
+
+    Đây là số mà `_guidance/features/F08_c6_latency_cost.md` §4 đòi phải có TRƯỚC khi bàn cắt nhánh
+    nào: trước đây không ai biết ba nhánh chia nhau thời gian thế nào, kể cả câu "fusion chậm nhất".
+
+    Ngoại lệ được để BAY QUA nguyên vẹn - người gọi vẫn phải là chỗ quyết định nhánh hỏng thì audit
+    ghi gì. Ở đây chỉ ghi thêm `available=false` vào log rồi ném tiếp.
+    """
+    started = time.perf_counter()
+    try:
+        with traced_span(f"c6_{arm}", metadata={"arm": arm, **span_metadata}) as span:
+            yield span
+    except Exception as error:
+        logger.info(
+            "graph_triage.c6_arm arm=%s available=false latency_ms=%d error=%s",
+            arm,
+            int((time.perf_counter() - started) * 1000),
+            type(error).__name__,
+        )
+        raise
+    logger.info(
+        "graph_triage.c6_arm arm=%s available=true latency_ms=%d",
+        arm,
+        int((time.perf_counter() - started) * 1000),
+    )
+
+
 def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[str, Any]:
     """Apply the non-lowering C6 emergency combiner and retain a compact audit trail."""
     updated = dict(decision)
@@ -220,7 +258,9 @@ def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[s
     direct_decision: dict[str, Any] | None = None
 
     try:
-        direct_decision = _direct_decision_for(summary_text)
+        with _timed_c6_arm("direct", model=get_settings().graph_triage_safety_model) as span:
+            direct_decision = _direct_decision_for(summary_text)
+            span.log(output={"triage_label": direct_decision["triage_label"]})
         audit["direct"] = {"available": True, "triage_label": direct_decision["triage_label"]}
         if direct_decision["triage_label"] == "cap_cuu":
             escalated_by.append("direct")
@@ -231,7 +271,13 @@ def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[s
     # This is the second arm of the C6 benchmark formula. Fusion only votes for emergency;
     # non-emergency Fusion output must not replace the GPT-direct label.
     try:
-        fusion_label = _fusion_label_for(summary_text)
+        # `graph_extraction=llm` không phải chú thích thừa: nhánh này gọi DeepSeek dựng Patient Graph
+        # TRƯỚC forward pass torch (`GraphResolver.resolve`, decision.py:116-134). `auto_instrument`
+        # sẽ dựng span con cho lời gọi đó, nên trong Braintrust nhìn ra ngay phần nào của "fusion" là
+        # mạng và phần nào là mô hình - câu hỏi mở của F08 §1.2.
+        with _timed_c6_arm("fusion", graph_extraction="llm") as span:
+            fusion_label = _fusion_label_for(summary_text)
+            span.log(output={"triage_label": fusion_label})
         audit["fusion"] = {"available": True, "triage_label": fusion_label}
         if fusion_label == "cap_cuu":
             escalated_by.append("fusion")
@@ -240,7 +286,9 @@ def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[s
         audit["fusion"] = {"available": False, "error": type(error).__name__}
 
     try:
-        documented_rule = _documented_rule_for(summary_text)
+        with _timed_c6_arm("documented_rule", model=get_settings().graph_triage_safety_model) as span:
+            documented_rule = _documented_rule_for(summary_text)
+            span.log(output={"emergency": bool(documented_rule.get("emergency"))})
         audit["documented_rule"] = {
             "available": bool(documented_rule.get("available")),
             "emergency": bool(documented_rule.get("emergency")),
@@ -352,17 +400,41 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         logger.info("graph_triage.skipped case_id=%s reason=empty_summary", triage_case.case_id)
         return None
     if settings.graph_triage_mode == "c6":
-        decision = _c6_only_decision(triage_case, summary_text)
-        if decision is None:
-            return None
-        logger.info(
-            "graph_triage.c6_decided case_id=%s label=%s sources=%s",
-            triage_case.case_id,
-            decision["triage_label"],
-            ",".join(decision.get("escalated_by", [])) or "direct_label",
-        )
-        support = _source_support_for(triage_case, decision)
-        return _compact_payload(decision, model=settings.graph_triage_safety_model, support=support)
+        # Root span PHẢI bọc cả nhánh c6, không chỉ `ensemble` như trước. Mọi span bên dưới
+        # (`_timed_c6_arm`, các `traced_span` trong `source_support/pipeline.py`, và span tự sinh cho
+        # từng lời gọi LLM) đều tự tìm cha qua contextvar - không có root nào đang mở thì braintrust
+        # trả NOOP_SPAN và TOÀN BỘ tracing im lặng biến mất. Đó đúng là tình trạng trước 2026-08-25:
+        # production chạy `c6`, còn root span duy nhất lại nằm trong nhánh `ensemble` bên dưới.
+        with traced_root_span(
+            "graph_triage_c6_decide_for_case",
+            case_id=triage_case.case_id,
+            metadata={"track": "2_advisory", "authoritative": False, "mode": "c6"},
+        ) as (root_span, trace_link):
+            if trace_link:
+                logger.info("braintrust.trace_link case_id=%s url=%s", triage_case.case_id, trace_link)
+            decision = _c6_only_decision(triage_case, summary_text)
+            if decision is None:
+                root_span.log(output={"decided": False, "reason": "no_direct_label_and_not_emergency"})
+                return None
+            logger.info(
+                "graph_triage.c6_decided case_id=%s label=%s sources=%s",
+                triage_case.case_id,
+                decision["triage_label"],
+                ",".join(decision.get("escalated_by", [])) or "direct_label",
+            )
+            support = _source_support_for(triage_case, decision)
+            root_span.log(
+                output={
+                    "decided": True,
+                    "triage_label": decision["triage_label"],
+                    "escalated_by": decision.get("escalated_by", []),
+                    "safety_gate": decision.get("safety_gate"),
+                    "has_source_support": support is not None,
+                }
+            )
+            return _compact_payload(
+                decision, model=settings.graph_triage_safety_model, support=support
+            )
 
     # `ensemble` is the only remaining enabled mode here.  It intentionally keeps the existing
     # heavy three-model behaviour for research/second-opinion comparisons.

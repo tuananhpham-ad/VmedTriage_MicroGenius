@@ -102,11 +102,57 @@ def traced_span(name: str, **event: Any):
         yield span
 
 
+def traced_event(name: str, **event: Any) -> None:
+    """Ghi một span TỨC THỜI (mở rồi đóng ngay) cho một sự kiện ĐIỂM - thứ không có khoảng thời gian
+    để bọc, ví dụ `route_decided`, `rule_gate`, `agent_message` trong `fever_stage_log.step()`.
+
+    Dùng span thay vì `current_span().log()` vì `log()` gộp dữ liệu vào ĐÚNG MỘT dòng của span cha:
+    ghi 40 step của một lượt bằng `log()` thì 39 cái đầu bị đè mất. Mỗi step một span con là cách
+    duy nhất giữ được đủ thứ tự lẫn nội dung của cả chuỗi.
+
+    No-op an toàn khi chưa cấu hình key hoặc chưa có span cha nào đang mở (braintrust trả
+    `NOOP_SPAN`). Không bao giờ raise - log hỏng không được làm hỏng lượt hỏi-đáp.
+    """
+    if not braintrust_enabled():
+        return
+    try:
+        import braintrust
+
+        braintrust.start_span(name=name, **event).end()
+    except Exception as error:  # pragma: no cover - best-effort
+        logger.warning("braintrust.event_failed name=%s reason=%s: %s", name, type(error).__name__, error)
+
+
+def _has_active_span() -> bool:
+    """True nếu đang có span thật đang mở trong context hiện tại.
+
+    Dùng để `traced_root_span` tự biết nên mở ROOT hay nên lồng làm CON. `braintrust.current_span()`
+    trả về `NOOP_SPAN` khi chưa có span nào - đó là dấu hiệu duy nhất phân biệt được hai trường hợp.
+    """
+    try:
+        import braintrust
+
+        return braintrust.current_span() is not braintrust.NOOP_SPAN
+    except Exception:  # pragma: no cover - thiếu package/API đổi thì coi như không có cha
+        return False
+
+
 @contextlib.contextmanager
 def traced_root_span(name: str, project: str | None = None, **metadata: Any):
-    """Context manager mở một root span cho `name`. Nếu không có BRAINTRUST_API_KEY, trả về
-    `_NoOpSpan` — không gọi network, không raise, để mọi runner/route gọi qua đây được an toàn
-    trong mọi môi trường (kể cả CI không có key).
+    """Context manager mở một span cho `name`, TỰ CHỌN root hay con:
+
+    - chưa có span nào đang mở  -> mở ROOT span mới qua `init_logger(...).start_span()`;
+    - đã có span đang mở        -> lồng làm CON qua `braintrust.start_span()`.
+
+    Vì sao phải tự chọn: `decide_for_case` (`src/graph_triage/service.py`) chạy ở HAI hoàn cảnh -
+    trong một lượt `/chat` (đã có root `chat_turn` bọc ngoài) và trong background safety-gate task
+    (đứng một mình). Nếu luôn gọi `init_logger().start_span()` thì ở hoàn cảnh thứ nhất phần graph
+    bị TÁCH thành một trace riêng, xem trên Braintrust là hai trace rời không nối được với nhau,
+    đúng thứ làm luồng E2E không đọc được. Còn nếu luôn `start_span()` thì ở hoàn cảnh thứ hai
+    không có cha nào, braintrust trả `NOOP_SPAN` và toàn bộ nhánh im lặng biến mất.
+
+    Nếu không có BRAINTRUST_API_KEY, trả về `_NoOpSpan` — không gọi network, không raise, để mọi
+    runner/route gọi qua đây được an toàn trong mọi môi trường (kể cả CI không có key).
 
     Trả về `(span, trace_link)` — `trace_link` là `None` khi no-op.
     """
@@ -123,6 +169,16 @@ def traced_root_span(name: str, project: str | None = None, **metadata: Any):
     except ImportError:
         logger.warning("braintrust.disabled reason=package_not_installed span=%s", name)
         yield _NoOpSpan(), None
+        return
+
+    if _has_active_span():
+        with traced_span(name, metadata=metadata) as child:
+            link = None
+            try:
+                link = child.link()
+            except Exception:  # pragma: no cover - link() có thể chưa sẵn tuỳ SDK version
+                link = None
+            yield child, link
         return
 
     try:

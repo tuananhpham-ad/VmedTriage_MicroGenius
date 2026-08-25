@@ -91,6 +91,14 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder --chown=appuser:appuser /app /app
 
+# `COPY --chown` doi chu NOI DUNG ben trong /app, KHONG doi chu chinh /app - thu muc do do `WORKDIR`
+# tao ra o tren voi chu la root. Cong them .dockerignore loai bo `logs/` nen image khong co san thu
+# muc do. Ket qua: appuser chay `mkdir /app/logs` trong mot thu muc cua root -> PermissionError, va
+# fever_stage_log nuot loi thanh WARNING nen app van chay trong khi TOAN BO log giai doan bi mat.
+# Da xay ra that tren revision japaneast (2026-08-24): hang tram dong
+# `fever_stage_log.write_failed ... reason=PermissionError`.
+RUN mkdir -p /app/logs && chown appuser:appuser /app /app/logs
+
 USER appuser
 EXPOSE 8080
 

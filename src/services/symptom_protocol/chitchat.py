@@ -38,7 +38,9 @@ from src.services.symptom_protocol.non_clinical import NonClinicalLane
 
 logger = logging.getLogger("vmedtriage.chitchat")
 
-_TEMPERATURE = 0.6
+# Nhiet do cua vai tro nay da chuyen sang `Settings.role_temperature_chitchat` (2026-08-25) de moi vai tro
+# chinh duoc mot cho, thay vi rai hang so khap cac module. `provider_router._resolve_temperature`
+# doc no theo `role=` da truyen san o loi goi ben duoi.
 """Cao hơn 0 vì đây là lượt xã giao: cùng một lời chào mà lượt nào cũng nhận đúng một câu thì hội
 thoại nghe như máy trả lời tự động. Thấp hơn bước synthesis lâm sàng (0.7) vì câu ở đây không có
 `ResponsePlan` giới hạn nội dung - chỉ có guard, mà guard chấm sau."""
@@ -136,7 +138,6 @@ def compose(
     try:
         result = provider_router.complete(
             [{"role": "user", "content": prompt}],
-            temperature=_TEMPERATURE,
             credential=credential,
             role=provider_router.ROLE_CHITCHAT,
         )
