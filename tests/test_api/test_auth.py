@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from src.services.infra.account_mailer import account_mailer
+from src.services.infra.account_mailer import DELIVERED, account_mailer
 
 
 def registration_payload(*, email: str = "patient.one@example.com", username: str = "patient.one") -> dict:
@@ -27,7 +27,7 @@ async def test_register_requires_email_verification_before_login(client, monkeyp
     monkeypatch.setattr(
         account_mailer,
         "send_email_verification_code",
-        lambda *, recipient, code: delivered_codes.append(code),
+        lambda *, recipient, code: (delivered_codes.append(code), DELIVERED)[1],
     )
     response = await client.post("/api/v1/register", json=registration_payload())
     assert response.status_code == 201
@@ -59,7 +59,7 @@ async def test_login_accepts_phone_number(client, monkeypatch):
     monkeypatch.setattr(
         account_mailer,
         "send_email_verification_code",
-        lambda *, recipient, code: delivered_codes.append(code),
+        lambda *, recipient, code: (delivered_codes.append(code), DELIVERED)[1],
     )
     payload = registration_payload(email="phone.login@example.com", username="phone.login")
     payload["phone_number"] = "0901234578"
@@ -80,7 +80,7 @@ async def test_login_accepts_phone_number(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_register_accepts_the_streamlined_patient_form(client, monkeypatch):
-    monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: None)
+    monkeypatch.setattr(account_mailer, "send_email_verification_code", lambda **_: DELIVERED)
     response = await client.post(
         "/api/v1/register",
         json={
@@ -208,3 +208,49 @@ async def test_middleware_blocks_wrong_role(client, patient_headers):
 async def test_middleware_requires_bearer_token(client):
     response = await client.get("/api/v1/nurse/queue")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_case_summary_is_restricted_to_authenticated_nurse(client, patient_headers, nurse_headers):
+    path = "/api/v1/cases/no-such-case/summary"
+
+    assert (await client.get(path)).status_code == 401
+    assert (await client.get(path, headers=patient_headers)).status_code == 403
+    # Nhân viên y tế đi qua middleware; route mới trả 404 vì case không tồn tại.
+    assert (await client.get(path, headers=nurse_headers)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_demo_login_creates_a_new_test_account_per_call(client):
+    """Mỗi lần bấm "Dùng thử" phải là một tài khoản riêng, nếu không hai người demo dùng chung lịch sử ca."""
+    first = await client.post("/api/v1/auth/demo-login", json={"role": "patient"})
+    second = await client.post("/api/v1/auth/demo-login", json={"role": "nurse"})
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    first_user = first.json()["user"]
+    second_user = second.json()["user"]
+    assert first_user["username"].startswith("test-patient-")
+    assert second_user["username"].startswith("test-nurse-")
+    assert first_user["username"] != second_user["username"]
+    assert first_user["role"] == "patient"
+    assert second_user["role"] == "nurse"
+
+
+@pytest.mark.asyncio
+async def test_demo_login_token_reaches_role_protected_routes(client):
+    """Token demo phải dùng được ngay: tài khoản demo bỏ qua xác thực email và mã đăng ký điều dưỡng."""
+    response = await client.post("/api/v1/auth/demo-login", json={"role": "nurse"})
+    token = response.json()["access_token"]
+
+    queue = await client.get("/api/v1/nurse/queue", headers={"Authorization": f"Bearer {token}"})
+    assert queue.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_demo_login_is_refused_when_disabled(client, monkeypatch):
+    from src.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_login_enabled", False)
+    response = await client.post("/api/v1/auth/demo-login", json={"role": "patient"})
+    assert response.status_code == 403

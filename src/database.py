@@ -18,6 +18,13 @@ _session_factory: sessionmaker[Session] | None = None
 _database_url: str | None = None
 
 
+def normalize_database_url(database_url: str) -> str:
+    """Normalize platform-provided connection URLs for SQLAlchemy."""
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql://", 1)
+    return database_url
+
+
 def _ensure_sqlite_directory(database_url: str) -> None:
     prefixes = ("sqlite:///", "sqlite+pysqlite:///")
     prefix = next((item for item in prefixes if database_url.startswith(item)), None)
@@ -32,7 +39,7 @@ def _ensure_sqlite_directory(database_url: str) -> None:
 def configure_database(database_url: str | None = None) -> Engine:
     global _engine, _session_factory, _database_url
 
-    resolved_url = database_url or get_settings().database_url
+    resolved_url = normalize_database_url(database_url or get_settings().database_url)
     if _engine is not None and _database_url == resolved_url:
         return _engine
 
@@ -90,24 +97,45 @@ def _check_schema_drift(engine: Engine) -> None:
         )
 
 
-def _apply_additive_sqlite_migrations(engine: Engine) -> None:
-    """Apply safe nullable-column additions for local SQLite development databases."""
-    if not engine.url.drivername.startswith("sqlite"):
-        return
-    additions = {
+_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "users": {
         "address": "VARCHAR(240)",
         "emergency_contact_name": "VARCHAR(120)",
         "emergency_contact_relationship": "VARCHAR(80)",
         "emergency_contact_phone": "VARCHAR(32)",
-    }
+    },
+    # Memory M3 (§4.9): phiếu bàn giao của phiên đã đóng, để mở hội thoại mới còn hỏi thăm được.
+    "conversations": {"nurse_summary_json": "JSON"},
+}
+"""Cột NULLABLE thêm vào bảng đã tồn tại. Chỉ được thêm cột nullable ở đây - `ALTER TABLE ADD COLUMN`
+kèm `NOT NULL` mà không có `DEFAULT` là câu lệnh hỏng trên cả SQLite lẫn Postgres, và một `DEFAULT`
+điền vào 194 hàng cũ là một quyết định về DỮ LIỆU chứ không phải về schema.
+
+⚠️ Đây vẫn là bản vá tạm, không phải migration tool - xem `F03` §2.1. Cái nó mua được đúng một thứ:
+thêm một cột nullable không bắt ai phải xoá `data/app.db` (dev) hay mất 252 ca (Neon)."""
+
+
+def _apply_additive_migrations(engine: Engine) -> None:
+    """Thêm các cột nullable còn thiếu vào bảng đã tồn tại.
+
+    Chạy cho MỌI backend chứ không riêng SQLite: production đang là Postgres (Neon, xem `render.yaml`)
+    và ở đó "xoá file DB rồi tạo lại" - lối thoát mà `_check_schema_drift` gợi ý - không phải một lối
+    thoát. `ALTER TABLE ... ADD COLUMN <tên> <kiểu>` là cú pháp chung của cả hai.
+
+    Idempotent: cột đã có thì bỏ qua, nên chạy lại mỗi lần khởi động là an toàn."""
     inspector = inspect(engine)
-    if "users" not in inspector.get_table_names():
-        return
-    columns = {column["name"] for column in inspector.get_columns("users")}
-    with engine.begin() as connection:
-        for column, sql_type in additions.items():
-            if column not in columns:
-                connection.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {column} {sql_type}")
+    existing = set(inspector.get_table_names())
+    json_type = "JSONB" if engine.url.drivername.startswith("postgres") else "JSON"
+    for table, additions in _ADDITIVE_COLUMNS.items():
+        if table not in existing:
+            continue  # `create_all` vừa tạo mới -> đã đúng schema
+        columns = {column["name"] for column in inspector.get_columns(table)}
+        with engine.begin() as connection:
+            for column, sql_type in additions.items():
+                if column in columns:
+                    continue
+                resolved = json_type if sql_type == "JSON" else sql_type
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {resolved}")
 
 
 def create_tables() -> None:
@@ -115,7 +143,7 @@ def create_tables() -> None:
 
     engine = _engine or configure_database()
     Base.metadata.create_all(bind=engine)
-    _apply_additive_sqlite_migrations(engine)
+    _apply_additive_migrations(engine)
     _check_schema_drift(engine)
 
 

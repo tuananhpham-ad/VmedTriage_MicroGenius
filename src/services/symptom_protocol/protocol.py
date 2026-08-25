@@ -42,10 +42,17 @@ class SymptomProtocol:
     stage_order: tuple[str, ...]
     """Thứ tự stage cố định, vd `("0","1","2","3A","3B","4","5")`."""
 
-    gate_stages: tuple[str, str]
-    """2 stage dùng hướng C (extract -> rule-gate -> next_question tách biệt): (scan khẩn cấp, scan
-    sớm/tự chăm sóc). Stage thứ 2 tự động bị skip nếu stage thứ 1 còn dấu hiệu khẩn cấp chưa loại trừ
-    (đúng nguyên tắc "chỉ quét early-visit khi emergency-scan đã sạch")."""
+    gate_stages: tuple[str, ...]
+    """Các stage dùng hướng C (extract -> rule-gate -> next_question tách biệt). Tối thiểu 2: scan
+    khẩn cấp và scan sớm/tự chăm sóc. Stage scan sớm tự động bị skip nếu stage scan khẩn cấp còn dấu
+    hiệu chưa loại trừ (đúng nguyên tắc "chỉ quét early-visit khi emergency-scan đã sạch").
+
+    ⚠️ **Thứ tự trong tuple KHÔNG còn mang nghĩa "stage nào là scan khẩn cấp".** Trước 2026-08-22,
+    bốn chỗ trong hệ thống đọc `gate_stages[0]` như "stage quét cấp cứu"; khi stage `E` được chèn lên
+    đầu `stage_order`, cách đọc theo VỊ TRÍ đó vỡ im lặng (tập field an toàn của `ranking` co lại,
+    vùng gộp của `batching` thành rỗng). Dùng `emergency_scan_stage` / `early_visit_scan_stage` bên
+    dưới - chúng khai TƯỜNG MINH thay vì suy từ chỉ số."""
+
 
     budget: dict[str, tuple[int, int]]
     budget_floor_stage: str
@@ -84,7 +91,13 @@ class SymptomProtocol:
     """Rule chạy khi KHÔNG rule nào khớp VÀ `self_care_checklist_satisfied` True - fever dùng để trả
     `R-S-01`/`SELF_CARE`. Nhận `answers` để giữ chữ ký thống nhất với `fallback_rule`, thường bỏ qua."""
 
-    emergency_message: str
+    patient_red_flag_message: str
+    """Câu TĨNH bệnh nhân đọc khi phiên chạm chốt đỏ. Theo ADR-007 đây là câu NGHI NGỜ
+    (`SUSPECTED_RED_FLAG_MESSAGE`), không phải câu khẳng định cấp cứu.
+
+    Tên trường cũ là `emergency_message` và nó đã trở thành một lời nói dối sau ADR-007: nội dung
+    không còn khẳng định cấp cứu, còn `EMERGENCY_MESSAGE` thì vẫn tồn tại nhưng thuộc về ĐIỀU DƯỠNG
+    ở bước duyệt. Hai thứ khác người nói, khác thời điểm, nên chúng phải khác tên."""
     """Thông điệp cấp cứu TĨNH, không qua LLM (đúng P0-2 - không được để LLM tự sinh văn bản báo cấp
     cứu, rủi ro lỡ chẩn đoán/diễn đạt sai)."""
 
@@ -132,6 +145,19 @@ class SymptomProtocol:
     cậy, LLM không biết "hôm nay" nếu không được cho biết) - đây là phép tính THUẦN, xác định. Trả
     `None` (mặc định) nếu protocol không cần field dẫn xuất nào."""
 
+    derived_field_keys: tuple[str, ...] = ()
+    """Field mà `derive_fields` TÍNH RA - không cụm nào hỏi chúng, và đó là đúng thiết kế.
+
+    Phải khai TƯỜNG MINH vì nếu không thì không phân biệt được với một lỗi thật. `metrics
+    ._mandatory_unasked` đếm "field M0/M1 chưa có căn cứ mà chưa hề nằm trong schema câu hỏi nào" -
+    một field dẫn xuất luôn thoả điều kiện đó, nên nó bị báo là BỎ SÓT ở mọi phiên. Đo được ngày
+    2026-08-19: `complaint_duration_days` của generic bị đếm là bỏ sót dù `complaint_onset_at` (field
+    nguồn của nó) đã được hỏi đàng hoàng ở G1-01.
+
+    Đường thay thế - suy "field không thuộc cụm nào thì chắc là dẫn xuất" - KHÔNG dùng được: đó đúng
+    là dấu hiệu của lỗi thật (`diarrhea` của generic là tier M1 mà không cụm nào hỏi), và một quy tắc
+    suy đoán như vậy sẽ nuốt luôn cả lỗi lẫn thiết kế."""
+
     reason_code_labels: dict[str, str] = dataclass_field(default_factory=dict)
     """`RF-xx` -> nhãn tiếng Việt, CHỈ để hiển thị trên phiếu bàn giao. Rule engine chỉ trả về MÃ (mã
     là thứ ổn định để log/test), nhưng điều dưỡng đọc "RF-13" thì không có nghĩa gì. Bảng này KHÔNG
@@ -151,7 +177,52 @@ class SymptomProtocol:
     onset_field: str = ""
     severity_field: str = ""
 
+    emergency_scan_stage: str = ""
+    """Stage quét dấu hiệu đỏ tuyệt đối. Rỗng = rơi về `gate_stages[0]` (tương thích ngược).
+
+    Tồn tại vì "gate" và "quét cấp cứu" là HAI khái niệm mà trước đây trùng nhau do tình cờ về thứ
+    tự. `ranking.safety_field_keys` suy tập field an toàn từ stage này, `batching` lấy nó làm mốc
+    vùng được phép gộp, và hai protocol dựng `screening_groups` quanh nó - đọc nhầm stage ở bất kỳ
+    chỗ nào trong bốn chỗ đó đều làm mất trọng số an toàn hoặc tắt batching, mà không chỗ nào báo lỗi."""
+
+    early_visit_scan_stage: str = ""
+    """Stage quét dấu hiệu "cần khám sớm". Rỗng = rơi về `gate_stages[1]`."""
+
+    critical_scan_stage: str = ""
+    """Stage quét cấp cứu PHỔ QUÁT, hỏi trước cả nhân khẩu (stage `E`). Rỗng = protocol không có.
+
+    Tách khỏi `emergency_scan_stage` vì hai stage này khác nhau ở ĐIỀU KIỆN hỏi, không ở mức độ nguy
+    hiểm: `E` chỉ chứa dấu hiệu không phụ thuộc tuổi/giới nên hỏi được ngay lượt 1; `3A` chứa phần còn
+    lại, phải biết tuổi mới hỏi đúng. Cả hai đều là field an toàn với `ranking`."""
+
     default_credential: LLMCredential | None = None
+
+
+def emergency_scan_stage(protocol: SymptomProtocol) -> str:
+    """Stage quét dấu hiệu đỏ tuyệt đối của protocol này.
+
+    MỘT nguồn cho khái niệm đó, đúng như `stage_machine.is_filled` là một nguồn cho "đã điền". Trước
+    2026-08-22 khái niệm này được suy từ `gate_stages[0]` ở bốn chỗ độc lập, và cả bốn đều đọc sai
+    ngay khi có stage gate thứ ba - `ranking` mất tập field an toàn, `batching` mất vùng gộp, hai
+    protocol gắn `screening_groups` nhầm stage. Không chỗ nào trong bốn chỗ đó báo lỗi khi sai."""
+    return protocol.emergency_scan_stage or protocol.gate_stages[0]
+
+
+def emergency_scan_stages(protocol: SymptomProtocol) -> frozenset[str]:
+    """MọI stage mang dấu hiệu đỏ tuyệt đối - nguồn của `ranking.safety_field_keys`.
+
+    Khai TƯỜNG MINH thay vì suy "mọi gate trừ gate khám sớm": có protocol khai hai gate TRÙNG tên
+    (`gate_stages=("2","2")`), và phép trừ theo giá trị khi đó trả về tập RỖNG - tức là mất sạch trọng
+    số an toàn mà không báo lỗi."""
+    stages = {emergency_scan_stage(protocol)}
+    if protocol.critical_scan_stage:
+        stages.add(protocol.critical_scan_stage)
+    return frozenset(stages)
+
+
+def early_visit_scan_stage(protocol: SymptomProtocol) -> str:
+    """Stage quét dấu hiệu "cần khám sớm". Cùng lý do tồn tại với `emergency_scan_stage`."""
+    return protocol.early_visit_scan_stage or protocol.gate_stages[1]
 
 
 def clusters_for_stage(protocol: SymptomProtocol, stage: str) -> tuple[QuestionCluster, ...]:

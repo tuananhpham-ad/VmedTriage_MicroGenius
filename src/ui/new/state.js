@@ -6,6 +6,7 @@ export const state = {
   caseId: sessionStorage.getItem("vmed_active_case_id"),
   currentPatientCase: null,
   patientMessages: [],
+  viewingPatientHistory: false,
   patientBusy: false,
   // Bệnh nhân đã bấm xác nhận phiếu tóm tắt cuối phiên (Stage 6) chưa - chỉ để ẩn thẻ phiếu sau khi
   // bấm, trạng thái thật nằm ở phiên agent phía server.
@@ -13,8 +14,21 @@ export const state = {
   selectedNurseCase: null,
   queue: [],
   nurseBusy: false,
+  // W-07 trạng thái "lỗi lưu": header thay nút "Về hàng đợi" bằng chip khoá. Sống ở state chứ không
+  // ở DOM vì `renderNurseCase` vẽ lại toàn bộ màn hình sau mỗi lần thử lưu.
+  nurseSaveError: false,
   queueTimer: null,
   pendingVerificationEmail: "",
+  // W-04 là màn hình chặn một lần cho MỖI CA, không phải mỗi lượt chat: một ca red-flag còn nhiều
+  // lượt trao đổi phía sau, mà bắn lại màn cảnh báo sau mỗi lượt thì người bệnh học cách bấm qua nó
+  // mà không đọc - đúng thứ màn hình này tồn tại để chống lại.
+  redFlagShownCaseId: null,
+  // Người bệnh mở ca này TỪ màn "Kết quả của tôi" hay đang khai báo một ca mới. Quyết định nút quay
+  // lại của màn chi tiết ca trỏ về đâu - hai lối vào cùng một màn hình nên không suy ra được từ
+  // trạng thái ca.
+  patientFromCases: false,
+  // Danh sách ca cho màn "Kết quả của tôi". Giữ ở state để đổi bộ lọc không phải gọi lại API.
+  patientCases: [],
 };
 
 export const pendingStatuses = new Set([
@@ -24,7 +38,11 @@ export const pendingStatuses = new Set([
   "needs_more_info",
 ]);
 
-export const completedStatuses = new Set(["approved", "rejected", "escalated", "withdrawn"]);
+// "escalated" KHÔNG nằm ở đây: đó là trạng thái hệ thống tự gán ngay khi phát hiện red-flag (bệnh
+// nhân đã nhận thông điệp khẩn cấp), nhưng ca vẫn cần điều dưỡng xem lại và duyệt. Tập hợp này chia
+// đôi hai màn W-06: ca thuộc `completedStatuses` nằm ở "Ca đã duyệt", còn lại — kể cả "escalated" —
+// ở lại hàng đợi (xem `listScopes` trong nurse.js).
+export const completedStatuses = new Set(["approved", "rejected", "withdrawn"]);
 
 function readStoredUser() {
   try {
@@ -57,8 +75,10 @@ export function clearSession() {
   state.caseId = null;
   state.currentPatientCase = null;
   state.patientMessages = [];
+  state.viewingPatientHistory = false;
   state.summaryConfirmed = false;
   state.selectedNurseCase = null;
+  state.redFlagShownCaseId = null;
   sessionStorage.removeItem("vmed_access_token");
   sessionStorage.removeItem("vmed_user");
   sessionStorage.removeItem("vmed_active_case_id");

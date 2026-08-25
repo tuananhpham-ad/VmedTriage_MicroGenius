@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.graph_triage import service
-from src.models.schemas import HandoffSummary, SummaryField, TriageCase
+from src.models.schemas import HandoffSummary, SummaryField, TriageCase, TriagePriority, TriageProposal
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +24,25 @@ def _clean_agent_cache():
 @pytest.fixture
 def feature_on():
     settings = get_settings()
-    previous = settings.enable_graph_triage_agent
-    settings.enable_graph_triage_agent = True
+    previous = settings.graph_triage_mode
+    previous_source_support = settings.source_support_enabled
+    settings.graph_triage_mode = "ensemble"
+    settings.source_support_enabled = False
     yield settings
-    settings.enable_graph_triage_agent = previous
+    settings.graph_triage_mode = previous
+    settings.source_support_enabled = previous_source_support
+
+
+@pytest.fixture
+def safety_gate_on():
+    settings = get_settings()
+    previous = settings.graph_triage_mode
+    previous_source_support = settings.source_support_enabled
+    settings.graph_triage_mode = "c6"
+    settings.source_support_enabled = False
+    yield settings
+    settings.graph_triage_mode = previous
+    settings.source_support_enabled = previous_source_support
 
 
 def _ready_case() -> TriageCase:
@@ -38,8 +53,14 @@ def _ready_case() -> TriageCase:
     )
 
 
-def test_disabled_by_default():
-    assert get_settings().enable_graph_triage_agent is False
+def test_disabled_by_default(monkeypatch):
+    """Mặc định của MÃ NGUỒN phải là tắt.
+
+    Kiểm trên `Settings.model_fields` chứ không trên `get_settings()`: `get_settings()` đọc `.env`
+    của máy đang chạy, nên khi lập trình viên bật cờ để thử tay thì test sẽ đỏ oan.
+    """
+    assert Settings.model_fields["graph_triage_mode"].default == "off"
+    monkeypatch.setattr(get_settings(), "graph_triage_mode", "off")
     assert service.decide_for_case(_ready_case()) is None
 
 
@@ -120,3 +141,216 @@ def test_only_the_final_llm_conclusion_is_kept(feature_on, monkeypatch):
     assert result["model"] == "gpt-4o-mini"
     assert "probabilities" not in str(result)
     assert "source_span" not in str(result)
+
+
+def test_c6_gate_can_raise_to_emergency_but_never_lower(safety_gate_on, monkeypatch):
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 không được nạp ensemble"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("cap_cuu"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "kham_som")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {
+            "available": True,
+            "emergency": True,
+            "protocol": "general",
+            "triggered_rules": ["R-E-04"],
+            "reason_codes": ["RF-05"],
+        },
+    )
+
+    result = service.decide_for_case(_ready_case())
+
+    assert result["triage_label"] == "cap_cuu"
+    assert result["requires_human_review"] is True
+    assert result["escalated_by"] == ["direct", "documented_rule"]
+    assert result["safety_gate"]["documented_rule"]["triggered_rules"] == ["R-E-04"]
+
+
+def test_c6_mode_uses_direct_label_without_loading_the_ensemble(safety_gate_on, monkeypatch):
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 không được nạp ensemble"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("kham_som"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "theo_doi_tai_nha")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {"available": True, "emergency": False, "protocol": "general"},
+    )
+
+    result = service.decide_for_case(_ready_case())
+
+    assert result["triage_label"] == "kham_som"
+    assert "escalated_by" not in result
+
+
+def test_c6_fusion_emergency_promotes_without_loading_legacy_ensemble(safety_gate_on, monkeypatch):
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 must not load the legacy agent"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("kham_som"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "cap_cuu")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {"available": True, "emergency": False, "protocol": "general"},
+    )
+
+    result = service.decide_for_case(_ready_case())
+
+    assert result["triage_label"] == "cap_cuu"
+    assert result["escalated_by"] == ["fusion"]
+    assert result["safety_gate"]["fusion"] == {"available": True, "triage_label": "cap_cuu"}
+
+
+def test_c6_passes_its_grounded_decision_to_source_support(safety_gate_on, monkeypatch):
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import SourceSupport, SupportSummary
+
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 không được nạp ensemble"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("kham_som"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "kham_som")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {"available": True, "emergency": False, "protocol": "general"},
+    )
+    support = SourceSupport(summary=SupportSummary(requires_human_review=True))
+    captured = {}
+
+    def run(decision, *, triage_label):
+        captured["decision"] = decision
+        captured["triage_label"] = triage_label
+        return support
+
+    monkeypatch.setattr(source_support_pipeline, "run", run)
+
+    result = service.decide_for_case(_ready_case())
+
+    assert captured["triage_label"] == "kham_som"
+    assert captured["decision"]["evidence"][0]["source_span"] == "39.5"
+    assert result["source_support"]["method"]["can_change_label"] is False
+
+
+def test_c6_passes_the_effective_rule_or_c6_label_to_source_support(safety_gate_on, monkeypatch):
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import SourceSupport
+
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 không được nạp ensemble"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("theo_doi_tai_nha"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "theo_doi_tai_nha")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {"available": True, "emergency": False, "protocol": "general"},
+    )
+    captured = {}
+    monkeypatch.setattr(
+        source_support_pipeline,
+        "run",
+        lambda decision, *, triage_label: (captured.update({"triage_label": triage_label}) or SourceSupport()),
+    )
+    case = _ready_case()
+    case.triage_proposal = TriageProposal(priority=TriagePriority.URGENT, reason="rule baseline")
+
+    result = service.decide_for_case(case)
+
+    assert captured["triage_label"] == "kham_som"
+    assert result["triage_label"] == "kham_som"
+    assert result["safety_gate"]["direct"]["triage_label"] == "theo_doi_tai_nha"
+
+
+def test_source_support_adds_only_display_fields(feature_on, monkeypatch):
+    """Part 3 bật thì payload có thêm ĐÚNG phần hiển thị - không có `claims[]`, không có `cost`.
+
+    Cùng lý do mục A5 giữ evidence graph khỏi UI: `claims[]` mang `grounded_in` và toàn bộ đường truy
+    vết retrieval. Hữu ích để audit, và nó đã nằm trong log ở mức INFO - nhưng không phải thứ điều
+    dưỡng cần đọc trên màn hình."""
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import (
+        Citation,
+        Claim,
+        ClaimResult,
+        Retrieval,
+        SourceSupport,
+        SupportSummary,
+    )
+
+    support = SourceSupport(
+        explanation_vi="Tình trạng hiện tại của người bệnh: KHÁM SỚM",
+        explanation_citations=[Citation(marker="[1]", url="https://www.nhs.uk/conditions/fever-in-children/",
+                                        publisher="nhs.uk", title="Fever", quote="Trust your instincts.")],
+        claims=[ClaimResult(
+            claim=Claim(claim_en="x", claim_vi="x", claim_kind="red_flag",
+                        grounded_in="Sốt cao nhưng chưa có dấu hiệu nguy hiểm."),
+            verdict="supports",
+            retrieval=Retrieval(from_index=True, searched_web=False, best_score=0.6),
+        )],
+        summary=SupportSummary(claims_examined=1, claims_with_support=1, requires_human_review=False),
+    )
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(source_support_pipeline, "run", lambda *a, **k: support)
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent())
+
+    result = service.decide_for_case(_ready_case())
+
+    assert set(result) == {
+        "triage_label", "decision_summary", "requires_human_review", "disclaimer", "model", "source_support",
+    }
+    assert set(result["source_support"]) == {"explanation_vi", "explanation_citations", "summary", "method"}
+    assert "claims" not in result["source_support"]
+    assert "grounded_in" not in str(result)
+    assert result["source_support"]["method"]["can_change_label"] is False
+
+
+def test_source_support_can_only_raise_the_review_flag(feature_on, monkeypatch):
+    """Đường DUY NHẤT part 3 tác động tới ca. Đảo chiều phép OR ở chỗ nối là cách một ca cần người
+    xem lặng lẽ trôi qua - loại lỗi một dòng, không ai đọc ra, không bao giờ báo lỗi."""
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import SourceSupport, SupportSummary
+
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent(requires_human_review=False))
+    monkeypatch.setattr(
+        source_support_pipeline, "run",
+        lambda *a, **k: SourceSupport(summary=SupportSummary(requires_human_review=True)),
+    )
+    assert service.decide_for_case(_ready_case())["requires_human_review"] is True
+
+    # Và không bao giờ HẠ cờ mà part 2 đã dựng lên.
+    monkeypatch.setattr(service, "_get_agent", lambda: _decision_agent(requires_human_review=True))
+    monkeypatch.setattr(
+        source_support_pipeline, "run",
+        lambda *a, **k: SourceSupport(summary=SupportSummary(requires_human_review=False)),
+    )
+    assert service.decide_for_case(_ready_case())["requires_human_review"] is True
+
+
+def _decision_agent(*, requires_human_review: bool = True, label: str = "kham_som"):
+    class _Agent:
+        def decide(self, text: str):
+            return {
+                "model_analysis": {
+                    "models": {"logreg": {"predicted_label": "kham_som", "probabilities": {"cap_cuu": 0.91},
+                                          "run_metrics": {}}},
+                    "model_disagreement": False,
+                    "evidence_graph": {"evidence": [{"source_span": "sốt 39.5"}]},
+                },
+                "llm_decision": {
+                    "triage_label": label,
+                    "decision_summary": "Sốt cao nhưng chưa có dấu hiệu nguy hiểm.",
+                    "model_agreement_summary": "Hai model đồng thuận.",
+                    "uncertainty_summary": "Scope đánh giá khác nhau.",
+                    "requires_human_review": requires_human_review,
+                    "disclaimer": "Không thay thế đánh giá của nhân viên y tế.",
+                },
+                "tool_audit": {"model": "gpt-4o-mini", "called_tools": [], "required_tools": []},
+            }
+    return _Agent()
+
+
+def _direct_decision(label: str) -> dict:
+    return {
+        "triage_label": label,
+        "decision_summary": "Nhiệt độ 39.5 cần được nhân viên y tế đánh giá.",
+        "evidence": [{"concept": "sốt", "status": "present", "source_span": "39.5"}],
+    }

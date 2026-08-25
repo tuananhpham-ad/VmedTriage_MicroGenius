@@ -57,7 +57,7 @@ class _ScriptedProvider:
         self.known = known
         self.call_count = 0
 
-    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3):
+    def __call__(self, messages, *, credential=None, temperature=None, max_attempts=3, role=None):
         self.call_count += 1
         system = messages[0]["content"]
         field_keys = _FIELD_KEY_RE.findall(system)
@@ -245,16 +245,24 @@ async def test_benign_case_clears_the_early_visit_scan_in_two_turns(client):
 
 @pytest.mark.asyncio
 async def test_screening_shortens_the_benign_case_without_changing_its_conclusion(client):
-    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 20 lượt là mức đo được sau khi
+    """Rút ngắn mà đổi kết luận thì là hỏng, không phải tối ưu. Trần 21 lượt là mức đo được sau khi
     thêm nhóm sàng lọc cho Stage 4 và mở lại luật dừng sớm (30 lượt trước khi có sàng lọc, 24 sau
-    vòng sàng lọc đầu tiên) - nó ở đây để một thay đổi làm hội thoại dài trở lại bị bắt ngay, chứ
-    không phải để ghim một con số chính xác."""
+    vòng sàng lọc đầu tiên, 20 sau khi mở lại luật dừng sớm) - nó ở đây để một thay đổi làm hội
+    thoại dài trở lại bị bắt ngay, chứ không phải để ghim một con số chính xác.
+
+    20 -> 21 là ĐÚNG MỘT lượt thêm có chủ đích: bước quét sót trước khi chốt (§8.6 mục 4,
+    `session.CATCH_ALL_QUESTION`). Nó là câu duy nhất bắt được triệu chứng checklist không hỏi tới,
+    và cố ý không bị cắt khi hết ngân sách. Việc mở lại luật dừng theo độ phủ (§8.5 quy tắc 2) KHÔNG
+    tốn thêm lượt nào ở ca này - đã đo."""
     body = await _drive_conversation(client, "H1")
     assert body["triage_level"] == "SELF_CARE"
-    assert body["_turns"] <= 20, body["_turns"]
+    assert body["_turns"] <= 21, body["_turns"]
     probes = [q for q in body["_questions"] if screening.PROBE_INTRO in q]
-    # 2 vòng cho Stage 3A (5 nhóm, trần 3 nhóm/câu), 1 cho Stage 3B, 1 cho Stage 4.
-    assert len(probes) == 4
+    # Một probe là stage E bắt buộc ở lượt đầu; hai probe còn lại đến từ các nhóm 3A/3B/4 chưa
+    # được lời khai cơ hội ở các lượt trước đóng hết. Trước F01 chỉ có 2 probe vì lỗi ngưỡng tối
+    # thiểu đã bỏ qua chính group duy nhất của stage E.
+    assert len(probes) == 3
+    assert FEVER_PROTOCOL.screening_groups[0].probe_hint in probes[0]
 
 
 @pytest.mark.asyncio
@@ -262,23 +270,35 @@ async def test_screening_question_reads_out_every_signal_it_may_close(client):
     """Bất biến an toàn: một nhóm chỉ được đóng khi người bệnh ĐÃ nghe đọc danh sách dấu hiệu của nó.
     Kiểm trên câu hỏi THẬT mà API trả về, không phải trên hàm ghép chuỗi.
 
-    Gộp mọi câu sàng lọc của phiên lại rồi mới kiểm: từ khi có `MAX_GROUPS_PER_PROBE`, một stage có
-    thể trải trên nhiều vòng. Bất biến không đổi - mỗi dòng vẫn phải được đọc lên đúng một lần ở đâu
-    đó trước khi nhóm tương ứng được đóng - chỉ chỗ đọc là trải ra nhiều tin nhắn."""
+    2026-08-22 - vì sao KHÔNG còn đòi MỌI nhóm 3A phải xuất hiện: từ khi cửa sổ trích xuất bỏ trần,
+    field người bệnh tự khai được điền sớm và nhóm tương ứng hết việc, hoặc cụm được hỏi THẬNG.
+    Cả hai đều không phải "đóng bằng phủ định gộp" nên bất biến không áp. Thứ còn phải canh ở tầng
+    này là **danh sách đã đọc thì phải đọc ĐỦ** - một hint bị cắt bớt giữa chừng là đúng cái ca
+    "người bệnh phủ định thứ họ chưa nghe hết". Phần đóng cụm được canh ở `test_screening.py`.
+    """
     body = await _drive_conversation(client, "H1")
     probes = "\n".join(q for q in body["_questions"] if screening.PROBE_INTRO in q)
     stage_3a_groups = [g for g in FEVER_PROTOCOL.screening_groups if g.stage == "3A"]
+
+    read_out = 0
     for group in stage_3a_groups:
-        assert group.probe_hint in probes, group.id
+        # Mốc nhận diện: 5 từ đầu của hint. Xuất hiện mốc ⇒ toàn bộ hint phải có mặt nguyên văn.
+        head = " ".join(group.probe_hint.split()[:5])
+        if head not in probes:
+            continue
+        assert group.probe_hint in probes, f"{group.id}: danh sách bị cắt bớt"
+        read_out += 1
+    assert read_out, "không câu sàng lọc nào đọc lên nhóm 3A - test mất ý nghĩa"
 
 
 @pytest.mark.asyncio
 async def test_emergency_case_is_unaffected_by_screening(client):
-    """Ca chốt đỏ ngay lượt đầu không bao giờ tới Stage 3A nên không lượt sàng lọc nào phát ra - và
-    ngân sách 3-6 câu của §6.5 vẫn nguyên."""
+    """Ca chốt đỏ từ câu quét E dừng ngay, không hỏi tiếp hồ sơ/triệu chứng/rủi ro."""
     body = await _drive_conversation(client, "E2")
     assert body["triage_level"] == "EMERGENCY"
-    assert not [q for q in body["_questions"] if screening.PROBE_INTRO in q]
+    probes = [q for q in body["_questions"] if screening.PROBE_INTRO in q]
+    assert len(probes) == 1
+    assert FEVER_PROTOCOL.screening_groups[0].probe_hint in probes[0]
 
 
 # --- contract & log --------------------------------------------------------------------------

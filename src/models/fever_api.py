@@ -19,6 +19,9 @@ class FeverCredentialRequest(BaseModel):
 
 class FeverConfirmRequest(BaseModel):
     is_correct: bool
+    force: bool = False
+    """Bệnh nhân tự chốt "không còn gì để khai báo thêm" dù checklist chưa đủ (`AWAITING_CONFIRMATION`
+    chưa đạt). Không có tác dụng khi phiên đã ở nhánh cấp cứu — nhánh đó giữ nguyên xử trí escalate."""
 
 
 class FeverSessionResponse(BaseModel):

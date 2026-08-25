@@ -16,6 +16,20 @@ protocol của mình bằng `start_session(protocol_name=...)` - xem `fever_sess
 
 from __future__ import annotations
 
+from src.services.sessions import history_recall
+from src.services.stores.conversation_store import conversation_store
 from src.services.symptom_protocol.session import ProtocolSessionStore
 
-session_store = ProtocolSessionStore(default_protocol=None)
+session_store = ProtocolSessionStore(
+    default_protocol=None, persist=conversation_store, recall=history_recall.greeting_for_user,
+)
+"""`persist` bật Memory M1 (§4.9): phiên đang dở được ghi lại sau mỗi lượt và khôi phục được sau
+restart. Trước đây `session_store` mất sạch cùng tiến trình - `/chat` có sẵn nhánh "phiên đã mất thì
+mở phiên mới", nhưng với người bệnh thì đó là phải kể lại từ đầu.
+
+`recall` bật Memory M3 (§4.9): mở hội thoại mới thì agent hỏi thăm phiên trước. Bản thân hàm đó tự
+kiểm `Settings.long_memory_enabled` (mặc định TẮT cho tới khi PM trả lời consent/retention) và tự
+trả chuỗi rỗng cho phiên khách - store không biết gì về hai điều kiện ấy, đúng như nó không nên biết.
+
+Chỉ instance PRODUCTION được nối kho bền. Test dựng `ProtocolSessionStore` trực tiếp vẫn chạy thuần
+in-memory - đó là lý do `persist`/`recall` là tham số chứ không phải import cứng trong store."""

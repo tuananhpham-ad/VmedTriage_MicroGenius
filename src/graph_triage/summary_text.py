@@ -16,6 +16,24 @@ HAI ĐIỀU KHÔNG ĐƯỢC PHÁ:
    `patient_graph_v1` quy định UNKNOWN phải là BỎ node đi. Lọc ở đây, deterministic, trước khi có bất
    kỳ lời gọi LLM nào.
 
+3. CHỈ GỬI FIELD `true` (quyết định của chủ dự án, 2026-08-25). Field `false` bị bỏ; field `true`
+   render bằng RIÊNG NHÃN, không có đuôi `: true`.
+
+   Vì sao bỏ `: true`/`: false` chứ không dịch sang "có"/"không": chuỗi cũ là `- <nhãn>: false`, và
+   với LogReg (TF-IDF tiếng Việt) lẫn PhoBERT thì `false` là token vô nghĩa trong khi nhãn vẫn chứa
+   nguyên chữ "có sốt" - model đọc thành CÓ sốt, đúng ngược điều người bệnh nói. Chữ `true` còn rò
+   xa hơn: `source_explain` ngày 2026-08-24 sinh ra câu gửi người bệnh 'Người bệnh có biểu hiện
+   "true".'
+
+   CÁI MẤT, phải biết trước khi ai đó dựa vào chuỗi này: tầng C6 không còn phân biệt "đã hỏi, người
+   bệnh khẳng định KHÔNG có" với "chưa hỏi tới". Chấp nhận được vì hai lý do, cả hai đã kiểm:
+   - `build_summary_text` có ĐÚNG MỘT người gọi (`service.decide_for_case`) và rule engine KHÔNG
+     đọc nó - mức ưu tiên có hiệu lực vẫn do rule engine chấm trên snapshot đầy đủ;
+   - cả ba nhánh C6 chỉ bỏ phiếu THEO CHIỀU NÂNG. Bớt thông tin làm chúng thận trọng hơn, không làm
+     chúng bỏ sót cấp cứu.
+   Snapshot đầy đủ ba trạng thái vẫn còn nguyên ở `_symptom_field_values` (JSON cho model xác suất)
+   và ở `summary_render.field_summary()` (văn xuôi + guard chống bịa phủ định).
+
 Hàm này là hàm THUẦN: không gọi LLM, không đọc store, không đọc thời gian.
 
 ĐÃ ĐO - LỆCH PHÂN PHỐI SO VỚI LÚC TRAIN (2026-08-15, 200 ca từ golden.csv, seed 42):
@@ -43,10 +61,22 @@ from __future__ import annotations
 from src.models.schemas import TriageCase
 
 _HEADER = "Tóm tắt tình trạng bệnh"
+_TRUE, _FALSE = "true", "false"
 
 
 def _clean(value: object) -> str:
     return " ".join(str(value).split())
+
+
+def _tri_state(value: object) -> str | None:
+    """`"true"`/`"false"` nếu đây là field tri-state, `None` nếu là field số/enum/tự do.
+
+    Nhận dạng theo GIÁ TRỊ chứ không theo `FieldSpec.tri_state`, vì `TriageCase` không mang
+    `protocol` theo và không field enum nào của protocol có `true`/`false` trong `allowed_values`
+    (`fever_status` là objective/subjective/none, `temp_site` là axillary/oral/..., `temp_c` là số).
+    """
+    text = str(value).strip().lower()
+    return text if text in (_TRUE, _FALSE) else None
 
 
 def build_summary_text(triage_case: TriageCase) -> str:
@@ -60,7 +90,17 @@ def build_summary_text(triage_case: TriageCase) -> str:
     for row in triage_case.summary_fields:
         if row.is_missing or row.value in (None, ""):
             continue
-        lines.append(f"- {_clean(row.label)}: {_clean(row.value)}")
+        state = _tri_state(row.value)
+        if state == _FALSE:
+            continue
+        # Field tri-state `true` render bằng RIÊNG NHÃN. Trước đây là `- <nhãn>: true`, và chữ
+        # `true` đó không chỉ vô nghĩa với model tiếng Việt - nó còn rò tới tận người bệnh: bản
+        # `source_explain` ngày 2026-08-24 sinh ra câu 'Người bệnh có biểu hiện "true".'
+        lines.append(
+            f"- {_clean(row.label)}"
+            if state == _TRUE
+            else f"- {_clean(row.label)}: {_clean(row.value)}"
+        )
 
     if summary and summary.red_flags:
         for finding in summary.red_flags:

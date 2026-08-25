@@ -48,7 +48,9 @@ def _run_conversation(
     """
     revealed: dict[str, object] = {}
     asked_ids: list[str] = []
-    stage: fsm.Stage = "0"
+    # KHONG hardcode "0": tu 2026-08-22 stage dau tien la "E" (quet cap cuu pho quat).
+    # Hardcode o day thi mo phong bo qua han mot stage va moi so dem cum deu lech.
+    stage: fsm.Stage = fsm.STAGE_ORDER[0]
     stop_reason: str | None = None
     known_triage_level_at = known_triage_level_at or {}
     known_triage_level: str | None = None
@@ -236,7 +238,7 @@ def test_budget_table_matches_conversation_spec_6_5():
 def test_stage_order_is_monotonic_never_goes_backwards():
     order_index = {stage: i for i, stage in enumerate(fsm.STAGE_ORDER)}
     known = {"age_value": 10, "age_unit": "year", "sex": "male", "reporter_type": "self"}
-    stage: fsm.Stage = "0"
+    stage: fsm.Stage = fsm.STAGE_ORDER[0]
     revealed: dict[str, object] = {}
     seen_indices: list[int] = []
     for _ in range(80):
@@ -275,7 +277,9 @@ def test_should_stop_returns_red_flag_immediately_on_emergency_field():
     assert fsm.should_stop("3A", answers, asked_count=1) == "RED_FLAG"
 
 
-def test_should_stop_user_cannot_continue_overrides_everything():
+def test_should_stop_user_cannot_continue_beats_everything_except_a_red_flag():
+    """Tên cũ ghi "overrides everything" và đó chính là lỗi P0.6: ý định dừng của người bệnh KHÔNG
+    được thắng một tín hiệu đỏ. Thứ tự đầy đủ nằm ở `test_user_intent_and_stopping.py`."""
     answers: dict[str, object] = {}
     assert fsm.should_stop("1", answers, asked_count=1, user_can_continue=False) == "USER_CANNOT_CONTINUE"
 

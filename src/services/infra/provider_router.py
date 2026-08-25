@@ -39,9 +39,11 @@ fallback hai cấp thì "model nào vừa trả lời" không còn suy ra đư�
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
 from src.config import OPENROUTER_FREE_MODELS, get_settings
 from src.services.infra import console_log
@@ -162,6 +164,214 @@ class UnknownProviderError(ValueError):
     pass
 
 
+# --- Định tuyến theo VAI TRÒ (§7.3 của `_guidance/what_to_do_next.md`) ---------------------------
+
+ROLE_FACT_EXTRACTOR = "fact_extractor"
+"""Trích xuất field từ lời người bệnh. Chỗ khó nhất (phủ định tiếng Việt, đính chính, số đo) và là
+chỗ sai đắt nhất - sai ở đây là sai hồ sơ lâm sàng. Fallback: nhiều provider như hiện nay."""
+
+ROLE_SYNTHESIS = "synthesis"
+"""Diễn đạt lại câu hỏi mà rule engine ĐÃ chọn. Nhiệm vụ bị giới hạn bởi plan, nên đây là ứng viên
+tốt nhất để thử model rẻ hơn. Fallback: `script_hint` tất định (`_generate_question` đã làm)."""
+
+ROLE_SYMPTOM_GROUP_ROUTER = "symptom_group_router"
+"""Gợi ý nhóm triệu chứng khi luật chưa quyết được. Fallback: `registry.select_protocol` thuần rule.
+Chưa có caller - vai trò được khai trước để P2 không phải sửa lại hạ tầng định tuyến."""
+
+ROLE_CLAIM_SPLITTER = "claim_splitter"
+"""Tách lập luận của quyết định thành mệnh đề lâm sàng tổng quát (`source_support` bước 1). Sai ở đây
+KHÔNG bị lớp guard nào phía sau bắt được - mọi guard còn lại chỉ kiểm claim ↔ nguồn - nên nó được
+chặn bằng Guard 0a/0b bằng code trong `source_support/claims.py`. Fallback: bỏ hẳn phần trích nguồn
+của ca đó (`source_support` là best-effort, không nằm trên đường an toàn)."""
+
+ROLE_SOURCE_VERDICT = "source_verdict"
+"""Chấm một mệnh đề trên các đoạn trích, CHẠY BLIND (không biết có quyết định triage nào tồn tại).
+Đây là guard ngữ nghĩa DUY NHẤT của thiết kế post-hoc, nên là chỗ KHÔNG được hạ chất lượng để tiết
+kiệm: model yếu gặp đoạn cùng chủ đề là gật `supports`."""
+
+ROLE_SOURCE_EXPLAIN = "source_explain"
+"""Viết đoạn diễn giải tiếng Việt kèm marker trích dẫn (`source_support` bước 7). Mặt nguy hiểm nhất
+của cả tầng - văn xuôi trôi chảy kèm link NHS đọc rất có thẩm quyền kể cả khi nhãn sai - nhưng đầu ra
+của nó bị guard 5 kiểm bằng so chuỗi, không bằng prompt."""
+
+ROLE_CHITCHAT = "chitchat"
+"""Viết câu trả lời cho lượt PHI LÂM SÀNG (chào hỏi, hỏi về hệ thống, chuyện ngoài y tế).
+
+Nhiệm vụ hẹp nhất trong sáu vai trò và cũng rẻ nhất: không trích xuất field, không đọc snapshot,
+không đụng tới quyết định nào - nên đây là ứng viên số một để ghim một model rẻ qua
+`ROLE_ORDER_CHITCHAT`. Fallback: văn bản TĨNH của `non_clinical.reply_for`, tức là hành vi trước khi
+có vai trò này."""
+
+ROLE_CONTEXT_SUMMARY = "context_summary"
+"""Nén phần ĐẦU của hội thoại đang diễn ra thành vài câu - short memory M2 (`compaction.py`).
+
+Tách khỏi `ROLE_SYNTHESIS` (chỗ nó nằm nhờ trước đây) vì hai việc chỉ giống nhau ở chỗ "đều sinh văn
+bản": diễn đạt lại câu hỏi làm việc trên MỘT cụm rule engine vừa chọn, còn nén làm việc trên hàng
+chục lượt và sai ở đây thì mất nguyên phần đầu bối cảnh. Gộp một vai trò nghĩa là không bao giờ đọc
+được số liệu riêng của cái nào, và đổi model cho cái này là vô tình đổi cho cả cái kia.
+
+Fallback: bản tóm tắt TẤT ĐỊNH (ghép nguyên văn lời người bệnh) - kém súc tích nhưng không bịa được."""
+
+ROLE_FOLLOWUP_QUESTION = "followup_question"
+"""Viết câu hỏi thăm mở đầu hội thoại MỚI từ phiếu bàn giao của các phiên CŨ - long memory M3.
+
+Khác `ROLE_CONTEXT_SUMMARY` ở đúng thứ khiến nó nguy hiểm hơn: đầu vào là dữ liệu của những phiên đã
+đóng (PHI sống lâu hơn phiên sinh ra nó) và đầu ra ĐI THẲNG tới người bệnh mà không có lượt nào của
+điều dưỡng ở giữa. Vì thế đầu ra của nó bị `followup_writer._accept` kiểm bằng CODE (nhãn phải là
+nhãn đã chắt lọc, không chữ số, không mức ưu tiên, đúng một câu hỏi) chứ không bằng prompt.
+
+Fallback: câu TĨNH của `history_recall.greeting` - tức là hành vi trước khi có vai trò này."""
+
+ROLES: tuple[str, ...] = (
+    ROLE_FACT_EXTRACTOR,
+    ROLE_SYNTHESIS,
+    ROLE_SYMPTOM_GROUP_ROUTER,
+    ROLE_CLAIM_SPLITTER,
+    ROLE_SOURCE_VERDICT,
+    ROLE_SOURCE_EXPLAIN,
+    ROLE_CHITCHAT,
+    ROLE_CONTEXT_SUMMARY,
+    ROLE_FOLLOWUP_QUESTION,
+)
+
+_ROLE_ORDER_ATTRS: dict[str, str] = {
+    ROLE_FACT_EXTRACTOR: "role_order_fact_extractor",
+    ROLE_SYNTHESIS: "role_order_synthesis",
+    ROLE_SYMPTOM_GROUP_ROUTER: "role_order_symptom_group_router",
+    ROLE_CLAIM_SPLITTER: "role_order_claim_splitter",
+    ROLE_SOURCE_VERDICT: "role_order_source_verdict",
+    ROLE_SOURCE_EXPLAIN: "role_order_source_explain",
+    ROLE_CHITCHAT: "role_order_chitchat",
+    ROLE_CONTEXT_SUMMARY: "role_order_context_summary",
+    ROLE_FOLLOWUP_QUESTION: "role_order_followup_question",
+}
+
+_ROLE_TEMPERATURE_ATTRS: dict[str, str] = {
+    ROLE_FACT_EXTRACTOR: "role_temperature_fact_extractor",
+    ROLE_SYNTHESIS: "role_temperature_synthesis",
+    ROLE_SYMPTOM_GROUP_ROUTER: "role_temperature_symptom_group_router",
+    ROLE_CLAIM_SPLITTER: "role_temperature_claim_splitter",
+    ROLE_SOURCE_VERDICT: "role_temperature_source_verdict",
+    ROLE_SOURCE_EXPLAIN: "role_temperature_source_explain",
+    ROLE_CHITCHAT: "role_temperature_chitchat",
+    ROLE_CONTEXT_SUMMARY: "role_temperature_context_summary",
+    ROLE_FOLLOWUP_QUESTION: "role_temperature_followup_question",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RoleProfile:
+    """Danh sách provider RIÊNG cho một vai trò, thay vì dùng chung `llm_provider_order` toàn cục.
+
+    `provider_order` rỗng = kế thừa thứ tự toàn cục ⇒ mặc định KHÔNG đổi hành vi gì. Đó là chủ đích:
+    hạ tầng định tuyến theo vai trò phải cài được mà không kéo theo một thay đổi hành vi nào, để khi
+    số liệu latency/chi phí theo vai trò xuất hiện thì việc đổi thứ tự chỉ là sửa cấu hình.
+
+    **`LLMCredential` KHÔNG được tái dụng cho việc này.** Tham số đó mang key của NGƯỜI DÙNG và cố ý
+    TẮT fallback; dùng nó để ghim model theo vai trò sẽ vô tình làm mọi vai trò mất khả năng fallback.
+    Khi có `credential`, `role` bị bỏ qua hoàn toàn."""
+
+    role: str
+    provider_order: str = ""
+    temperature: float | None = None
+    """Nhiệt độ RIÊNG của vai trò. `None` = vai trò không khai báo ⇒ rơi về `llm_temperature`."""
+
+    @property
+    def inherits_global_order(self) -> bool:
+        return not self.provider_order.strip()
+
+
+def role_profile(role: str | None) -> RoleProfile | None:
+    """Profile của một vai trò, đọc từ `Settings`. `None` cho vai trò không khai báo/không có model."""
+    if role is None:
+        return None
+    attr = _ROLE_ORDER_ATTRS.get(role)
+    if attr is None:
+        raise UnknownProviderError(f"Vai trò không hợp lệ: {role!r}. Hợp lệ: {', '.join(ROLES)}")
+    settings = get_settings()
+    return RoleProfile(
+        role=role,
+        provider_order=getattr(settings, attr, "") or "",
+        temperature=getattr(settings, _ROLE_TEMPERATURE_ATTRS[role], None),
+    )
+
+
+def _resolve_temperature(temperature: float | None, role: str | None) -> float:
+    """Ba tầng, ưu tiên từ cụ thể tới chung: tham số tường minh > số của vai trò > toàn cục.
+
+    Tham số tường minh đứng đầu vì nó là lời gọi biết rõ nó đang làm gì (vd `direct_decision` ép 0).
+    `llm_temperature` toàn cục xuống hạng cuối: nó là MỘT số cho MỌI vai trò, nên dùng nó làm mặc
+    định cho một vai trò cụ thể chỉ đúng khi vai trò đó chưa ai nghĩ tới.
+    """
+    if temperature is not None:
+        return temperature
+    if role is not None:
+        attr = _ROLE_TEMPERATURE_ATTRS.get(role)
+        if attr is not None:
+            role_temperature = getattr(get_settings(), attr, None)
+            if role_temperature is not None:
+                return float(role_temperature)
+    return get_settings().llm_temperature
+
+
+@dataclass(slots=True)
+class RoleUsage:
+    """Số liệu THEO VAI TRÒ - đây chính là dữ liệu P1.4 cần, và cũng là thứ trả lời điều kiện §7.2
+    ("provider API đã đủ rẻ và đủ nhanh chưa"). Gộp một con số cho cả hệ thống thì không trả lời
+    được, vì trích xuất và diễn đạt có hình dạng chi phí khác hẳn nhau."""
+
+    calls: int = 0
+    failures: int = 0
+    latencies_ms: list[int] = dataclass_field(default_factory=list)
+    by_provider: dict[str, int] = dataclass_field(default_factory=dict)
+
+
+_ROLE_USAGE: dict[str, RoleUsage] = {}
+
+
+def _record_role_usage(role: str | None, provider: str, latency_ms: int | None, *, ok: bool) -> None:
+    if role is None:
+        return
+    usage = _ROLE_USAGE.setdefault(role, RoleUsage())
+    usage.calls += 1
+    if not ok:
+        usage.failures += 1
+        return
+    if latency_ms is not None:
+        usage.latencies_ms.append(latency_ms)
+    usage.by_provider[provider] = usage.by_provider.get(provider, 0) + 1
+
+
+def role_usage_snapshot() -> dict[str, dict[str, object]]:
+    """p50/p95 latency + số lời gọi theo vai trò, dạng đọc được cho eval/log.
+
+    In-memory và theo process - đủ cho một lần chạy eval, KHÔNG phải hệ đo lường lâu dài."""
+    snapshot: dict[str, dict[str, object]] = {}
+    for role, usage in sorted(_ROLE_USAGE.items()):
+        ordered = sorted(usage.latencies_ms)
+        snapshot[role] = {
+            "calls": usage.calls,
+            "failures": usage.failures,
+            "p50_ms": _percentile(ordered, 50),
+            "p95_ms": _percentile(ordered, 95),
+            "by_provider": dict(sorted(usage.by_provider.items())),
+        }
+    return snapshot
+
+
+def reset_role_usage() -> None:
+    _ROLE_USAGE.clear()
+
+
+def _percentile(ordered: list[int], percent: int) -> int | None:
+    """Phân vị kiểu "nearest-rank" - không nội suy. Với cỡ mẫu nhỏ của một lần chạy eval, nội suy
+    tạo cảm giác chính xác hơn thực tế."""
+    if not ordered:
+        return None
+    rank = max(1, math.ceil(percent / 100 * len(ordered)))
+    return ordered[rank - 1]
+
+
 def has_usable_key(value: str) -> bool:
     normalized = (value or "").strip().strip('"').strip("'")
     return bool(normalized) and normalized not in PLACEHOLDER_KEYS
@@ -196,6 +406,14 @@ def describe_selection(credential: LLMCredential | None = None) -> str:
     backup = f" (+{len(models) - 1} model dự phòng)" if len(models) > 1 else ""
     rest = f", sau đó: {', '.join(providers[1:])}" if len(providers) > 1 else ""
     return f"{spec.name} · {head}{backup}{rest}"
+
+
+def _provider_order_for(settings, role: str | None) -> str:
+    """Thứ tự provider áp dụng cho lượt gọi này: của vai trò nếu có khai, không thì của toàn hệ thống."""
+    profile = role_profile(role)
+    if profile is None or profile.inherits_global_order:
+        return settings.llm_provider_order
+    return profile.provider_order
 
 
 def _ordered_specs(configured_provider: str, configured_order: str) -> list[ProviderSpec]:
@@ -328,8 +546,13 @@ def complete(
     temperature: float | None = None,
     max_attempts: int = 3,
     credential: LLMCredential | None = None,
+    role: str | None = None,
 ) -> CompletionResult:
     """Gọi LLM qua provider đầu tiên khả dụng, tự chuyển model rồi chuyển provider nếu lỗi.
+
+    `role` != None: dùng thứ tự provider RIÊNG của vai trò đó nếu có cấu hình (`RoleProfile`), và
+    ghi số liệu latency theo vai trò (`role_usage_snapshot`). Vai trò chưa cấu hình gì thì kế thừa
+    thứ tự toàn cục - truyền `role` không bao giờ tự nó đổi provider nào được chọn.
 
     Với OpenRouter, mỗi provider còn có vòng trong xoay qua các model free (xem docstring module).
 
@@ -344,16 +567,18 @@ def complete(
     khi hết ngân sách - người gọi tự quyết định fallback (intake_agent dùng nhánh deterministic).
     """
     settings = get_settings()
-    resolved_temperature = settings.llm_temperature if temperature is None else temperature
+    resolved_temperature = _resolve_temperature(temperature, role)
 
     budget = _AttemptBudget.from_settings(settings)
 
     if credential is not None:
+        # Key của người dùng: KHÔNG fallback, và `role` bị bỏ qua hoàn toàn (§7.3) - trộn hai cơ chế
+        # này là cách làm mọi vai trò mất khả năng fallback mà không ai nhận ra.
         return _complete_with_credential(credential, messages, resolved_temperature, budget)
 
     specs = [
         spec
-        for spec in _ordered_specs(settings.llm_provider, settings.llm_provider_order)
+        for spec in _ordered_specs(settings.llm_provider, _provider_order_for(settings, role))
         if has_usable_key(getattr(settings, spec.api_key_attr, ""))
     ]
     if not specs:
@@ -384,7 +609,8 @@ def complete(
                 described = describe_provider_error(spec.name, exc, model=model)
                 errors.append(described)
                 logger.warning("provider.failed %s", described)
-                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note=described)
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, role=role, note=described)
+                _record_role_usage(role, spec.name, None, ok=False)
                 if _status_code_of(exc) in _KEY_LEVEL_STATUSES:
                     break  # lỗi của key, không phải của model -> sang provider khác luôn
                 continue
@@ -394,13 +620,18 @@ def complete(
             if not text:
                 errors.append(f"{spec.name}/{label}: trả về nội dung rỗng")
                 logger.warning("provider.empty_response name=%s model=%s", spec.name, label)
-                console_log.llm_attempt(provider=spec.name, model=label, ok=False, note="nội dung rỗng")
+                console_log.llm_attempt(provider=spec.name, model=label, ok=False, role=role, note="nội dung rỗng")
+                _record_role_usage(role, spec.name, None, ok=False)
                 continue
 
+            _record_role_usage(role, spec.name, latency_ms, ok=True)
             logger.info(
-                "provider.selected provider=%s model=%s latency_ms=%d", spec.name, label, latency_ms
+                "provider.selected provider=%s model=%s role=%s latency_ms=%d",
+                spec.name, label, role or "-", latency_ms,
             )
-            console_log.llm_attempt(provider=spec.name, model=label, ok=True, latency_ms=latency_ms)
+            console_log.llm_attempt(
+                provider=spec.name, model=label, ok=True, latency_ms=latency_ms, role=role, output=text,
+            )
             return CompletionResult(text=text, provider=spec.name, model=label)
 
         if out_of_budget:
@@ -420,6 +651,7 @@ def complete_stream(
     temperature: float | None = None,
     max_attempts: int = 3,
     credential: LLMCredential | None = None,
+    role: str | None = None,
 ) -> Iterator[str]:
     """Như `complete()` nhưng trả text theo từng mẩu. Dùng cho văn bản HIỂN THỊ cho người bệnh.
 
@@ -435,7 +667,7 @@ def complete_stream(
     phát trọn văn bản trong đúng một mẩu, nên phía gọi không cần biết provider nào đang chạy.
     """
     settings = get_settings()
-    resolved_temperature = settings.llm_temperature if temperature is None else temperature
+    resolved_temperature = _resolve_temperature(temperature, role)
     budget = _AttemptBudget.from_settings(settings)
 
     if credential is not None:
@@ -447,7 +679,7 @@ def complete_stream(
 
     specs = [
         spec
-        for spec in _ordered_specs(settings.llm_provider, settings.llm_provider_order)
+        for spec in _ordered_specs(settings.llm_provider, _provider_order_for(settings, role))
         if has_usable_key(getattr(settings, spec.api_key_attr, ""))
     ]
     if not specs:
@@ -510,6 +742,7 @@ def _stream_one(
     started = time.monotonic()
     stream = getattr(provider, "complete_stream", None)
     emitted = False
+    chunks: list[str] = []
     try:
         if stream is None:
             # Không hỗ trợ streaming -> vẫn giữ đúng hợp đồng iterator, chỉ là đúng một mẩu.
@@ -518,11 +751,13 @@ def _stream_one(
             if not text:
                 raise RuntimeError("trả về nội dung rỗng")
             emitted = True
+            chunks.append(text)
             yield text
         else:
             for piece in stream(messages, model=model, temperature=temperature):
                 if piece:
                     emitted = True
+                    chunks.append(piece)
                     yield piece
             if not emitted:
                 raise RuntimeError("trả về nội dung rỗng")
@@ -537,7 +772,9 @@ def _stream_one(
         "provider.selected provider=%s model=%s latency_ms=%d mode=stream",
         provider_name, label, latency_ms,
     )
-    console_log.llm_attempt(provider=provider_name, model=label, ok=True, latency_ms=latency_ms)
+    console_log.llm_attempt(
+        provider=provider_name, model=label, ok=True, latency_ms=latency_ms, output="".join(chunks),
+    )
 
 
 def _complete_with_credential(
@@ -603,7 +840,9 @@ def _complete_with_credential(
             "provider.selected provider=%s model=%s latency_ms=%d source=user_credential",
             credential.provider, label, latency_ms,
         )
-        console_log.llm_attempt(provider=credential.provider, model=label, ok=True, latency_ms=latency_ms)
+        console_log.llm_attempt(
+            provider=credential.provider, model=label, ok=True, latency_ms=latency_ms, output=text,
+        )
         return CompletionResult(text=text, provider=credential.provider, model=label)
 
     if out_of_budget:

@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<script src="./image-slot.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #EDF1F5; font-family: "IBM Plex Sans", system-ui, sans-serif; color: #16202B; -webkit-font-smoothing: antialiased; }
+  input, textarea, button { font-family: inherit; font-size: inherit; color: inherit; }
+  a { color: #1A5EA8; text-decoration: none; }
+  a:hover { color: #144C8A; text-decoration: underline; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid #1A5EA8; outline-offset: 2px; }
+  ::placeholder { color: #93A1B0; }
+  @keyframes vmt-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes vmt-spin { to { transform: rotate(360deg); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;flex-direction:column">
+
+<div style="position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:12px 22px;background:#fff;border-bottom:1px solid #E3E8EF">
+  <div style="display:flex;align-items:center;gap:9px">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <span style="margin-left:4px;padding:3px 8px;background:#F1F4F8;border-radius:6px;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#5B6B7C">Web</span>
+  </div>
+  <div style="display:flex;gap:5px;flex-wrap:wrap">
+    <sc-for list="{{ screens }}" as="s" hint-placeholder-count="8">
+      <button onClick="{{ s.go }}" style="padding:7px 11px;border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer;background: {{ s.bg }};color: {{ s.fg }};border:1px solid {{ s.bd }}">{{ s.label }}</button>
+    </sc-for>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+    <span style="font-size:11.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07em;color:#8494A4">Trạng thái</span>
+    <div style="display:flex;gap:5px;flex-wrap:wrap">
+      <sc-for list="{{ variants }}" as="v" hint-placeholder-count="3">
+        <button onClick="{{ v.go }}" style="padding:7px 11px;border-radius:999px;font-size:12.5px;font-weight:500;cursor:pointer;background: {{ v.bg }};color: {{ v.fg }};border:1px solid {{ v.bd }}">{{ v.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:14px;padding:32px 24px 90px">
+
+<div style="display:flex;flex-direction:column;gap:3px;align-items:center;text-align:center">
+  <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#1A5EA8">{{ screenCode }}</div>
+  <div style="font-size:19px;font-weight:600;letter-spacing:-0.01em">{{ screenTitle }}</div>
+  <div style="font-size:13.5px;color:#5B6B7C;max-width:660px;text-wrap:pretty">{{ screenNote }}</div>
+</div>
+
+<!-- ══════════════ W-00P TRANG GIỚI THIỆU (CÔNG KHAI) ══════════════ -->
+<sc-if value="{{ isLanding }}" hint-placeholder-val="{{ true }}">
+<div style="width:100%;max-width:1320px;background:#fff;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+
+  <div style="display:flex;align-items:center;gap:12px;padding:20px 40px;background:transparent">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="display:flex;align-items:center;gap:22px;margin-left:44px">
+      <span style="font-size:14.5px;color:#5B6B7C">Cách hoạt động</span>
+      <span style="font-size:14.5px;color:#5B6B7C">Về chúng tôi</span>
+    </div>
+    <button onClick="{{ goW1 }}" style="margin-left:auto;height:42px;padding:0 20px;background:#fff;border:1px solid #1A5EA8;border-radius:9px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#EAF2FB">Đăng nhập</button>
+  </div>
+
+  <div style="position:relative;overflow:hidden;background:linear-gradient(180deg,#F6FAFE 0%,#EEF4FA 100%)">
+    <svg width="620" height="620" viewBox="0 0 620 620" style="position:absolute;top:-180px;right:-160px;opacity:.55"><circle cx="310" cy="310" r="300" fill="none" stroke="#CFE0F3" stroke-width="1"></circle><circle cx="310" cy="310" r="230" fill="none" stroke="#CFE0F3" stroke-width="1"></circle><circle cx="310" cy="310" r="160" fill="none" stroke="#CFE0F3" stroke-width="1"></circle></svg>
+    <div style="position:relative;display:grid;grid-template-columns:1.05fr 0.95fr;gap:40px;align-items:center;padding:56px 40px 68px">
+      <div style="display:flex;flex-direction:column;gap:22px">
+        <div style="display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:7px 14px;background:#fff;border:1px solid #CFE0F3;border-radius:999px">
+          <div style="width:6px;height:6px;background:#1A5EA8;border-radius:50%;animation:vmt-pulse 1.8s ease-in-out infinite"></div>
+          <span style="font-size:12.5px;font-weight:600;color:#154E8C">Có nhân viên y tế xác nhận mọi ca</span>
+        </div>
+        <div style="font-size: 48px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; color: #16202B; text-wrap: pretty; width: 577px; height: 133px">Phân loại mức độ khẩn cấp, an toàn, nhanh chóng</div>
+        <div style="font-size:17px;line-height:1.65;color:#5B6B7C;max-width:480px;text-wrap:pretty">Mô tả triệu chứng bằng lời của bạn. Trợ lý AI thu thập thông tin theo checklist y tế và đề xuất mức độ ưu tiên — nhân viên y tế luôn xem xét và xác nhận trước khi bạn nhận được hướng dẫn xử trí.</div>
+        <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
+          <button onClick="{{ goW1 }}" style="display:flex;align-items:center;gap:9px;height:52px;padding:0 24px;border:0;background:#1A5EA8;border-radius:10px;font-size:16px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">
+            <span>Bắt đầu khai báo triệu chứng</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+          <button style="height:52px;padding:0 20px;background:transparent;border:1px solid #CFD8E3;border-radius:10px;font-size:16px;font-weight:600;color:#3D4C5B;cursor:pointer" style-hover="background:#F7F9FB">Tìm hiểu cách hoạt động</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex:none"><path d="M7.2 3.6h3l1.6 4-2 1.4a10.6 10.6 0 0 0 5.2 5.2l1.4-2 4 1.6v3a1.8 1.8 0 0 1-2 1.8A16.4 16.4 0 0 1 5.4 5.6a1.8 1.8 0 0 1 1.8-2Z" stroke="#8494A4" stroke-width="1.5" stroke-linejoin="round"></path></svg>
+          <span style="font-size:13.5px;color:#8494A4">Trường hợp khẩn cấp, gọi ngay <span style="font-weight:600;color:#5B6B7C">115</span></span>
+        </div>
+      </div>
+
+      <div style="position:relative;display:flex;align-items:center;justify-content:center;min-height:420px">
+        
+        
+        
+      <image-slot id="landing-hero" shape="rect" mask="polygon(12% 0%, 88% 4%, 100% 30%, 96% 78%, 78% 100%, 18% 96%, 0% 68%, 4% 22%)" style="width:380px;height:380px" placeholder="Ảnh: bệnh nhân trò chuyện với trợ lý / nhân viên y tế xem hồ sơ"></image-slot></div>
+    <svg width="120" height="46" viewBox="0 0 120 46" style="position: absolute; top: 89px; left: 612px; opacity: .7"><path d="M0 23h20l7-16 10 32 8-22 6 12h69" fill="none" stroke="#1A5EA8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+  </div>
+
+  <div style="padding:64px 40px">
+    <div style="text-align:center;max-width:560px;margin:0 auto 40px">
+      <div style="font-size:12.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#1A5EA8;margin-bottom:10px">Cách hoạt động</div>
+      <div style="font-size:30px;font-weight:600;letter-spacing:-0.01em;line-height:1.3;text-wrap:pretty">Ba bước, nhanh chóng, an toàn</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">
+      <div style="display:flex;flex-direction:column;gap:14px;padding:26px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:16px">
+        <div style="font-size:13px;font-weight:600;color:#9AA7B4;font-variant-numeric:tabular-nums">01</div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;background:#EAF2FB;border-radius:12px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5h11v17l-5.5-3-5.5 3v-17Z" stroke="#1A5EA8" stroke-width="1.6" stroke-linejoin="round"></path></svg></div>
+        <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">Khai báo triệu chứng</div>
+        <div style="font-size:14.5px;line-height:1.6;color:#5B6B7C;text-wrap:pretty">Bạn mô tả bằng lời của mình. Trợ lý AI hỏi thêm theo checklist y tế để hiểu rõ tình trạng.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px;padding:26px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:16px">
+        <div style="font-size:13px;font-weight:600;color:#9AA7B4;font-variant-numeric:tabular-nums">02</div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;background:#EAF2FB;border-radius:12px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#1A5EA8" stroke-width="1.6"></circle><path d="M8.5 12.5h2.2l1.1-2.4 1.6 4.6 1.3-3.1 0.9 0.9h2.4" stroke="#1A5EA8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+        <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">AI đề xuất mức ưu tiên</div>
+        <div style="font-size:14.5px;line-height:1.6;color:#5B6B7C;text-wrap:pretty">Hệ thống chỉ đề xuất mức độ khẩn cấp và hiển thị rõ độ tin cậy — không tự chẩn đoán bệnh.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px;padding:26px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:16px">
+        <div style="font-size:13px;font-weight:600;color:#9AA7B4;font-variant-numeric:tabular-nums">03</div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;background:#EAF2FB;border-radius:12px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8.4" r="3.4" stroke="#1A5EA8" stroke-width="1.6"></circle><path d="M5.6 19.4a6.4 6.4 0 0 1 12.8 0" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round"></path></svg></div>
+        <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">Nhân viên y tế xác nhận</div>
+        <div style="font-size:14.5px;line-height:1.6;color:#5B6B7C;text-wrap:pretty">Mọi hướng dẫn xử trí chỉ được gửi tới bạn sau khi một nhân viên y tế thật đã xem và duyệt.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;background:#F1F4F8">
+    <div style="min-height:380px">
+      <image-slot id="landing-team" shape="rect" style="width:100%;height:100%" placeholder="Ảnh: nhân viên y tế đang duyệt ca trên hệ thống"></image-slot>
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;padding:56px 48px">
+      <div style="font-size:12.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#1A5EA8">Con người luôn quyết định</div>
+      <div style="font-size:28px;font-weight:600;line-height:1.32;letter-spacing:-0.01em;text-wrap:pretty">Công nghệ tiên tiến với các chuyên gia đầu ngành</div>
+      <div style="font-size:15.5px;line-height:1.65;color:#5B6B7C;text-wrap:pretty"><strong><span>Bạn luôn có một nhân viên y tế đồng hành.</span></strong><span> Mỗi ca đều được xem xét và có thể được điều chỉnh hoặc trao đổi thêm để đảm bảo bạn nhận được sự hỗ trợ phù hợp.</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+        <div style="display:flex;gap:10px;align-items:flex-start"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><span style="font-size:14.5px;color:#3D4C5B">Đối chiếu hướng dẫn Bộ Y tế Việt Nam và WHO</span></div>
+        <div style="display:flex;gap:10px;align-items:flex-start"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><span style="font-size:14.5px;color:#3D4C5B">Ghi log đầy đủ mọi quyết định để truy vết</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:56px 40px;text-align:center">
+    <div>
+      <div style="font-size:36px;font-weight:600;letter-spacing:-0.02em;color:#1A5EA8;font-variant-numeric:tabular-nums">100%</div>
+      <div style="font-size:14px;color:#5B6B7C;margin-top:6px">Ca được nhân viên y tế xác nhận trước khi gửi</div>
+    </div>
+    <div>
+      <div style="font-size:36px;font-weight:600;letter-spacing:-0.02em;color:#1A5EA8;font-variant-numeric:tabular-nums">&lt;5 phút</div>
+      <div style="font-size:14px;color:#5B6B7C;margin-top:6px">Thời gian trung bình để có hướng dẫn ban đầu</div>
+    </div>
+    <div>
+      <div style="font-size:36px;font-weight:600;letter-spacing:-0.02em;color:#1A5EA8;font-variant-numeric:tabular-nums">24/7</div>
+      <div style="font-size:14px;color:#5B6B7C;margin-top:6px">Trực tiếp nhận và phân loại ca</div>
+    </div>
+  </div>
+
+  <div style="margin:0 40px 56px;padding:36px 40px;background:linear-gradient(135deg,#1A5EA8 0%,#154E8C 100%);border-radius:18px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+    <div>
+      <div style="font-size:22px;font-weight:600;letter-spacing:-0.01em;color:#fff;margin-bottom:6px">Sẵn sàng khai báo triệu chứng?</div>
+      <div style="font-size:14.5px;color:#CFE0F3">Chỉ mất vài phút, có nhân viên y tế xem xét mọi ca.</div>
+    </div>
+    <button onClick="{{ goW1 }}" style="height:50px;padding:0 24px;border:0;background:#fff;border-radius:10px;font-size:15.5px;font-weight:600;color:#154E8C;cursor:pointer" style-hover="background:#EAF2FB">Đăng nhập / Đăng ký</button>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 40px;border-top:1px solid #E3E8EF">
+    <span style="font-size:13px;color:#8494A4">© 2026 VMedTriage</span>
+    <span style="font-size:12.5px;color:#9AA7B4">Không phải dịch vụ cấp cứu. Trường hợp khẩn cấp, gọi 115.</span>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-00 TRANG CHỦ ══════════════ -->
+<sc-if value="{{ isW0 }}" hint-placeholder-val="{{ true }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:14px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="width:1px;height:22px;background:#E3E8EF;margin:0 6px"></div>
+    <div style="display:flex;gap:4px">
+      <div style="padding:8px 13px;background:#EAF2FB;border-radius:8px;font-size:14px;font-weight:600;color:#1A5EA8">Trang chủ</div>
+      <div style="padding:8px 13px;font-size:14px;color:#5B6B7C">Khai báo triệu chứng</div>
+      <div style="padding:8px 13px;font-size:14px;color:#5B6B7C">Kết quả của tôi</div>
+      <div style="padding:8px 13px;font-size:14px;color:#5B6B7C">Hồ sơ</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;margin-left:auto">
+      <div style="position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #E3E8EF;border-radius:9px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6.5 10a5.5 5.5 0 0 1 11 0c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5Z" stroke="#5B6B7C" stroke-width="1.6" stroke-linejoin="round"></path><path d="M10.2 18.4a2 2 0 0 0 3.6 0" stroke="#5B6B7C" stroke-width="1.6" stroke-linecap="round"></path></svg>
+        <div style="position:absolute;top:6px;right:7px;width:7px;height:7px;background:#C62828;border:1.5px solid #fff;border-radius:50%"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px">
+        <div style="text-align:right">
+          <div style="font-size:13.5px;font-weight:500">Nguyễn Văn A</div>
+          <div style="font-size:12px;color:#8494A4">Bệnh nhân · ID 20481</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;background:#EAF2FB;border-radius:50%;font-size:13px;font-weight:600;color:#1A5EA8">NA</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:20px;padding:26px">
+    <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:20px;align-items:stretch">
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;padding:30px 30px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div>
+          <div style="font-size:13.5px;font-weight:500;color:#5B6B7C;margin-bottom:6px">Chào anh Nguyễn Văn A</div>
+          <div style="font-size:30px;font-weight:600;line-height:1.2;letter-spacing:-0.02em;text-wrap:pretty">Bạn đang gặp vấn đề gì hôm nay?</div>
+        </div>
+        <div style="font-size:15.5px;line-height:1.6;color:#5B6B7C;max-width:520px;text-wrap:pretty">Mô tả triệu chứng bằng lời của bạn. Trợ lý sẽ hỏi thêm theo checklist y tế, sau đó nhân viên y tế xác nhận mức ưu tiên và gửi hướng dẫn xử trí cho bạn.</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button onClick="{{ goW2 }}" style="display:flex;align-items:center;gap:9px;height:50px;padding:0 22px;border:0;background:#1A5EA8;border-radius:10px;font-size:15.5px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20.5 12c0 4.1-3.8 7.4-8.5 7.4-1 0-2-.15-2.9-.43L4 20.8l1.7-3.7A7 7 0 0 1 3.5 12C3.5 7.9 7.3 4.6 12 4.6s8.5 3.3 8.5 7.4Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"></path></svg>
+            <span>Bắt đầu khai báo triệu chứng</span>
+          </button>
+          <button style="display:flex;align-items:center;gap:8px;height:50px;padding:0 20px;background:#fff;border:1px solid #1A5EA8;border-radius:10px;font-size:15.5px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#EAF2FB">Xem hướng dẫn sử dụng</button>
+        </div>
+        <div style="font-size:12.5px;color:#8494A4">Thời gian trung bình để có hướng dẫn ban đầu: dưới 3 phút.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div style="padding:20px;background:#fff;border:1px solid #F0B9B9;border-left:4px solid #C62828;border-radius:14px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M7.2 3.6h3l1.6 4-2 1.4a10.6 10.6 0 0 0 5.2 5.2l1.4-2 4 1.6v3a1.8 1.8 0 0 1-2 1.8A16.4 16.4 0 0 1 5.4 5.6a1.8 1.8 0 0 1 1.8-2Z" stroke="#C62828" stroke-width="1.6" stroke-linejoin="round"></path></svg>
+            <div style="font-size:16px;font-weight:600;color:#8E1F1F">Trường hợp khẩn cấp</div>
+          </div>
+          <div style="font-size:14.5px;line-height:1.55;color:#3D4C5B;text-wrap:pretty">Đau ngực dữ dội, khó thở nặng, co giật, chảy máu không cầm — gọi <span style="font-weight:600;font-variant-numeric:tabular-nums">115</span> ngay, không chờ trong ứng dụng.</div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:12px;padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4">Ca đang mở</div>
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#FFF6E5;border:1px solid #F0DCAE;border-radius:999px;font-size:12.5px;font-weight:600;color:#7A5200">Chờ duyệt</span>
+          </div>
+          <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em;font-variant-numeric:tabular-nums">BN-2481 · Đau ngực</div>
+          <div style="font-size:13.5px;line-height:1.55;color:#5B6B7C">Gửi lúc 14:28 · Ước tính còn ~5-10 phút</div>
+          <button onClick="{{ goW5 }}" style="margin-top:auto;display:flex;align-items:center;justify-content:center;gap:8px;height:44px;background:#fff;border:1px solid #CFD8E3;border-radius:9px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#F7F9FB">Xem trạng thái ca</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="display:flex;align-items:center;justify-content:center;width:42px;height:42px;background:#EAF2FB;border-radius:11px">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5h11v17l-5.5-3-5.5 3v-17Z" stroke="#1A5EA8" stroke-width="1.6" stroke-linejoin="round"></path><path d="M9.4 8.4h5.2M12 6v4.8" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round"></path></svg>
+        </div>
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.01em">Khai báo triệu chứng</div>
+        <div style="font-size:13.5px;line-height:1.55;color:#5B6B7C;text-wrap:pretty">5 nhóm triệu chứng: Sốt, Đau bụng, Đau ngực, Khó thở, Đau đầu / Chấn thương đầu nhẹ.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="display:flex;align-items:center;justify-content:center;width:42px;height:42px;background:#E9F7F0;border-radius:11px">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none"><rect x="4.5" y="3.5" width="15" height="17" rx="2.6" stroke="#1E7A4D" stroke-width="1.6"></rect><path d="m8.6 12.4 2.2 2.2 4.6-4.6" stroke="#1E7A4D" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </div>
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.01em">Kết quả đã duyệt</div>
+        <div style="font-size:13.5px;line-height:1.55;color:#5B6B7C;text-wrap:pretty">Hướng dẫn xử trí chỉ hiển thị sau khi nhân viên y tế xác nhận.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="display:flex;align-items:center;justify-content:center;width:42px;height:42px;background:#F1F4F8;border-radius:11px">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8.2" r="3.6" stroke="#5B6B7C" stroke-width="1.6"></circle><path d="M5.2 19.6a6.8 6.8 0 0 1 13.6 0" stroke="#5B6B7C" stroke-width="1.6" stroke-linecap="round"></path></svg>
+        </div>
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.01em">Hồ sơ sức khoẻ</div>
+        <div style="font-size:13.5px;line-height:1.55;color:#5B6B7C;text-wrap:pretty">Tiền sử bệnh, thuốc đang dùng và dị ứng — giúp phân loại chính xác hơn.</div>
+      </div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #E3E8EF;border-radius:14px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #E3E8EF">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.01em">Lịch sử phiên khai báo</div>
+        <span style="font-size:13.5px;font-weight:600;color:#1A5EA8">Xem tất cả</span>
+      </div>
+      <div style="padding:4px 20px 16px">
+        <div style="display:grid;grid-template-columns:150px 1fr 150px 150px;gap:14px;padding:12px 0;border-bottom:1px solid #EEF1F5">
+          <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Ngày</div>
+          <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Nhóm triệu chứng</div>
+          <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Mức ưu tiên</div>
+          <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Trạng thái</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr 150px 150px;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid #EEF1F5">
+          <div style="font-size:14px;color:#3D4C5B;font-variant-numeric:tabular-nums">11/08/2026</div>
+          <div style="font-size:14.5px">Đau ngực</div>
+          <div><span style="display:inline-block;padding:4px 10px;background:#FDECEC;border:1px solid #F0B9B9;border-radius:999px;font-size:12.5px;font-weight:600;color:#8E1F1F">Cấp cứu</span></div>
+          <div style="font-size:14px;color:#7A5200;font-weight:500">Chờ duyệt</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr 150px 150px;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid #EEF1F5">
+          <div style="font-size:14px;color:#3D4C5B;font-variant-numeric:tabular-nums">02/07/2026</div>
+          <div style="font-size:14.5px">Sốt</div>
+          <div><span style="display:inline-block;padding:4px 10px;background:#FFF6E5;border:1px solid #F0DCAE;border-radius:999px;font-size:12.5px;font-weight:600;color:#7A5200">Khám sớm</span></div>
+          <div style="font-size:14px;color:#166341;font-weight:500">Đã duyệt</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr 150px 150px;gap:14px;align-items:center;padding:13px 0">
+          <div style="font-size:14px;color:#3D4C5B;font-variant-numeric:tabular-nums">18/05/2026</div>
+          <div style="font-size:14.5px">Đau đầu / Chấn thương đầu nhẹ</div>
+          <div><span style="display:inline-block;padding:4px 10px;background:#E9F7F0;border:1px solid #BFE5D2;border-radius:999px;font-size:12.5px;font-weight:600;color:#166341">Tự theo dõi</span></div>
+          <div style="font-size:14px;color:#166341;font-weight:500">Đã duyệt</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size:12.5px;line-height:1.55;color:#8494A4;text-wrap:pretty">VMedTriage là công cụ hỗ trợ phân loại ưu tiên ban đầu, không phải chẩn đoán. Mọi hướng dẫn xử trí đều do nhân viên y tế xác nhận trước khi gửi.</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-01 ĐĂNG NHẬP (WEB) ══════════════ -->
+<sc-if value="{{ isW1 }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:1fr 1fr;width:100%;max-width:1320px;min-height:660px;background:#fff;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;flex-direction:column;justify-content:space-between;gap:34px;padding:40px 44px;background:#F4F8FC;border-right:1px solid #E3E8EF">
+    <div style="display:flex;align-items:center;gap:10px">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    </div>
+    <div>
+      <div style="font-size:32px;font-weight:600;line-height:1.22;letter-spacing:-0.02em;margin-bottom:14px;text-wrap:pretty">Phân loại ưu tiên khám ban đầu, có nhân viên y tế xác nhận</div>
+      <div style="font-size:15.5px;line-height:1.6;color:#5B6B7C;max-width:440px;text-wrap:pretty">Bệnh nhân mô tả triệu chứng bằng lời. Trợ lý thu thập theo checklist y tế và phát hiện dấu hiệu cần cấp cứu. Quyết định cuối cùng luôn thuộc về con người.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:13px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <div style="font-size:14.5px;line-height:1.5;color:#3D4C5B">Không có hướng dẫn nào được gửi trước khi nhân viên y tế duyệt</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <div style="font-size:14.5px;line-height:1.5;color:#3D4C5B">Kết luận đối chiếu hướng dẫn của Bộ Y tế VN và WHO</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <div style="font-size:14.5px;line-height:1.5;color:#3D4C5B">Dữ liệu cá nhân được mã hoá và ghi log truy vết</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;justify-content:center;padding:40px 56px">
+    <div style="width:100%;max-width:420px;margin:0 auto">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;background:#F1F4F8;border:1px solid #E3E8EF;border-radius:11px;margin-bottom:26px">
+        <sc-if value="{{ tabLogin }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ goLogin }}" style="padding:11px 0;background:#fff;border:1px solid #1A5EA8;border-radius:8px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer">Đăng nhập</button>
+          <button onClick="{{ goRegister }}" style="padding:11px 0;background:transparent;border:1px solid transparent;border-radius:8px;font-size:14.5px;font-weight:500;color:#5B6B7C;cursor:pointer">Đăng ký</button>
+        </sc-if>
+        <sc-if value="{{ tabRegister }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ goLogin }}" style="padding:11px 0;background:transparent;border:1px solid transparent;border-radius:8px;font-size:14.5px;font-weight:500;color:#5B6B7C;cursor:pointer">Đăng nhập</button>
+          <button onClick="{{ goRegister }}" style="padding:11px 0;background:#fff;border:1px solid #1A5EA8;border-radius:8px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer">Đăng ký</button>
+        </sc-if>
+      </div>
+
+      <div style="font-size:25px;font-weight:600;letter-spacing:-0.02em;margin-bottom:6px">{{ authTitle }}</div>
+      <div style="font-size:14.5px;color:#5B6B7C;margin-bottom:22px">{{ authNote }}</div>
+
+      <sc-if value="{{ loginError }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:10px;margin-bottom:18px;padding:12px 13px;background:#FDECEC;border:1px solid #F3C2C2;border-left:3px solid #C62828;border-radius:10px">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9" stroke="#C62828" stroke-width="1.6"></circle><path d="M12 7.8v5.4M12 16.4v.2" stroke="#C62828" stroke-width="1.8" stroke-linecap="round"></path></svg>
+          <div style="font-size:13.5px;line-height:1.45;color:#8E1F1F;font-weight:500">Email hoặc mật khẩu không đúng</div>
+        </div>
+      </sc-if>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <sc-if value="{{ tabRegister }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <label style="font-size:13.5px;font-weight:500;color:#3D4C5B">Họ và tên</label>
+            <input placeholder="Nguyễn Văn A" style="height:48px;padding:0 13px;background:#fff;border:1px solid #CFD8E3;border-radius:10px;font-size:15.5px">
+          </div>
+        </sc-if>
+
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <label style="font-size:13.5px;font-weight:500;color:#3D4C5B">Email hoặc số điện thoại</label>
+          <input value="{{ email }}" onChange="{{ setEmail }}" placeholder="ten@email.com" style="height:48px;padding:0 13px;background:#fff;border:1px solid #CFD8E3;border-radius:10px;font-size:15.5px">
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <label style="font-size:13.5px;font-weight:500;color:#3D4C5B">Mật khẩu</label>
+          <div style="position:relative;display:flex;align-items:center">
+            <input value="{{ password }}" onChange="{{ setPassword }}" type="{{ pwType }}" placeholder="Nhập mật khẩu" style="width:100%;height:48px;padding:0 46px 0 13px;background:#fff;border:1px solid #CFD8E3;border-radius:10px;font-size:15.5px">
+            <button onClick="{{ togglePw }}" style="position:absolute;right:6px;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:0;background:transparent;border-radius:8px;cursor:pointer;color:#5B6B7C">
+              <sc-if value="{{ showPw }}" hint-placeholder-val="{{ false }}">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"></path><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"></circle><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
+              </sc-if>
+              <sc-if value="{{ hidePw }}" hint-placeholder-val="{{ true }}">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"></path><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"></circle></svg>
+              </sc-if>
+            </button>
+          </div>
+        </div>
+
+        <sc-if value="{{ tabRegister }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <label style="font-size:13.5px;font-weight:500;color:#3D4C5B">Nhập lại mật khẩu</label>
+            <input type="password" placeholder="Nhập lại mật khẩu" style="height:48px;padding:0 13px;background:#fff;border:1px solid #CFD8E3;border-radius:10px;font-size:15.5px">
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ tabLogin }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:-4px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:#3D4C5B"><input type="checkbox" style="width:16px;height:16px;accent-color:#1A5EA8"> Ghi nhớ đăng nhập</label>
+            <button style="border:0;background:transparent;padding:4px 0;font-size:13.5px;font-weight:500;color:#1A5EA8;cursor:pointer" style-hover="text-decoration:underline">Quên mật khẩu?</button>
+          </div>
+        </sc-if>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="font-size:13.5px;font-weight:500;color:#3D4C5B">Vai trò</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;background:#F1F4F8;border:1px solid #E3E8EF;border-radius:11px">
+            <sc-if value="{{ rolePatient }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ setPatient }}" style="padding:11px 0;border:1px solid #1A5EA8;background:#fff;border-radius:8px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer">Bệnh nhân</button>
+              <button onClick="{{ setStaff }}" style="padding:11px 0;border:1px solid transparent;background:transparent;border-radius:8px;font-size:14.5px;font-weight:500;color:#5B6B7C;cursor:pointer">Nhân viên y tế</button>
+            </sc-if>
+            <sc-if value="{{ roleStaff }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ setPatient }}" style="padding:11px 0;border:1px solid transparent;background:transparent;border-radius:8px;font-size:14.5px;font-weight:500;color:#5B6B7C;cursor:pointer">Bệnh nhân</button>
+              <button onClick="{{ setStaff }}" style="padding:11px 0;border:1px solid #1A5EA8;background:#fff;border-radius:8px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer">Nhân viên y tế</button>
+            </sc-if>
+          </div>
+        </div>
+
+        <sc-if value="{{ formReady }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ submitLogin }}" style="height:50px;border:0;background:#1A5EA8;border-radius:10px;font-size:16px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">{{ submitLabel }}</button>
+        </sc-if>
+        <sc-if value="{{ formBlocked }}" hint-placeholder-val="{{ true }}">
+          <button disabled="{{ true }}" style="height:50px;border:0;background:#E4E8ED;border-radius:10px;font-size:16px;font-weight:600;color:#9AA7B4;cursor:not-allowed">{{ submitLabel }}</button>
+        </sc-if>
+
+        <div style="text-align:center;font-size:13.5px;color:#5B6B7C">
+          <sc-if value="{{ tabLogin }}" hint-placeholder-val="{{ true }}">
+            <span>Chưa có tài khoản? </span><button onClick="{{ goRegister }}" style="border:0;background:transparent;padding:0;font-size:13.5px;font-weight:600;color:#1A5EA8;cursor:pointer;text-decoration:underline">Đăng ký</button>
+          </sc-if>
+          <sc-if value="{{ tabRegister }}" hint-placeholder-val="{{ false }}">
+            <span>Đã có tài khoản? </span><button onClick="{{ goLogin }}" style="border:0;background:transparent;padding:0;font-size:13.5px;font-weight:600;color:#1A5EA8;cursor:pointer;text-decoration:underline">Đăng nhập</button>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-02 DISCLAIMER (WEB) ══════════════ -->
+<sc-if value="{{ isW2 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:12px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="margin-left:auto;font-size:13.5px;color:#8494A4">Bước 1 / 3 · Trước khi khai báo</div>
+  </div>
+  <div style="display:flex;justify-content:center;padding:44px 26px 52px">
+    <div style="width:100%;max-width:760px;padding:38px 40px;background:#fff;border:1px solid #E3E8EF;border-radius:16px;box-shadow:0 1px 2px rgba(22,32,43,.05)">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">
+        <div style="display:flex;align-items:center;justify-content:center;width:56px;height:56px;flex:none;background:#F1F4F8;border:1px solid #E3E8EF;border-radius:15px">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#5B6B7C" stroke-width="1.5"></circle><path d="M12 11v5.4M12 7.6v.2" stroke="#5B6B7C" stroke-width="1.8" stroke-linecap="round"></path></svg>
+        </div>
+        <div>
+          <div style="font-size:27px;font-weight:600;letter-spacing:-0.02em">Thông tin quan trọng</div>
+          <div style="font-size:15px;color:#5B6B7C;margin-top:4px">Vui lòng đọc trước khi bắt đầu khai báo triệu chứng.</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="display:flex;gap:14px;padding:18px 0;border-top:1px solid #EEF1F5">
+          <div style="flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:#EAF2FB;border-radius:8px;font-size:13.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">1</div>
+          <div style="font-size:16px;line-height:1.6;color:#2A3744;text-wrap:pretty">Trợ lý AI hỗ trợ&nbsp;người dùng đánh giá <b data-om-id="f356a858:131">mức độ khẩn cấp</b> dựa trên các triệu chứng được cung cấp&nbsp;— không chẩn đoán bệnh, không kê đơn thuốc.</div>
+        </div>
+        <div style="display:flex;gap:14px;padding:18px 0;border-top:1px solid #EEF1F5">
+          <div style="flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:#EAF2FB;border-radius:8px;font-size:13.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">2</div>
+          <div style="font-size:16px;line-height:1.6;color:#2A3744;text-wrap:pretty">Mọi đề xuất đều được <span style="font-weight:600">nhân viên y tế xác nhận</span> trước khi gửi cho bạn.</div>
+        </div>
+        <div style="display:flex;gap:14px;padding:18px 0;border-top:1px solid #EEF1F5;border-bottom:1px solid #EEF1F5">
+          <div style="flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:#EAF2FB;border-radius:8px;font-size:13.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">3</div>
+          <div style="font-size:16px;line-height:1.6;color:#2A3744;text-wrap:pretty">Trường hợp khẩn cấp, hãy <span style="font-weight:600">gọi 115 ngay</span> thay vì chờ trong ứng dụng.</div>
+        </div>
+      </div>
+      <button onClick="{{ goW3 }}" style="width:100%;height:52px;margin-top:28px;border:0;background:#1A5EA8;border-radius:10px;font-size:16px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">Tôi đã hiểu, bắt đầu</button>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-03 KHAI BÁO (WEB) ══════════════ -->
+<sc-if value="{{ isW3 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:12px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="width:1px;height:22px;background:#E3E8EF;margin:0 6px"></div>
+    <div style="font-size:14px;color:#5B6B7C">Khai báo triệu chứng</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:auto;padding:6px 11px;background:#EAF2FB;border-radius:999px">
+      <div style="width:6px;height:6px;background:#1A5EA8;border-radius:50%;animation:vmt-pulse 1.8s ease-in-out infinite"></div>
+      <span style="font-size:12.5px;font-weight:500;color:#1A5EA8">Trợ lý đang thu thập thông tin</span>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 344px;gap:20px;padding:22px 26px 26px;align-items:start">
+    <div style="display:flex;flex-direction:column;height:640px;background:#fff;border:1px solid #E3E8EF;border-radius:14px;overflow:hidden">
+      <div style="flex:none;display:flex;align-items:center;gap:9px;padding:11px 18px;background:#F1F4F8;border-bottom:1px solid #E3E8EF">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="flex:none"><circle cx="12" cy="12" r="9" stroke="#5B6B7C" stroke-width="1.6"></circle><path d="M12 11v5M12 7.6v.2" stroke="#5B6B7C" stroke-width="1.8" stroke-linecap="round"></path></svg>
+        <span style="font-size:12.5px;line-height:1.4;color:#5B6B7C">Trợ lý AI hỗ trợ người dùng đánh giá mức độ khẩn cấp dựa trên các triệu chứng được cung cấp — không chẩn đoán bệnh, không kê đơn thuốc.</span>
+      </div>
+      <sc-if value="{{ chatOffline }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;display:flex;gap:10px;padding:13px 18px;background:#FDECEC;border-bottom:1px solid #F3C2C2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:1px"><path d="M2.5 8.5a14 14 0 0 1 19 0M6 12.6a9 9 0 0 1 12 0M12 20.2v.2" stroke="#C62828" stroke-width="1.6" stroke-linecap="round"></path><path d="M4 20 20 4" stroke="#C62828" stroke-width="1.6" stroke-linecap="round"></path></svg>
+          <div style="font-size:13.5px;line-height:1.45;color:#8E1F1F;font-weight:500">Mất kết nối, đang thử kết nối lại... <span style="font-weight:400">(lịch sử chat vẫn được giữ nguyên)</span></div>
+        </div>
+      </sc-if>
+
+      <div style="flex:1;display:flex;flex-direction:column;gap:14px;padding:22px 24px;overflow-y:auto">
+        <sc-for list="{{ messages }}" as="m" hint-placeholder-count="4">
+          <sc-if value="{{ m.isAgent }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;justify-content:flex-start">
+              <div style="max-width:62%;padding:13px 16px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:14px 14px 14px 4px;font-size:15.5px;line-height:1.55;color:#2A3744;text-wrap:pretty">{{ m.text }}</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ m.isPatient }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;justify-content:flex-end">
+              <div style="max-width:62%;padding:13px 16px;background:#1A5EA8;border-radius:14px 14px 4px 14px;font-size:15.5px;line-height:1.55;color:#fff;text-wrap:pretty">{{ m.text }}</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ m.isSystem }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;justify-content:center;padding:2px 0">
+              <div style="display:flex;align-items:center;gap:7px;padding:6px 13px;background:#EAF2FB;border:1px solid #CFE0F3;border-radius:999px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1A5EA8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span style="font-size:12.5px;font-weight:500;color:#154E8C">{{ m.text }}</span>
+              </div>
+            </div>
+          </sc-if>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ chatOffline }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:14px 18px;border-top:1px solid #E3E8EF;opacity:.5">
+          <div style="flex:1;height:48px;display:flex;align-items:center;padding:0 14px;background:#F1F4F8;border:1px solid #DCE3EA;border-radius:12px;font-size:15px;color:#93A1B0">Đang tạm khoá nhập...</div>
+          <div style="display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:#E4E8ED;border-radius:12px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4.5 12 20 4.5l-4 15.5-4.4-5.6-7.1-2.4Z" stroke="#9AA7B4" stroke-width="1.6" stroke-linejoin="round"></path></svg>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ chatLive }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:14px 18px;border-top:1px solid #E3E8EF">
+          <input value="{{ draft }}" onChange="{{ setDraft }}" onKeyDown="{{ draftKey }}" placeholder="Mô tả triệu chứng của bạn..." style="flex:1;height:48px;padding:0 15px;background:#F7F9FB;border:1px solid #CFD8E3;border-radius:12px;font-size:15.5px">
+          <button onClick="{{ send }}" style="display:flex;align-items:center;justify-content:center;gap:8px;height:48px;padding:0 20px;border:0;background:#1A5EA8;border-radius:12px;font-size:15.5px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4.5 12 20 4.5l-4 15.5-4.4-5.6-7.1-2.4Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"></path></svg>
+            <span>Gửi</span>
+          </button>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="padding:18px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4;margin-bottom:9px">Nhóm đã nhận diện</div>
+        <div style="display:flex;align-items:center;gap:9px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1A5EA8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div style="font-size:19px;font-weight:600;letter-spacing:-0.01em">Đau ngực</div>
+        </div>
+        <div style="margin-top:10px;font-size:13px;line-height:1.5;color:#5B6B7C;text-wrap:pretty"><br></div>
+      </div>
+
+      <div style="padding:18px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4">HIỂN THỊ THÔNG TIN TRẠNG THÁI CASE</div>
+          <div style="font-size:12.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">4/7</div>
+        </div>
+        <div style="height:5px;background:#EEF1F5;border-radius:999px;overflow:hidden;margin-bottom:16px">
+          <div style="width:57%;height:100%;background:#1A5EA8"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:11px">
+          <sc-for list="{{ checklist }}" as="k" hint-placeholder-count="7">
+            <div style="display:flex;align-items:center;gap:10px">
+              <sc-if value="{{ k.done }}" hint-placeholder-val="{{ true }}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex:none"><circle cx="12" cy="12" r="9.5" fill="#E9F7F0"></circle><path d="m7.6 12.4 3 3 5.8-6" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                
+              </sc-if>
+              <sc-if value="{{ k.pending }}" hint-placeholder-val="{{ false }}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex:none"><circle cx="12" cy="12" r="9" stroke="#CFD8E3" stroke-width="1.8"></circle></svg>
+                
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:11px;padding:16px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" stroke="#5B6B7C" stroke-width="1.6"></rect><path d="M8.4 10.5V8a3.6 3.6 0 0 1 7.2 0v2.5" stroke="#5B6B7C" stroke-width="1.6"></path></svg>
+        <div style="font-size:13px;line-height:1.55;color:#5B6B7C;text-wrap:pretty">Thông tin chỉ dùng để phân loại mức ưu tiên và được nhân viên y tế xem xét.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-04 RED-FLAG (WEB) ══════════════ -->
+<sc-if value="{{ isW4 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#FDF6F6;border:2px solid #C62828;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:11px;padding:14px 26px;background:#C62828">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M12 3.4 21 19H3l9-15.6Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"></path><path d="M12 9.6v4M12 16.2v.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"></path></svg>
+    <div style="font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#fff">Cảnh báo khẩn cấp</div>
+    <div style="margin-left:auto;font-size:13px;color:#F6D9D9">Ca BN-2481 · 14:31</div>
+  </div>
+  <div style="display:flex;justify-content:center;padding:52px 26px 56px">
+    <div style="width:100%;max-width:820px">
+      <div style="display:flex;gap:24px;align-items:flex-start;margin-bottom:26px">
+        <div style="flex:none;display:flex;align-items:center;justify-content:center;width:84px;height:84px;background:#FBE3E3;border:1px solid #F0B9B9;border-radius:50%">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none"><path d="M12 3.4 21 19H3l9-15.6Z" stroke="#C62828" stroke-width="1.4" stroke-linejoin="round"></path><path d="M12 9.4v4.2M12 16.4v.2" stroke="#C62828" stroke-width="1.8" stroke-linecap="round"></path></svg>
+        </div>
+        <div>
+          <div style="font-size:34px;font-weight:600;line-height:1.2;letter-spacing:-0.02em;color:#8E1F1F;margin-bottom:14px;text-wrap:pretty">Dấu hiệu cần cấp cứu: {{ redFlagReason }}</div>
+          <div style="font-size:16.5px;line-height:1.6;color:#3D4C5B;max-width:640px;text-wrap:pretty">Đây có thể là dấu hiệu của một tình trạng cấp cứu tim mạch hoặc hô hấp. Nếu triệu chứng xấu đi, hãy <span style="font-weight:600;color:#8E1F1F">gọi 115</span> hoặc đến cơ sở y tế gần nhất ngay.</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">
+        <div style="display:flex;gap:12px;padding:18px;background:#fff;border:1px solid #E3E8EF;border-radius:13px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:2px"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div style="font-size:15px;line-height:1.55;color:#2A3744;text-wrap:pretty">Ca của bạn đã được chuyển ngay tới nhân viên y tế trực với <span style="font-weight:600">mức ưu tiên cao nhất</span>.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:18px;background:#FBE3E3;border-radius:13px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex:none"><path d="M7.2 3.6h3l1.6 4-2 1.4a10.6 10.6 0 0 0 5.2 5.2l1.4-2 4 1.6v3a1.8 1.8 0 0 1-2 1.8A16.4 16.4 0 0 1 5.4 5.6a1.8 1.8 0 0 1 1.8-2Z" stroke="#8E1F1F" stroke-width="1.6" stroke-linejoin="round"></path></svg>
+          <div style="font-size:15px;color:#8E1F1F">Cấp cứu <span style="font-weight:600;font-variant-numeric:tabular-nums">115</span> · Trực 24/7</div>
+        </div>
+      </div>
+
+      <button onClick="{{ goW5 }}" style="width:100%;max-width:340px;height:52px;border:0;background:#C62828;border-radius:10px;font-size:16px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#A81F1F">Tôi đã đọc, tiếp tục</button>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-05 KẾT QUẢ (WEB) ══════════════ -->
+<sc-if value="{{ isW5 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:12px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="width:1px;height:22px;background:#E3E8EF;margin:0 6px"></div>
+    <div style="font-size:14px;color:#5B6B7C">Kết quả phân loại · <span style="font-weight:600;color:#16202B;font-variant-numeric:tabular-nums">BN-2481</span></div>
+  </div>
+
+  <sc-if value="{{ resPending }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:76px 26px 84px;text-align:center">
+      <div style="display:flex;align-items:center;justify-content:center;width:88px;height:88px;background:#EAF2FB;border:1px solid #CFE0F3;border-radius:50%;margin-bottom:26px">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" style="animation:vmt-spin 8s linear infinite"><circle cx="12" cy="12" r="9" stroke="#1A5EA8" stroke-width="1.4"></circle><path d="M12 7.4V12l3.2 2" stroke="#1A5EA8" stroke-width="1.7" stroke-linecap="round"></path></svg>
+      </div>
+      <div style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:12px">Đang chờ nhân viên y tế duyệt</div>
+      <div style="font-size:16.5px;line-height:1.6;color:#5B6B7C;max-width:560px;margin-bottom:26px;text-wrap:pretty">Nhân viên y tế sẽ xem xét và gửi hướng dẫn xử trí sớm nhất có thể. Bạn có thể đóng trang này, chúng tôi sẽ thông báo khi có kết quả.</div>
+      <div style="display:flex;align-items:center;gap:10px;padding:13px 20px;background:#fff;border:1px solid #E3E8EF;border-radius:999px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#5B6B7C" stroke-width="1.5"></circle><path d="M12 7.4V12l3.2 2" stroke="#5B6B7C" stroke-width="1.7" stroke-linecap="round"></path></svg>
+        <span style="font-size:14.5px;color:#3D4C5B">Thời gian chờ ước tính <span style="font-weight:600;font-variant-numeric:tabular-nums">~5-10 phút</span></span>
+      </div>
+      <div style="margin-top:12px;font-size:13px;color:#8494A4">Ca Cấp cứu được xử lý nhanh hơn.</div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ resApproved }}" hint-placeholder-val="{{ false }}">
+    <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:20px;padding:24px 26px 30px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;align-items:center;gap:8px;align-self:flex-start;padding:8px 14px;background:#E9F7F0;border:1px solid #BFE5D2;border-radius:999px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" stroke="#1E7A4D" stroke-width="1.6"></rect><path d="M8.4 10.5V8a3.6 3.6 0 0 1 7.2 0v2.5" stroke="#1E7A4D" stroke-width="1.6"></path></svg>
+          <span style="font-size:13.5px;font-weight:600;color:#166341">Đã duyệt bởi nhân viên y tế</span>
+        </div>
+        <div style="padding:26px;background:#fff;border:1px solid #F0B9B9;border-top:4px solid #C62828;border-radius:14px">
+          <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4;margin-bottom:9px">Mức ưu tiên cuối cùng</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+            <div style="width:12px;height:12px;background:#C62828;border-radius:50%"></div>
+            <div style="font-size:32px;font-weight:600;letter-spacing:-0.02em;color:#8E1F1F">Cấp cứu</div>
+          </div>
+          <div style="height:1px;background:#E3E8EF;margin-bottom:20px"></div>
+          <div style="font-size:14px;font-weight:600;color:#3D4C5B;margin-bottom:14px">Hướng dẫn xử trí đã xác nhận</div>
+          <div style="display:flex;flex-direction:column;gap:13px">
+            <div style="display:flex;gap:12px"><span style="font-size:15.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">1</span><span style="font-size:15.5px;line-height:1.6;color:#2A3744;text-wrap:pretty">Đến khoa Cấp cứu của cơ sở y tế gần nhất ngay trong vòng 1 giờ, không tự lái xe.</span></div>
+            <div style="display:flex;gap:12px"><span style="font-size:15.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">2</span><span style="font-size:15.5px;line-height:1.6;color:#2A3744;text-wrap:pretty">Nếu đau ngực tăng lên, khó thở nhiều hơn hoặc vã mồ hôi lạnh, gọi 115 ngay.</span></div>
+            <div style="display:flex;gap:12px"><span style="font-size:15.5px;font-weight:600;color:#1A5EA8;font-variant-numeric:tabular-nums">3</span><span style="font-size:15.5px;line-height:1.6;color:#2A3744;text-wrap:pretty">Mang theo danh sách thuốc đang dùng (Amlodipin 5mg) và thông tin tiền sử tăng huyết áp.</span></div>
+          </div>
+        </div>
+        <div style="font-size:13px;line-height:1.55;color:#8494A4;text-wrap:pretty">Đây không phải chẩn đoán, hãy gặp bác sĩ để được tư vấn đầy đủ.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div style="padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+          <div style="display:flex;justify-content:space-between;gap:14px;padding-bottom:12px">
+            <span style="font-size:14px;color:#5B6B7C">Nhóm triệu chứng</span>
+            <span style="font-size:14px;font-weight:500;text-align:right">Đau ngực</span>
+          </div>
+          <div style="height:1px;background:#EEF1F5"></div>
+          <div style="display:flex;justify-content:space-between;gap:14px;padding:12px 0">
+            <span style="font-size:14px;color:#5B6B7C">Người duyệt</span>
+            <span style="font-size:14px;font-weight:500;text-align:right">ĐD. Nguyễn Thu Hà</span>
+          </div>
+          <div style="height:1px;background:#EEF1F5"></div>
+          <div style="display:flex;justify-content:space-between;gap:14px;padding-top:12px">
+            <span style="font-size:14px;color:#5B6B7C">Thời điểm duyệt</span>
+            <span style="font-size:14px;font-weight:500;text-align:right;font-variant-numeric:tabular-nums">11/08/2026 · 14:32</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:20px;background:#fff;border:1px solid #F0B9B9;border-left:4px solid #C62828;border-radius:14px">
+          <div style="font-size:15px;font-weight:600;color:#8E1F1F">Cần cấp cứu ngay</div>
+          <div style="font-size:14px;line-height:1.55;color:#3D4C5B;text-wrap:pretty">Nếu tình trạng xấu đi trên đường di chuyển, gọi <span style="font-weight:600">115</span>.</div>
+        </div>
+        <button onClick="{{ goW0 }}" style="height:46px;background:#fff;border:1px solid #CFD8E3;border-radius:10px;font-size:14.5px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#F7F9FB">Về trang chủ</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ resError }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:88px 26px;text-align:center">
+      <div style="display:flex;align-items:center;justify-content:center;width:78px;height:78px;background:#F1F4F8;border:1px solid #E3E8EF;border-radius:50%;margin-bottom:22px">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#5B6B7C" stroke-width="1.4"></circle><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" stroke="#5B6B7C" stroke-width="1.6" stroke-linecap="round"></path></svg>
+      </div>
+      <div style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin-bottom:10px">Không thể tải kết quả</div>
+      <div style="font-size:15.5px;line-height:1.6;color:#5B6B7C;max-width:460px;margin-bottom:24px;text-wrap:pretty">Kết nối tới hệ thống bị gián đoạn. Kết quả của bạn vẫn được lưu.</div>
+      <button style="display:flex;align-items:center;gap:9px;height:48px;padding:0 22px;background:#fff;border:1px solid #1A5EA8;border-radius:10px;font-size:15px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#EAF2FB">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4.5V10h-5.4" stroke="#1A5EA8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <span>Thử lại</span>
+      </button>
+    </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-06 HÀNG ĐỢI (WEB) ══════════════ -->
+<sc-if value="{{ isW6 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:14px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="width:1px;height:22px;background:#E3E8EF;margin:0 6px"></div>
+    <div style="display:flex;gap:4px">
+      <div style="padding:8px 13px;background:#EAF2FB;border-radius:8px;font-size:14px;font-weight:600;color:#1A5EA8">Hàng đợi</div>
+      <div style="padding:8px 13px;font-size:14px;color:#5B6B7C">Ca đã duyệt</div>
+      <div style="padding:8px 13px;font-size:14px;color:#5B6B7C">Log audit</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+      <div style="text-align:right">
+        <div style="font-size:13.5px;font-weight:500">ĐD. Nguyễn Thu Hà</div>
+        <div style="font-size:12px;color:#8494A4">Nhân viên y tế · Trực ca chiều</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;background:#EAF2FB;border-radius:50%;font-size:13px;font-weight:600;color:#1A5EA8">TH</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:236px 1fr;gap:20px;padding:24px 26px 30px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="padding:16px;background:#fff;border:1px solid #E3E8EF;border-radius:13px">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4;margin-bottom:12px">Bộ lọc</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;background:#EAF2FB;border-radius:8px;font-size:14px;font-weight:600;color:#154E8C"><span>Tất cả</span><span style="font-variant-numeric:tabular-nums">6</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;font-size:14px;color:#3D4C5B"><span style="display:flex;align-items:center;gap:9px"><span style="width:8px;height:8px;background:#C62828;border-radius:50%"></span>Cấp cứu</span><span style="font-variant-numeric:tabular-nums;color:#8494A4">2</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;font-size:14px;color:#3D4C5B"><span style="display:flex;align-items:center;gap:9px"><span style="width:8px;height:8px;background:#D68A00;border-radius:50%"></span>Khám sớm</span><span style="font-variant-numeric:tabular-nums;color:#8494A4">2</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;font-size:14px;color:#3D4C5B"><span style="display:flex;align-items:center;gap:9px"><span style="width:8px;height:8px;background:#1E7A4D;border-radius:50%"></span>Tự theo dõi</span><span style="font-variant-numeric:tabular-nums;color:#8494A4">2</span></div>
+        </div>
+      </div>
+      <div style="padding:16px;background:#fff;border:1px solid #E3E8EF;border-radius:13px">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4;margin-bottom:10px">Ca trực</div>
+        <div style="font-size:14px;line-height:1.6;color:#3D4C5B">13:00 – 21:00<br><span style="color:#8494A4">Đã duyệt hôm nay: <span style="font-weight:600;color:#3D4C5B;font-variant-numeric:tabular-nums">18</span> ca</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px">
+        <div>
+          <div style="font-size:22px;font-weight:600;letter-spacing:-0.02em">Ca chờ duyệt</div>
+          <div style="font-size:13.5px;color:#5B6B7C;margin-top:3px">Sắp xếp: Cấp cứu trước, sau đó theo thời gian chờ</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#8494A4">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="animation:vmt-spin 4s linear infinite"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4.5V10h-5.4" stroke="#8494A4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Làm mới (polling tự động)</span>
+        </div>
+      </div>
+
+      <sc-if value="{{ queueStale }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px;padding:13px 15px;background:#FFF6E5;border:1px solid #F0DCAE;border-left:3px solid #D68A00;border-radius:11px">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style="flex:none"><path d="M12 3.4 21 19H3l9-15.6Z" stroke="#8A5B00" stroke-width="1.6" stroke-linejoin="round"></path><path d="M12 9.6v4M12 16.2v.2" stroke="#8A5B00" stroke-width="1.8" stroke-linecap="round"></path></svg>
+          <div style="flex:1;font-size:13.5px;color:#7A5200;font-weight:500">Không tải được danh sách mới nhất — đang hiển thị dữ liệu đã lưu trước đó</div>
+          <button style="display:flex;align-items:center;gap:7px;height:36px;padding:0 14px;background:#fff;border:1px solid #C99A2E;border-radius:8px;font-size:13.5px;font-weight:600;color:#7A5200;cursor:pointer">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4.5V10h-5.4" stroke="#7A5200" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            <span>Thử lại</span>
+          </button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ queueEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:96px 20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+          <div style="display:flex;align-items:center;justify-content:center;width:66px;height:66px;background:#E9F7F0;border:1px solid #BFE5D2;border-radius:50%">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1E7A4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </div>
+          <div style="font-size:19px;font-weight:600;letter-spacing:-0.01em">Không có ca nào đang chờ duyệt 🎉</div>
+          <div style="font-size:14px;color:#5B6B7C">Danh sách sẽ tự cập nhật khi có ca mới.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ queueHasRows }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:grid;grid-template-columns:16px 136px 1fr 176px 132px 112px;gap:16px;align-items:center;padding:0 18px 4px">
+            <div></div>
+            <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Mã bệnh nhân</div>
+            <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Nhóm triệu chứng</div>
+            <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4">Mức ưu tiên AI</div>
+            <div style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8494A4;text-align:right">Thời gian chờ</div>
+            <div></div>
+          </div>
+          <sc-for list="{{ queue }}" as="c" hint-placeholder-count="6">
+            <sc-if value="{{ c.isEmergency }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ c.open }}" style="display:grid;grid-template-columns:16px 136px 1fr 176px 132px 112px;gap:16px;align-items:center;padding:17px 18px;background:#fff;border:1.5px solid #C62828;border-left:5px solid #C62828;border-radius:12px;cursor:pointer;box-shadow:0 1px 3px rgba(198,40,40,.12)" style-hover="background:#FDF6F6">
+                <div style="width:11px;height:11px;background:#C62828;border-radius:50%"></div>
+                <div style="font-size:15.5px;font-weight:600;font-variant-numeric:tabular-nums">{{ c.code }}</div>
+                <div style="font-size:15px;color:#2A3744">{{ c.group }}</div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+                  <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:#FDECEC;border:1px solid #F0B9B9;border-radius:999px;font-size:12.5px;font-weight:600;color:#8E1F1F">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 3.4 21 19H3l9-15.6Z" stroke="#C62828" stroke-width="1.8" stroke-linejoin="round"></path></svg>
+                    Cấp cứu
+                  </span>
+                  <span style="font-size:11px;color:#9AA7B4;padding-left:2px">Độ tin cậy AI: <span style="font-weight:600;color: {{ c.confColor }}">{{ c.confLabel }}</span></span>
+                </div>
+                <div style="font-size:15px;font-weight:600;color:#8E1F1F;text-align:right;font-variant-numeric:tabular-nums">{{ c.wait }}</div>
+                <div style="display:flex;justify-content:flex-end"><span style="font-size:13.5px;font-weight:600;color:#1A5EA8">Duyệt ca →</span></div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ c.isNormal }}" hint-placeholder-val="{{ true }}">
+              <div onClick="{{ c.open }}" style="display:grid;grid-template-columns:16px 136px 1fr 176px 132px 112px;gap:16px;align-items:center;padding:17px 18px;background:#fff;border:1px solid #E3E8EF;border-radius:12px;cursor:pointer" style-hover="background:#F7F9FB">
+                <sc-if value="{{ c.isEarly }}" hint-placeholder-val="{{ true }}">
+                  <div style="width:10px;height:10px;background:#D68A00;border-radius:50%"></div>
+                </sc-if>
+                <sc-if value="{{ c.isSelfCare }}" hint-placeholder-val="{{ false }}">
+                  <div style="width:10px;height:10px;background:#1E7A4D;border-radius:50%"></div>
+                </sc-if>
+                <div style="font-size:15.5px;font-weight:500;font-variant-numeric:tabular-nums">{{ c.code }}</div>
+                <div style="font-size:15px;color:#2A3744">{{ c.group }}</div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+                  <sc-if value="{{ c.isEarly }}" hint-placeholder-val="{{ true }}">
+                    <span style="display:inline-block;padding:5px 12px;background:#FFF6E5;border:1px solid #F0DCAE;border-radius:999px;font-size:12.5px;font-weight:600;color:#7A5200">Khám sớm</span>
+                  </sc-if>
+                  <sc-if value="{{ c.isSelfCare }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-block;padding:5px 12px;background:#E9F7F0;border:1px solid #BFE5D2;border-radius:999px;font-size:12.5px;font-weight:600;color:#166341">Tự theo dõi</span>
+                  </sc-if>
+                  <span style="font-size:11px;color:#9AA7B4;padding-left:2px">Độ tin cậy AI: <span style="font-weight:600;color: {{ c.confColor }}">{{ c.confLabel }}</span></span>
+                </div>
+                <div style="font-size:15px;color:#3D4C5B;text-align:right;font-variant-numeric:tabular-nums">{{ c.wait }}</div>
+                <div style="display:flex;justify-content:flex-end"><span style="font-size:13.5px;font-weight:600;color:#1A5EA8">Duyệt ca →</span></div>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ══════════════ W-07 DUYỆT CA (WEB) ══════════════ -->
+<sc-if value="{{ isW7 }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;max-width:1320px;background:#F7F9FB;border:1px solid #DCE3EA;border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(22,32,43,.10)">
+  <div style="display:flex;align-items:center;gap:12px;padding:14px 26px;background:#fff;border-bottom:1px solid #E3E8EF">
+    <svg width="25" height="25" viewBox="0 0 24 24" fill="none"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.6" stroke="#1A5EA8" stroke-width="1.5"></rect><path d="M5.6 12.2h2.9l1.4-3.1 2.1 6 1.7-4.1 1.1 1.2h3.6" stroke="#1A5EA8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <div style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em">VMed<span style="color:#1A5EA8">Triage</span></div>
+    <div style="width:1px;height:22px;background:#E3E8EF;margin:0 6px"></div>
+    <div style="font-size:14px;color:#5B6B7C">Duyệt ca <span style="font-weight:600;color:#16202B;font-variant-numeric:tabular-nums">BN-2481</span> · chờ 2 phút</div>
+    <sc-if value="{{ saveError }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:7px;margin-left:auto;padding:7px 12px;background:#F1F4F8;border-radius:8px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" stroke="#9AA7B4" stroke-width="1.6"></rect><path d="M8.4 10.5V8a3.6 3.6 0 0 1 7.2 0v2.5" stroke="#9AA7B4" stroke-width="1.6"></path></svg>
+        <span style="font-size:13px;color:#9AA7B4">Đang khoá — chưa lưu được quyết định</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ noSaveError }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ goW6 }}" style="display:flex;align-items:center;gap:7px;margin-left:auto;height:36px;padding:0 13px;background:#fff;border:1px solid #CFD8E3;border-radius:8px;font-size:13.5px;font-weight:500;color:#3D4C5B;cursor:pointer" style-hover="background:#F7F9FB">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M14 6l-6 6 6 6" stroke="#3D4C5B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <span>Về hàng đợi</span>
+      </button>
+    </sc-if>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:20px;padding:24px 26px 30px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="background:#fff;border:1px solid #E3E8EF;border-radius:14px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px 20px;border-bottom:1px solid #E3E8EF">
+          <div style="font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#3D4C5B">PHIẾU TÓM TẮT · Nhóm: Đau ngực</div>
+          <div style="font-size:12.5px;color:#8494A4;font-variant-numeric:tabular-nums">Tạo lúc 14:28</div>
+        </div>
+        <div style="padding:6px 20px 18px">
+          <sc-for list="{{ fields }}" as="f" hint-placeholder-count="9">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:13px 0;border-bottom:1px solid #EEF1F5">
+              <div style="flex:none;width:200px;font-size:14px;color:#5B6B7C">{{ f.label }}</div>
+              <sc-if value="{{ f.ok }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:1;font-size:15px;line-height:1.5;font-weight:500;color:#16202B;text-align:right;text-wrap:pretty">{{ f.value }}</div>
+              </sc-if>
+              <sc-if value="{{ f.missing }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;display:flex;justify-content:flex-end">
+                  <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;background:#FFF1E3;border:1px solid #F2CFAA;border-radius:7px;font-size:13px;font-weight:600;color:#A34F00">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#A34F00" stroke-width="1.8"></circle><path d="M12 8v4.4M12 15.8v.2" stroke="#A34F00" stroke-width="2" stroke-linecap="round"></path></svg>
+                    Thiếu thông tin
+                  </span>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+          <div style="display:flex;justify-content:space-between;gap:20px;padding:12px 0 3px">
+            <div style="flex:none;width:200px;font-size:12.5px;color:#9AA7B4">Nguồn đối chiếu detect</div>
+            <div style="flex:1;font-size:12.5px;line-height:1.5;color:#9AA7B4;text-align:right">Checklist triệu chứng đau ngực — nội bộ VMedTriage v2.0</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:20px">
+            <div style="flex:none;width:200px;font-size:12.5px;color:#9AA7B4">Nguồn grounding kết luận</div>
+            <div style="flex:1;font-size:12.5px;line-height:1.5;color:#9AA7B4;text-align:right">Hướng dẫn phân loại cấp cứu — Bộ Y tế VN (2023) · WHO ETAT</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #E3E8EF;border-radius:14px;overflow:hidden">
+        <div style="padding:15px 20px;border-bottom:1px solid #E3E8EF;font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#3D4C5B">Hội thoại với trợ lý</div>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px">
+          <sc-for list="{{ transcript }}" as="m" hint-placeholder-count="4">
+            <sc-if value="{{ m.isAgent }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;justify-content:flex-start">
+                <div style="max-width:72%;padding:10px 13px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:12px 12px 12px 3px;font-size:14px;line-height:1.55;color:#2A3744">{{ m.text }}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ m.isPatient }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;justify-content:flex-end">
+                <div style="max-width:72%;padding:10px 13px;background:#1A5EA8;border-radius:12px 12px 3px 12px;font-size:14px;line-height:1.55;color:#fff">{{ m.text }}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ m.isSystem }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;justify-content:center">
+                <div style="padding:5px 12px;background:#EAF2FB;border:1px solid #CFE0F3;border-radius:999px;font-size:12px;font-weight:500;color:#154E8C">{{ m.text }}</div>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <sc-if value="{{ saveError }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:11px;padding:13px 15px;background:#FDECEC;border:1px solid #F3C2C2;border-left:3px solid #C62828;border-radius:11px">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9" stroke="#C62828" stroke-width="1.6"></circle><path d="M12 7.8v5.4M12 16.4v.2" stroke="#C62828" stroke-width="1.8" stroke-linecap="round"></path></svg>
+          <div style="font-size:13.5px;line-height:1.45;color:#8E1F1F;font-weight:500">Không thể lưu quyết định — vui lòng thử lại</div>
+        </div>
+      </sc-if>
+
+      <div style="padding:20px;background:#fff;border:1px solid #F0B9B9;border-left:4px solid #C62828;border-radius:14px">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M6 3.5v17M6 4.6h9.5l-1.4 3.4 1.4 3.4H6" stroke="#C62828" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div style="font-size:16.5px;font-weight:600;color:#8E1F1F">Red-flag: Có</div>
+        </div>
+        <div style="font-size:14.5px;line-height:1.55;color:#3D4C5B;text-wrap:pretty">{{ redFlagReason }} — nghi ngờ hội chứng vành cấp, cần loại trừ trước.</div>
+      </div>
+
+      <div style="padding:20px;background:#fff;border:1px solid #E3E8EF;border-radius:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
+          <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8494A4">Mức ưu tiên AI đề xuất</div>
+          <div style="display:flex;align-items:center;gap:6px;padding:3px 9px;background:#F1F4F8;border-radius:999px">
+            <span style="width:6px;height:6px;border-radius:50%;background: {{ aiConfColor }}"></span>
+            <span style="font-size:11.5px;font-weight:600;color: {{ aiConfColor }}">Độ tin cậy: {{ aiConfLabel }}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:11px">
+          <div style="width:12px;height:12px;background:#C62828;border-radius:50%"></div>
+          <div style="font-size:24px;font-weight:600;letter-spacing:-0.02em;color:#8E1F1F">{{ priority }}</div>
+        </div>
+        <div style="margin-top:12px;font-size:13px;color:#5B6B7C">Quyết định cuối cùng thuộc về nhân viên y tế.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button style="display:flex;align-items:center;justify-content:center;gap:9px;height:50px;border:0;background:#1A5EA8;border-radius:10px;font-size:15.5px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Duyệt nguyên trạng</span>
+        </button>
+
+        <div>
+          <button onClick="{{ togglePriority }}" style="display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:48px;background:#fff;border:1px solid #1A5EA8;border-radius:10px;font-size:15.5px;font-weight:600;color:#1A5EA8;cursor:pointer" style-hover="background:#EAF2FB">
+            <span>Chỉnh sửa mức ưu tiên</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m6 9.5 6 6 6-6" stroke="#1A5EA8" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+          <sc-if value="{{ priorityOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:8px;padding:6px;background:#fff;border:1px solid #CFE0F3;border-radius:11px;box-shadow:0 6px 18px rgba(22,32,43,.08)">
+              <sc-for list="{{ priorityOptions }}" as="p" hint-placeholder-count="3">
+                <button onClick="{{ p.pick }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;background:transparent;border:0;border-radius:8px;font-size:14.5px;font-weight:500;cursor:pointer;text-align:left" style-hover="background:#F7F9FB">
+                  <span style="width:9px;height:9px;border-radius:50%;background: {{ p.dot }}"></span>
+                  <span style="flex:1">{{ p.label }}</span>
+                  <sc-if value="{{ p.selected }}" hint-placeholder-val="{{ false }}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m4.5 12.5 4.5 4.5L19.5 6.5" stroke="#1A5EA8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+
+        <div>
+          <button onClick="{{ toggleReject }}" style="display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:48px;background:#fff;border:1px solid #E8AFAF;border-radius:10px;font-size:15.5px;font-weight:600;color:#B33A3A;cursor:pointer" style-hover="background:#FDF6F6">
+            <span>Từ chối ca</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m6 9.5 6 6 6-6" stroke="#B33A3A" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+          <sc-if value="{{ rejectOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:8px;padding:16px;background:#fff;border:1px solid #E8AFAF;border-radius:11px">
+              <div style="font-size:14px;font-weight:600;color:#B33A3A">Lý do từ chối (bắt buộc)</div>
+              <textarea value="{{ reason }}" onChange="{{ setReason }}" placeholder="Ví dụ: Thông tin khai báo không đủ tin cậy, cần liên hệ lại bệnh nhân..." style="min-height:96px;padding:11px 12px;background:#F7F9FB;border:1px solid #CFD8E3;border-radius:9px;font-size:14.5px;line-height:1.5;resize:vertical"></textarea>
+              <sc-if value="{{ reasonReady }}" hint-placeholder-val="{{ false }}">
+                <button style="height:44px;border:0;background:#B33A3A;border-radius:9px;font-size:14.5px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#8E1F1F">Xác nhận từ chối</button>
+              </sc-if>
+              <sc-if value="{{ reasonEmpty }}" hint-placeholder-val="{{ true }}">
+                <button disabled="{{ true }}" style="height:44px;border:0;background:#E4E8ED;border-radius:9px;font-size:14.5px;font-weight:600;color:#9AA7B4;cursor:not-allowed">Xác nhận từ chối</button>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="height:1px;background:#E3E8EF;margin:6px 0"></div>
+
+        <div>
+          <button onClick="{{ toggleAsk }}" style="display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:50px;background:#EAF2FB;border:1px solid #9CC3E9;border-radius:10px;font-size:15.5px;font-weight:600;color:#154E8C;cursor:pointer" style-hover="background:#DDEAF8">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20.5 12.2c0 4-3.8 7.2-8.5 7.2-1 0-2-.15-2.9-.42L4 20.5l1.7-3.6A6.9 6.9 0 0 1 3.5 12.2C3.5 8.2 7.3 5 12 5s8.5 3.2 8.5 7.2Z" stroke="#154E8C" stroke-width="1.6" stroke-linejoin="round"></path><path d="M10 10.2a2.1 2.1 0 1 1 3.1 1.9c-.7.4-1.1.9-1.1 1.6M12 15.9v.2" stroke="#154E8C" stroke-width="1.7" stroke-linecap="round"></path></svg>
+            <span>Hỏi thêm</span>
+          </button>
+          <sc-if value="{{ askOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px;padding:16px;background:#fff;border:1px solid #9CC3E9;border-radius:11px">
+              <div style="font-size:14px;font-weight:600;color:#154E8C">Vào chat trực tiếp với bệnh nhân</div>
+              <div style="font-size:13px;line-height:1.55;color:#5B6B7C;text-wrap:pretty">Agent tạm dừng đặt câu hỏi. Bạn trao đổi trực tiếp và tự đưa ra mức ưu tiên cuối cùng thay cho đề xuất của AI.</div>
+              <div style="display:flex;align-items:center;gap:7px;align-self:flex-start;padding:5px 11px;background:#EAF2FB;border:1px solid #CFE0F3;border-radius:999px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8.4" r="3.4" stroke="#154E8C" stroke-width="1.7"></circle><path d="M5.6 19.4a6.4 6.4 0 0 1 12.8 0" stroke="#154E8C" stroke-width="1.7" stroke-linecap="round"></path></svg>
+                <span style="font-size:12px;font-weight:500;color:#154E8C">ĐD. Nguyễn Thu Hà sẽ xuất hiện trong hội thoại</span>
+              </div>
+              <textarea value="{{ askDraft }}" onChange="{{ setAskDraft }}" placeholder="Câu hỏi gửi tới bệnh nhân, ví dụ: Anh có tiền sử bệnh tim hoặc từng đặt stent chưa?" style="min-height:92px;padding:11px 12px;background:#F7F9FB;border:1px solid #CFD8E3;border-radius:9px;font-size:14.5px;line-height:1.5;resize:vertical"></textarea>
+              <sc-if value="{{ askReady }}" hint-placeholder-val="{{ false }}">
+                <button style="display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border:0;background:#1A5EA8;border-radius:9px;font-size:14.5px;font-weight:600;color:#fff;cursor:pointer" style-hover="background:#144C8A">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4.5 12 20 4.5l-4 15.5-4.4-5.6-7.1-2.4Z" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"></path></svg>
+                  <span>Gửi câu hỏi &amp; giữ ca ở trạng thái chờ</span>
+                </button>
+              </sc-if>
+              <sc-if value="{{ askEmpty }}" hint-placeholder-val="{{ true }}">
+                <button disabled="{{ true }}" style="height:44px;border:0;background:#E4E8ED;border-radius:9px;font-size:14.5px;font-weight:600;color:#9AA7B4;cursor:not-allowed">Gửi câu hỏi &amp; giữ ca ở trạng thái chờ</button>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+        <div style="font-size:12.5px;line-height:1.5;color:#8494A4;text-wrap:pretty">Khi bạn vào chat, mức ưu tiên cuối cùng do <span style="font-weight:600;color:#5B6B7C">bạn quyết định</span>, không dùng đề xuất của agent.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1400,&quot;height&quot;:1000},&quot;defaultScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;landing&quot;,&quot;w0&quot;,&quot;w1&quot;,&quot;w2&quot;,&quot;w3&quot;,&quot;w4&quot;,&quot;w5&quot;,&quot;w6&quot;,&quot;w7&quot;],&quot;default&quot;:&quot;landing&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Trình bày&quot;},&quot;redFlagReason&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;đau ngực kèm khó thở&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Dữ liệu demo&quot;}}">
+const SCREENS = [
+  { id: 'landing', label: 'W-00P Landing', code: 'W-00P', title: 'Trang giới thiệu (chưa đăng nhập)', note: 'Trang công khai trước khi đăng nhập: giới thiệu hệ thống, cách hoạt động và lời kêu gọi bắt đầu.' },
+  { id: 'w0', label: 'W-00 Trang chủ', code: 'W-00', title: 'Trang chủ (Bệnh nhân)', note: 'Cổng thông tin bệnh nhân: bắt đầu khai báo, theo dõi ca đang mở, xem lịch sử phiên.' },
+  { id: 'w1', label: 'W-01 Đăng nhập', code: 'W-01', title: 'Đăng nhập / Đăng ký', note: 'Bố cục 2 cột cho desktop, có ghi nhớ đăng nhập và Quên mật khẩu.' },
+  { id: 'w2', label: 'W-02 Disclaimer', code: 'W-02', title: 'Disclaimer', note: 'Bắt buộc hiển thị mỗi phiên khai báo mới, không có cách bỏ qua.' },
+  { id: 'w3', label: 'W-03 Khai báo', code: 'W-03', title: 'Khai báo triệu chứng', note: 'Chat chính bên trái, cột phải hiển thị nhóm đã nhận diện và tiến trình checklist.' },
+  { id: 'w4', label: 'W-04 Red-flag', code: 'W-04', title: 'Cảnh báo khẩn cấp', note: 'Chiếm toàn khung, đỏ là màu chủ đạo riêng của màn này.' },
+  { id: 'w5', label: 'W-05 Kết quả', code: 'W-05', title: 'Kết quả', note: 'Hướng dẫn xử trí chỉ hiển thị sau khi nhân viên y tế đã duyệt.' },
+  { id: 'w6', label: 'W-06 Hàng đợi', code: 'W-06', title: 'Hàng đợi ca chờ duyệt', note: 'Cột lọc bên trái, danh sách quét nhanh bên phải. Bấm một dòng để mở màn duyệt ca.' },
+  { id: 'w7', label: 'W-07 Duyệt ca', code: 'W-07', title: 'Duyệt ca (HITL)', note: 'Phiếu tóm tắt và hội thoại bên trái, 4 hành động bên phải — trong đó Hỏi thêm cho phép điều dưỡng vào chat trực tiếp.' }
+];
+
+const VARIANTS = {
+  landing: [ { id: 'default', label: 'Mặc định' } ],
+  w0: [ { id: 'default', label: 'Mặc định' } ],
+  w1: [ { id: 'default', label: 'Mặc định' }, { id: 'error', label: 'Sai thông tin' } ],
+  w2: [ { id: 'default', label: 'Mặc định' } ],
+  w3: [ { id: 'empty', label: 'Rỗng' }, { id: 'normal', label: 'Bình thường' }, { id: 'offline', label: 'Mất kết nối' } ],
+  w4: [ { id: 'default', label: 'Mặc định' } ],
+  w5: [ { id: 'pending', label: 'Chưa duyệt' }, { id: 'approved', label: 'Đã duyệt' }, { id: 'error', label: 'Lỗi tải' } ],
+  w6: [ { id: 'list', label: 'Có ca chờ' }, { id: 'empty', label: 'Rỗng' }, { id: 'stale', label: 'Lỗi tải' } ],
+  w7: [ { id: 'default', label: 'Mặc định' }, { id: 'reject', label: 'Từ chối ca' }, { id: 'saveError', label: 'Lỗi lưu' } ]
+};
+
+const CHAT = [
+  { role: 'agent', text: 'Xin chào, bạn hãy mô tả tự do triệu chứng bạn đang gặp phải.' },
+  { role: 'patient', text: 'Từ tối qua tôi bị đau tức ở giữa ngực, đi lại một chút là thấy khó thở.' },
+  { role: 'system', text: 'Đã nhận diện: Đau ngực' },
+  { role: 'agent', text: 'Cảm ơn bạn. Cơn đau bắt đầu cách đây bao lâu và mỗi lần kéo dài khoảng mấy phút?' },
+  { role: 'patient', text: 'Khoảng 12 tiếng rồi, mỗi lần đau chừng 10 phút.' },
+  { role: 'agent', text: 'Cơn đau có lan ra tay trái, vai hoặc hàm không? Bạn có vã mồ hôi lạnh kèm theo không?' }
+];
+
+const CHECKLIST = [
+  { label: 'Vị trí đau', done: true },
+  { label: 'Thời gian khởi phát', done: true },
+  { label: 'Tính chất / mức độ đau', done: true },
+  { label: 'Triệu chứng kèm theo', done: true },
+  { label: 'Hướng lan của cơn đau', done: false },
+  { label: 'Tiền sử bệnh tim mạch', done: false },
+  { label: 'Thuốc đang dùng', done: false }
+];
+
+const QUEUE = [
+  { code: 'BN-2481', group: 'Đau ngực', p: 'e', wait: '2 phút', conf: 'cao' },
+  { code: 'BN-2477', group: 'Khó thở', p: 'e', wait: '6 phút', conf: 'tb' },
+  { code: 'BN-2469', group: 'Đau bụng', p: 'y', wait: '11 phút', conf: 'cao' },
+  { code: 'BN-2465', group: 'Sốt', p: 'y', wait: '18 phút', conf: 'thap' },
+  { code: 'BN-2458', group: 'Đau đầu / Chấn thương đầu nhẹ', p: 'g', wait: '24 phút', conf: 'tb' },
+  { code: 'BN-2450', group: 'Sốt', p: 'g', wait: '31 phút', conf: 'cao' }
+];
+const CONF_LABEL = { cao: 'Cao', tb: 'Trung bình', thap: 'Thấp' };
+const CONF_COLOR = { cao: '#1A5EA8', tb: '#5B6B7C', thap: '#A34F00' };
+
+const FIELDS = [
+  { label: 'Mã bệnh nhân', value: 'BN-2481' },
+  { label: 'Tuổi / Giới tính', value: '58 · Nam' },
+  { label: 'Vị trí đau', value: 'Giữa ngực, sau xương ức' },
+  { label: 'Thời gian khởi phát', value: '12 giờ trước' },
+  { label: 'Tính chất / mức độ', value: 'Đau tức, 7/10' },
+  { label: 'Triệu chứng kèm theo', value: 'Khó thở khi gắng sức, vã mồ hôi' },
+  { label: 'Hướng lan của cơn đau', value: '' },
+  { label: 'Tiền sử bệnh', value: 'Tăng huyết áp 5 năm' },
+  { label: 'Thuốc đang dùng', value: 'Amlodipin 5mg' }
+];
+
+class Component extends DCLogic {
+  state = {
+    screen: null,
+    v: { landing: 'default', w0: 'default', w1: 'default', w2: 'default', w3: 'normal', w4: 'default', w5: 'pending', w6: 'list', w7: 'default' },
+    tab: 'login', email: '', password: '', showPw: false, role: 'patient',
+    draft: '', extra: [], priority: 'Cấp cứu', priorityOpen: false, reason: '', askOpen: false, askDraft: ''
+  };
+
+  get screen() { return this.state.screen || this.props.defaultScreen || 'landing'; }
+  get variant() { return this.state.v[this.screen]; }
+  setVariant(id) { this.setState(s => ({ v: Object.assign({}, s.v, { [this.screen]: id }) })); }
+
+  renderVals() {
+    const sc = this.screen, va = this.variant;
+    const meta = SCREENS.find(s => s.id === sc) || SCREENS[0];
+    const emailFilled = (va === 'error' && sc === 'w1') ? true : this.state.email.trim().length > 0;
+    const ready = emailFilled && this.state.password.length > 0;
+    const chatBase = va === 'empty' ? CHAT.slice(0, 1) : CHAT;
+    const msgs = chatBase.concat(this.state.extra).map(m => ({
+      text: m.text, isAgent: m.role === 'agent', isPatient: m.role === 'patient', isSystem: m.role === 'system'
+    }));
+    const dots = { 'Cấp cứu': '#C62828', 'Khám sớm': '#D68A00', 'Tự theo dõi': '#1E7A4D' };
+    const isReg = this.state.tab === 'register';
+
+    return {
+      screenCode: meta.code, screenTitle: meta.title, screenNote: meta.note,
+      redFlagReason: this.props.redFlagReason || 'đau ngực kèm khó thở',
+      aiConfLabel: CONF_LABEL.cao, aiConfColor: CONF_COLOR.cao,
+
+      screens: SCREENS.map(s => ({
+        label: s.label, go: () => this.setState({ screen: s.id }),
+        bg: s.id === sc ? '#1A5EA8' : '#fff', fg: s.id === sc ? '#fff' : '#3D4C5B', bd: s.id === sc ? '#1A5EA8' : '#DCE3EA'
+      })),
+      variants: (VARIANTS[sc] || []).map(v => ({
+        label: v.label, go: () => this.setVariant(v.id),
+        bg: v.id === va ? '#EAF2FB' : '#fff', fg: v.id === va ? '#154E8C' : '#5B6B7C', bd: v.id === va ? '#9CC3E9' : '#DCE3EA'
+      })),
+
+      isLanding: sc === 'landing', isW0: sc === 'w0', isW1: sc === 'w1', isW2: sc === 'w2', isW3: sc === 'w3', isW4: sc === 'w4', isW5: sc === 'w5', isW6: sc === 'w6', isW7: sc === 'w7',
+
+      tabLogin: !isReg, tabRegister: isReg,
+      goLogin: () => this.setState({ tab: 'login' }), goRegister: () => this.setState({ tab: 'register' }),
+      authTitle: isReg ? 'Tạo tài khoản mới' : 'Đăng nhập hệ thống',
+      authNote: isReg ? 'Thông tin của bạn được mã hoá và chỉ dùng cho mục đích y tế.' : 'Chọn đúng vai trò để vào phần chức năng tương ứng.',
+      submitLabel: isReg ? 'Tạo tài khoản' : 'Đăng nhập',
+      email: va === 'error' ? (this.state.email || 'nguyenvana@email.com') : this.state.email,
+      password: this.state.password,
+      setEmail: e => this.setState({ email: e.target.value }),
+      setPassword: e => this.setState({ password: e.target.value }),
+      showPw: this.state.showPw, hidePw: !this.state.showPw, pwType: this.state.showPw ? 'text' : 'password',
+      togglePw: () => this.setState(s => ({ showPw: !s.showPw })),
+      rolePatient: this.state.role === 'patient', roleStaff: this.state.role === 'staff',
+      setPatient: () => this.setState({ role: 'patient' }), setStaff: () => this.setState({ role: 'staff' }),
+      formReady: ready, formBlocked: !ready,
+      loginError: va === 'error',
+      submitLogin: () => this.setState({ screen: this.state.role === 'patient' ? 'w0' : 'w6' }),
+
+      goLanding: () => this.setState({ screen: 'landing' }),
+      goW0: () => this.setState({ screen: 'w0' }),
+      goW1: () => this.setState({ screen: 'w1' }),
+      goW2: () => this.setState({ screen: 'w2' }),
+      goW3: () => this.setState({ screen: 'w3' }),
+      goW5: () => this.setState({ screen: 'w5' }),
+      goW6: () => this.setState({ screen: 'w6' }),
+
+      messages: msgs,
+      transcript: CHAT.map(m => ({ text: m.text, isAgent: m.role === 'agent', isPatient: m.role === 'patient', isSystem: m.role === 'system' })),
+      checklist: CHECKLIST.map(k => ({ label: k.label, done: k.done, pending: !k.done })),
+      chatOffline: va === 'offline', chatLive: va !== 'offline',
+      draft: this.state.draft,
+      setDraft: e => this.setState({ draft: e.target.value }),
+      draftKey: e => { if (e.key === 'Enter') this.send(); },
+      send: () => this.send(),
+
+      resPending: va === 'pending', resApproved: va === 'approved', resError: va === 'error',
+
+      queueEmpty: va === 'empty', queueStale: va === 'stale', queueHasRows: va !== 'empty',
+      queue: QUEUE.map(c => ({
+        code: c.code, group: c.group, wait: c.wait,
+        isEmergency: c.p === 'e', isNormal: c.p !== 'e', isEarly: c.p === 'y', isSelfCare: c.p === 'g',
+        confLabel: CONF_LABEL[c.conf], confColor: CONF_COLOR[c.conf],
+        open: () => this.setState({ screen: 'w7' })
+      })),
+
+      fields: FIELDS.map(f => ({ label: f.label, value: f.value, ok: !!f.value, missing: !f.value })),
+      priority: this.state.priority,
+      priorityOpen: this.state.priorityOpen,
+      togglePriority: () => this.setState(s => ({ priorityOpen: !s.priorityOpen })),
+      priorityOptions: ['Cấp cứu', 'Khám sớm', 'Tự theo dõi'].map(p => ({
+        label: p, dot: dots[p], selected: p === this.state.priority,
+        pick: () => this.setState({ priority: p, priorityOpen: false })
+      })),
+      rejectOpen: va === 'reject',
+      toggleReject: () => this.setVariant(va === 'reject' ? 'default' : 'reject'),
+      reason: this.state.reason,
+      setReason: e => this.setState({ reason: e.target.value }),
+      reasonReady: this.state.reason.trim().length > 0, reasonEmpty: this.state.reason.trim().length === 0,
+      askOpen: this.state.askOpen,
+      toggleAsk: () => this.setState(s => ({ askOpen: !s.askOpen })),
+      askDraft: this.state.askDraft,
+      setAskDraft: e => this.setState({ askDraft: e.target.value }),
+      askReady: this.state.askDraft.trim().length > 0, askEmpty: this.state.askDraft.trim().length === 0,
+      saveError: va === 'saveError', noSaveError: va !== 'saveError'
+    };
+  }
+
+  send() {
+    const t = this.state.draft.trim();
+    if (!t) return;
+    this.setState(s => ({ draft: '', extra: s.extra.concat([{ role: 'patient', text: t }, { role: 'agent', text: 'Cảm ơn bạn. Bạn có bị buồn nôn, choáng hoặc tim đập nhanh kèm theo không?' }]) }));
+  }
+}
+
+</script>
+</body>
+</html>

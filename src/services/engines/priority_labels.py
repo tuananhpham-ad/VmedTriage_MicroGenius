@@ -11,6 +11,26 @@ PRIORITY_RANK: dict[TriagePriority, int] = {
     TriagePriority.SELF_CARE: 3,
 }
 
+# Nhãn nội bộ ba mức của C6/graph triage. Dùng chung ở service (chọn nhãn hiệu lực cho Part 3) và
+# route (ghi proposal vào hàng đợi), để hai chỗ không thể âm thầm dùng hai bảng xếp hạng khác nhau.
+C6_TRIAGE_LABEL_TO_PRIORITY: dict[str, TriagePriority] = {
+    "cap_cuu": TriagePriority.EMERGENCY,
+    "kham_som": TriagePriority.URGENT,
+    "theo_doi_tai_nha": TriagePriority.SELF_CARE,
+}
+
+C6_TRIAGE_LABEL_FROM_PRIORITY: dict[TriagePriority, str] = {
+    TriagePriority.EMERGENCY: "cap_cuu",
+    TriagePriority.URGENT: "kham_som",
+    TriagePriority.ROUTINE: "kham_som",
+    TriagePriority.SELF_CARE: "theo_doi_tai_nha",
+}
+
+
+def c6_label_for_priority(priority: TriagePriority) -> str | None:
+    """Map the effective queue priority to C6's three-label vocabulary when it has an equivalent."""
+    return C6_TRIAGE_LABEL_FROM_PRIORITY.get(priority)
+
 # Nhãn tiếng Việt hiển thị cho bệnh nhân/điều dưỡng (Cấp cứu / Khám sớm / Tự theo dõi),
 # ánh xạ từ enum TriagePriority nội bộ (giữ nguyên enum để không phá vỡ code hiện có).
 PRIORITY_LABEL_VI: dict[TriagePriority, str] = {

@@ -24,6 +24,14 @@ bệnh. `logs/` đã nằm trong `.gitignore`. Đặt `FEVER_LOG_REDACT=1` để
 bằng `{"len": ..., "sha256_8": ...}` khi demo/chạy trên dữ liệu thật.
 
 Ghi log KHÔNG được làm hỏng phiên hỏi-đáp: mọi lỗi I/O đều nuốt và chỉ `logger.warning`.
+
+BRAINTRUST: mỗi step/llm_io/tool ghi xuống JSONL cũng được PHẢN CHIẾU thành một span con của span
+đang mở (`chat_turn`, mở ở `src/api/routes.py`). Đặt mirror ở đây thay vì rắc `traced_span` vào
+`symptom_protocol/session.py` + `intake_agent.py` vì hai lý do: ~40 điểm log của một lượt nằm rải ở
+hai module đó, và hai hệ thống log MÔ TẢ CÙNG những cột mốc - tách ra là tự tạo chỗ cho chúng lệch
+nhau. Mọi protocol cắm vào engine chung tự có trace mà không phải sửa gì thêm. Không có
+BRAINTRUST_API_KEY thì toàn bộ phần mirror là no-op. Payload mirror dùng lại bản ĐÃ REDACT, nên
+`FEVER_LOG_REDACT=1` che PHI ở cả hai đích.
 """
 
 from __future__ import annotations
@@ -42,6 +50,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src import paths
+from src.observability.braintrust_tracing import traced_event, traced_span
 
 logger = logging.getLogger("vmedtriage.fever_stage_log")
 
@@ -127,7 +136,19 @@ def _now() -> str:
 
 
 def _redact_enabled() -> bool:
-    return os.getenv(_REDACT_ENV_VAR, "").strip() == "1"
+    """Biến môi trường THẬT trước, rồi mới tới `Settings` (đọc được cả `.env`).
+
+    Thứ tự này để `FEVER_LOG_REDACT=1 python -m scripts.xxx` bật được cho đúng một lần chạy mà
+    không phải sửa file. Nhánh `Settings` là nhánh vá lỗi hỏng câm: pydantic-settings KHÔNG ghi
+    `.env` vào `os.environ`, nên bản chỉ-`os.getenv` khiến cờ đặt trong `.env` im lặng không có tác
+    dụng - xem `Settings.fever_log_redact`.
+    """
+    raw = os.getenv(_REDACT_ENV_VAR, "").strip()
+    if raw:
+        return raw == "1"
+    from src.config import get_settings
+
+    return bool(get_settings().fever_log_redact)
 
 
 def _redact_value(value: str) -> dict[str, Any]:
@@ -214,6 +235,74 @@ def start(session_id: str, *, route: str | None, budget: int, namespace: str = _
         _write_json(_session_json_path(session_id), meta)
 
 
+def adopt(session_id: str, *, fallback_namespace: str = _DEFAULT_NAMESPACE) -> None:
+    """Nhận lại một phiên đã có log trên đĩa nhưng KHÔNG có trong tiến trình này.
+
+    `_session_namespace`/`_session_meta` là dict trong RAM, chỉ được điền bởi `start()` - tức chỉ ở
+    lượt phiên được TẠO. Nhưng từ M1 một phiên đang dở sống được qua restart: tiến trình mới khôi
+    phục nó từ kho bền rồi ghi tiếp, lúc đó không dict nào biết gì về nó nữa. Hệ quả đã quan sát
+    được trong `logs/`: các step còn lại của phiên rơi vào namespace mặc định (`logs/fever/<sid>/`
+    chỉ có mỗi `stage-SUMMARY.jsonl`, không `session.json`) trong khi nửa đầu nằm ở
+    `logs/general/<sid>/` - một luồng hội thoại bị chẻ đôi thành hai thư mục không nối được.
+
+    Tìm namespace bằng cách soi đĩa chứ không đoán: thư mục nào chứa `<sid>/session.json` thì đó là
+    namespace phiên đã dùng lúc `start()`. Không tìm thấy (log đã bị xoá) thì dùng `fallback` và mở
+    sổ mới - mất nửa đầu vẫn hơn ghi nhầm chỗ.
+
+    Idempotent: đã biết phiên rồi thì không làm gì, nên gọi ở mọi lượt `get()` cũng không tốn I/O.
+    """
+    with _lock:
+        if session_id in _session_namespace:
+            return
+        namespace = fallback_namespace
+        meta: dict[str, Any] | None = None
+        try:
+            for candidate in sorted(paths.LOGS_DIR.glob(f"*/{session_id}/session.json")):
+                namespace = candidate.parent.parent.name
+                meta = json.loads(candidate.read_text(encoding="utf-8"))
+                break
+        except (OSError, ValueError) as error:  # log hỏng KHÔNG được chặn lượt người bệnh
+            logger.warning("fever_stage_log.adopt_failed session_id=%s: %s", session_id, error)
+            meta = None
+        _session_namespace[session_id] = namespace
+        if meta is not None:
+            _session_meta[session_id] = meta
+            # `seq` phải tiếp tục từ số cũ, không quay về 0: đọc log theo `seq` mà có hai lần số 1
+            # thì thứ tự các bước sau restart không dựng lại được.
+            _seq_counters[session_id] = max(_seq_counters.get(session_id, 0), _max_seq_on_disk(session_id))
+
+
+def _max_seq_on_disk(session_id: str) -> int:
+    """`seq` lớn nhất đã ghi cho phiên, để `adopt` nối tiếp đúng chỗ. 0 nếu chưa có gì đọc được."""
+    highest = 0
+    try:
+        for path in session_dir(session_id).glob("*.jsonl"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    highest = max(highest, int(json.loads(line).get("seq", 0)))
+                except (ValueError, AttributeError):
+                    continue
+    except OSError:
+        return highest
+    return highest
+
+
+def _span_name(stage: str, event: str) -> str:
+    """`"<stage>.<event>"` để cây span trên Braintrust đọc được theo đúng thứ tự stage của phiên.
+    Stage rỗng (lượt mở, chưa chọn protocol) thì rơi về mỗi tên event."""
+    return f"{stage}.{event}" if stage else event
+
+
+def _span_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    """Những trường dùng để LỌC trên Braintrust. Không nhét cả `record` vào metadata: `input`/`output`
+    đã là cột riêng của span, lặp lại chỉ làm dòng nặng gấp đôi."""
+    return {
+        key: record.get(key)
+        for key in ("seq", "session_id", "turn", "step", "stage", "cluster_id", "event", "tool", "io_ref")
+        if record.get(key) is not None
+    }
+
+
 def stage_enter(session_id: str, stage: str) -> None:
     with _lock:
         meta = _session_meta.get(session_id)
@@ -238,7 +327,12 @@ def step(
     error: str | None = None,
     **extra: Any,
 ) -> None:
-    """Ghi một step vào `stage-<stage>.jsonl`. Không bao giờ ném ra ngoài."""
+    """Ghi một step vào `stage-<stage>.jsonl` và phản chiếu thành một span con trên Braintrust.
+
+    `_braintrust_mirror=False`: bỏ qua phần span, dành cho những chỗ ĐÃ tự mở span giàu dữ liệu hơn
+    cho đúng sự kiện đó (`llm_io`, `tool`) - nếu không sẽ có hai span cho một lời gọi.
+    """
+    mirror = extra.pop("_braintrust_mirror", True)
     if event not in EVENT_TYPES:
         raise ValueError(f"event không hợp lệ: {event!r}")
     if tool is not None and not _validate_tool_name(tool):
@@ -268,6 +362,16 @@ def step(
         _append_jsonl(_stage_path(session_id, stage), record)
         if tool in _RULE_ENGINE_TOOLS:
             _append_jsonl(_rule_engine_path(session_id), record)
+
+    # NGOÀI `_lock`: `traced_event` chỉ đụng contextvar + buffer của braintrust, giữ khoá qua nó là
+    # bắt mọi lượt song song xếp hàng sau một việc chẳng liên quan gì tới file.
+    if mirror:
+        traced_event(
+            _span_name(stage, event),
+            input=record.get("input"),
+            output=record.get("output"),
+            metadata=_span_metadata(record),
+        )
 
 
 def llm_io(
@@ -308,6 +412,31 @@ def llm_io(
             io_record = _redact_payload(io_record)
         _append_jsonl(_llm_io_path(session_id), io_record)
 
+    # Một span DUY NHẤT cho cả lời gọi, mang nguyên văn prompt + response. Cặp `llm_request`/
+    # `llm_response` bên dưới bị tắt mirror: trên JSONL chúng là hai dòng tóm tắt trỏ sang
+    # `llm-io.jsonl`, còn trên Braintrust input/output đã nằm ngay trong span này nên hai dòng đó
+    # chỉ còn là nhiễu.
+    traced_event(
+        f"{stage}.llm.{purpose}" if stage else f"llm.{purpose}",
+        input=io_record.get("messages"),
+        output=io_record.get("response_text"),
+        metadata={
+            "io_ref": io_ref,
+            "session_id": session_id,
+            "turn": turn,
+            "stage": stage,
+            "cluster_id": cluster_id,
+            "purpose": purpose,
+            "provider": provider,
+            "model": model,
+            "tokens": tokens,
+            "latency_ms": latency_ms,
+            "retry_count": retry_count,
+            "parse_error": parse_error,
+            "parsed": parsed,
+        },
+    )
+
     step(
         session_id,
         turn=turn,
@@ -317,6 +446,7 @@ def llm_io(
         input={"purpose": purpose, "provider": provider, "model": model},
         output=None,
         io_ref=io_ref,
+        _braintrust_mirror=False,
     )
     step(
         session_id,
@@ -330,11 +460,20 @@ def llm_io(
         error=parse_error,
         io_ref=io_ref,
         retry_count=retry_count,
+        _braintrust_mirror=False,
     )
     return io_ref
 
 
-def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) -> None:
+def finish(
+    session_id: str, *, triage_level: str, stop_reason: str, turns: int,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """`metrics`: bản chụp §12 của phiên (`ProtocolSessionStore.metrics_summary`).
+
+    Ghi vào chính file meta của phiên thay vì một kho riêng: dashboard của §9 P4.4 dựng được bằng
+    cách đọc thư mục log, không cần thêm hạ tầng. Tuỳ chọn vì `finish` còn được gọi từ nhánh cấp cứu
+    ở `intake_agent`, nơi chưa có `Session` trong tay - thiếu số liệu tốt hơn là chặn đường escalate."""
     with _lock:
         meta = _session_meta.get(session_id)
         if meta is None:
@@ -342,6 +481,8 @@ def finish(session_id: str, *, triage_level: str, stop_reason: str, turns: int) 
         meta["triage_level"] = triage_level
         meta["stop_reason"] = stop_reason
         meta["turns"] = turns
+        if metrics is not None:
+            meta["metrics"] = metrics
         meta["updated_at"] = _now()
         _write_json(_session_json_path(session_id), meta)
 
@@ -373,11 +514,19 @@ def tool(
     """
     rec = _ToolRecord()
     started = time.monotonic()
+    # Span THẬT bọc trọn lời gọi (không phải span tức thời như `step`) để trên Braintrust tool call
+    # có thanh thời gian đúng bằng thời gian nó thực sự chạy - đó là thứ chỉ ra được nhánh nào đang
+    # làm chậm một lượt. Vì vậy `step` bên dưới tắt mirror, tránh hai span cho một lời gọi.
+    span_metadata = {"session_id": session_id, "turn": turn, "stage": stage, "cluster_id": cluster_id}
     try:
-        yield rec
-    except Exception as exc:
-        rec.error = f"{type(exc).__name__}: {exc}"
-        raise
+        with traced_span(f"tool.{tool}", input=input, metadata=span_metadata) as span:
+            try:
+                yield rec
+            except Exception as exc:
+                rec.error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                span.log(output=rec.output, error=rec.error)
     finally:
         duration_ms = int((time.monotonic() - started) * 1000)
         step(
@@ -391,6 +540,7 @@ def tool(
             output=rec.output,
             duration_ms=duration_ms,
             error=rec.error,
+            _braintrust_mirror=False,
         )
 
 

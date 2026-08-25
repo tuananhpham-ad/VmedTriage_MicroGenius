@@ -69,3 +69,24 @@ out/
 _guidance/*
 /notebooks/
 /runs/
+.eval_run/
+eval/
+!eval/
+eval/*
+!eval/scripts/
+eval/scripts/*
+!eval/scripts/run_graph_triage_eval.py
+!eval/scripts/run_graph_triage_infer.py
+/eval_result.txt
+/eval_result_probabilities.txt
+/result_model
+docs/eval/
+tests/eval/
+# Added by Braintrust Wizard
+.env.braintrust
+.braintrust.json
+# Moi bien the cua file env that (ke ca "env copy", "env.bak", "env.prod") - CHI env.example duoc commit.
+deploy/azure/env*
+!deploy/azure/env.example
+
+render.yaml

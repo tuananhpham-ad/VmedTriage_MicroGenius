@@ -1,6 +1,6 @@
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 
 import jwt
@@ -11,9 +11,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.config import get_settings
-from src.models.auth import LoginRequest, RegisterRequest, TokenClaims, UpdateProfileRequest
+from src.models.auth import (
+    DEFAULT_AVATAR_DATA_URL,
+    LoginRequest,
+    RegisterRequest,
+    TokenClaims,
+    UpdateProfileRequest,
+)
 from src.models.password_reset import EmailVerificationCodeRecord, PasswordResetTokenRecord
-from src.models.user import UserRecord, UserRole
+from src.models.user import Gender, UserRecord, UserRole
 
 
 class UserAlreadyExistsError(ValueError):
@@ -34,6 +40,34 @@ class NurseRegistrationDeniedError(ValueError):
 
 class InvalidAccessTokenError(ValueError):
     pass
+
+
+class DemoLoginDisabledError(ValueError):
+    pass
+
+
+DEMO_EMAIL_DOMAIN = "demo.vmedtriage.app"
+"""Tên miền riêng cho tài khoản dùng thử: nhìn địa chỉ là biết ngay bản ghi nào là dữ liệu demo.
+
+KHÔNG dùng `.local`/`.invalid` dù đúng nghĩa hơn - `UserResponse.email` là `EmailStr`, và
+email-validator chặn thẳng các tên miền dùng riêng đó, nên tài khoản tạo xong sẽ không serialize
+được. Hệ thống không gửi mail nào tới tài khoản demo (email_verified=True ngay từ đầu)."""
+
+_DEMO_TIMEZONE = timezone(timedelta(hours=7))
+"""Dấu thời gian trong id demo đọc bằng giờ Việt Nam - id này để người demo đọc, không phải để máy so."""
+
+_DEMO_ATTEMPTS = 5
+
+_DEMO_PROFILES: dict[UserRole, dict[str, str]] = {
+    UserRole.PATIENT: {"full_name": "Người dùng thử (Bệnh nhân)"},
+    UserRole.NURSE: {
+        "full_name": "Người dùng thử (Nhân viên y tế)",
+        "professional_license": "DEMO-LICENSE",
+        "workplace": "Cơ sở y tế demo",
+        "department": "Khoa Khám bệnh",
+        "bio": "Tài khoản dùng thử luồng duyệt ca của nhân viên y tế.",
+    },
+}
 
 
 class AuthService:
@@ -91,6 +125,50 @@ class AuthService:
             raise UserAlreadyExistsError("Email, tên đăng nhập hoặc số điện thoại đã được sử dụng") from error
         db.refresh(user)
         return user
+
+    def create_demo_user(self, db: Session, role: UserRole) -> UserRecord:
+        """Tạo MỘT tài khoản dùng thử `test-<role>-<yyyymmdd-hhmmss>` và trả về ngay để cấp token.
+
+        Tài khoản này bỏ qua hai cửa của luồng đăng ký thật - xác thực email và mã đăng ký nhân viên
+        y tế - nên nó chỉ được sinh khi `demo_login_enabled` bật. Mật khẩu là chuỗi ngẫu nhiên không
+        ai biết: vào được tài khoản demo chỉ có một đường là gọi lại chính endpoint này."""
+        if not get_settings().demo_login_enabled:
+            raise DemoLoginDisabledError("Chế độ dùng thử đang tắt trên môi trường này.")
+
+        profile = _DEMO_PROFILES[role]
+        stamp = datetime.now(_DEMO_TIMEZONE).strftime("%Y%m%d-%H%M%S")
+        now = datetime.now(timezone.utc)
+        for attempt in range(_DEMO_ATTEMPTS):
+            # Hai người bấm "Dùng thử" trong cùng một giây sẽ đụng username; thêm đuôi ngẫu nhiên từ
+            # lần thử thứ hai thay vì để họ nhìn thấy lỗi 500.
+            suffix = "" if attempt == 0 else f"-{secrets.token_hex(2)}"
+            username = f"test-{role.value}-{stamp}{suffix}"[:50]
+            user = UserRecord(
+                email=f"{username}@{DEMO_EMAIL_DOMAIN}",
+                username=username,
+                phone_number=f"09{secrets.randbelow(100_000_000):08d}",
+                full_name=profile["full_name"],
+                date_of_birth=date(1990, 1, 1),
+                gender=Gender.PREFER_NOT_TO_SAY,
+                avatar_data_url=DEFAULT_AVATAR_DATA_URL,
+                role=role,
+                password_hash=self.password_hash.hash(secrets.token_urlsafe(24)),
+                email_verified=True,
+                terms_accepted_at=now,
+                professional_license=profile.get("professional_license"),
+                workplace=profile.get("workplace"),
+                department=profile.get("department"),
+                bio=profile.get("bio"),
+            )
+            db.add(user)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                continue
+            db.refresh(user)
+            return user
+        raise UserAlreadyExistsError("Không tạo được tài khoản dùng thử, vui lòng thử lại.")
 
     @staticmethod
     def _username_from_email(db: Session, email: str) -> str:

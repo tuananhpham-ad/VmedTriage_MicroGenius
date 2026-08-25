@@ -9,12 +9,29 @@ tôn trọng điều kiện skip, và biết khi nào nên dừng".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from src.services.symptom_protocol import protocol as protocol_mod
 from src.services.symptom_protocol.models import QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol, clusters_for_stage
 
-StopReason = Literal["RED_FLAG", "SUFFICIENT_EVIDENCE", "BUDGET_EXHAUSTED", "USER_CANNOT_CONTINUE"]
+if TYPE_CHECKING:  # `ranking` import ngược lại module này lúc chạy - xem `select_cluster`.
+    from src.services.symptom_protocol.ranking import RankingContext
+
+StopReason = Literal[
+    "RED_FLAG",
+    "SUFFICIENT_EVIDENCE",
+    "BUDGET_EXHAUSTED",
+    "USER_CANNOT_CONTINUE",
+    "USER_UNCOOPERATIVE",
+    "NO_MORE_SYMPTOMS",
+]
+"""Lý do dừng, mã ỔN ĐỊNH - phiếu bàn giao và log đều đọc theo mã này (§1 bất biến 7).
+
+Ba mã cuối đều là "người bệnh không khai tiếp nữa" nhưng KHÔNG được gộp làm một: điều dưỡng cần
+phân biệt ca bỏ dở giữa chừng (`USER_CANNOT_CONTINUE`), ca không hợp tác sau khi đã được hỏi lại
+(`USER_UNCOOPERATIVE`), và ca người bệnh khẳng định đã kể hết trong khi hệ thống cũng không còn cụm
+bắt buộc nào (`NO_MORE_SYMPTOMS`). Gộp lại thì ba ca đó ra ba phiếu trông giống hệt nhau."""
 
 
 def is_filled(value: object) -> bool:
@@ -94,13 +111,71 @@ def cluster_is_skipped(protocol: SymptomProtocol, stage: str, cluster: QuestionC
     trọng đúng các điều kiện đó: một nhóm chỉ còn cụm bị skip (vd `G3B-COG` = Q3-02, tự loại khi dưới
     16 tuổi) phải được coi là ĐÃ giải quyết, nếu không câu sàng lọc sẽ liệt kê dấu hiệu không áp dụng
     được cho người bệnh này."""
-    emergency_scan_stage, early_visit_scan_stage = protocol.gate_stages
-    if stage == early_visit_scan_stage and protocol.provisional_emergency_signal(answers):
+    # KHONG unpack `protocol.gate_stages` thanh dung 2 bien: tu 2026-08-22 co the co gate thu ba
+    # (stage `E` quet cap cuu pho quat) va ban unpack se `ValueError` ngay luot dau.
+    if stage == protocol_mod.early_visit_scan_stage(protocol) and protocol.provisional_emergency_signal(answers):
         return True
     return protocol.skip_rule(cluster, answers)
 
 
 _cluster_is_skipped = cluster_is_skipped
+
+
+def eligible_clusters(
+    protocol: SymptomProtocol,
+    stage: str,
+    answers: dict[str, object],
+    *,
+    asked_ids: frozenset[str] = frozenset(),
+) -> tuple[QuestionCluster, ...]:
+    """Mọi cụm ĐƯỢC PHÉP hỏi ở stage này, theo thứ tự khai báo.
+
+    Ba điều kiện lọc giữ nguyên như bản first-fit. Tách ra thành hàm riêng vì việc xếp hạng (§8.3)
+    chỉ được sắp lại thứ tự BÊN TRONG tập này - nó không bao giờ mở thêm một cụm nào."""
+    return tuple(
+        cluster
+        for cluster in clusters_for_stage(protocol, stage)
+        if cluster.id not in asked_ids
+        and not _cluster_is_skipped(protocol, stage, cluster, answers)
+        and _cluster_needs_answer(protocol, cluster, answers)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterChoice:
+    """Cụm được chọn, kèm những cụm đã bị ĐẨY LÙI ở lượt này.
+
+    `deferred_ids` là thứ `coverage.CoverageLedger` cần: hoãn mà không ghi sổ thì linh hoạt biến
+    thành quên hỏi (§8.5)."""
+
+    cluster: QuestionCluster | None
+    deferred_ids: frozenset[str] = frozenset()
+
+
+def select_cluster(
+    protocol: SymptomProtocol,
+    stage: str,
+    answers: dict[str, object],
+    *,
+    asked_ids: frozenset[str] = frozenset(),
+    context: RankingContext | None = None,
+) -> ClusterChoice:
+    """Chọn cụm kế tiếp bằng XẾP HẠNG tất định thay cho first-fit thuần vị trí (§8.3).
+
+    `context is None` ⇒ không có tín hiệu nào ⇒ xếp hạng suy biến về thứ tự khai báo, tức đúng hành
+    vi first-fit cũ. Đó là điều kiện để bộ test hiện có không phải viết lại."""
+    # Import cục bộ: `ranking` phải dùng `field_is_settled`/`MANDATORY_TIERS` của module này, nên
+    # import ở đầu file sẽ tạo vòng. Đây là chỗ DUY NHẤT có vòng đó, và nó nằm về phía ít thiệt hại
+    # hơn: `stage_machine` vẫn là module thuần rule không phụ thuộc gì ở tầng trên.
+    from src.services.symptom_protocol import ranking
+
+    candidates = eligible_clusters(protocol, stage, answers, asked_ids=asked_ids)
+    if not candidates:
+        return ClusterChoice(None)
+    ordered = ranking.rank_clusters(
+        protocol, stage, answers, candidates, context or ranking.RankingContext(),
+    )
+    return ClusterChoice(ordered[0], frozenset(cluster.id for cluster in ordered[1:]))
 
 
 def next_cluster(
@@ -109,18 +184,11 @@ def next_cluster(
     answers: dict[str, object],
     *,
     asked_ids: frozenset[str] = frozenset(),
+    context: RankingContext | None = None,
 ) -> QuestionCluster | None:
     """Cụm câu hỏi kế tiếp trong `stage` hiện tại, hoặc `None` nếu đã hết cụm khả dụng (caller khi đó
     tự chuyển sang `next_stage(protocol, stage)`)."""
-    for cluster in clusters_for_stage(protocol, stage):
-        if cluster.id in asked_ids:
-            continue
-        if _cluster_is_skipped(protocol, stage, cluster, answers):
-            continue
-        if not _cluster_needs_answer(protocol, cluster, answers):
-            continue
-        return cluster
-    return None
+    return select_cluster(protocol, stage, answers, asked_ids=asked_ids, context=context).cluster
 
 
 def next_stage(protocol: SymptomProtocol, stage: str) -> str | None:
@@ -134,6 +202,31 @@ def next_stage(protocol: SymptomProtocol, stage: str) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class StopSignals:
+    """Ý định người bệnh, dạng dữ liệu, để đi qua `run_turn` -> `advance` -> `should_stop`.
+
+    Gói thành MỘT đối tượng thay vì ba tham số rời vì nó phải xuyên qua ba tầng: thêm một tín hiệu
+    nữa về sau là sửa đúng một chỗ. Mặc định "người bệnh vẫn hợp tác" nên mọi caller cũ chạy y như
+    trước khi chưa truyền gì.
+
+    Đây CHỈ là đầu vào của việc DỪNG. Không tầng nào được đọc nó để chọn cụm, đổi protocol hay hạ
+    escalation - xem docstring `should_stop`."""
+
+    user_can_continue: bool = True
+    """`False` = người bệnh nói rõ họ muốn dừng / không trả lời nữa (`user_intent.wants_to_stop`)."""
+
+    uncooperative: bool = False
+    """`True` = đã lạc đề liên tiếp, đã được hỏi lại một lần, và vẫn không hợp tác (§4.7b)."""
+
+    no_more_symptoms: bool = False
+    """`True` = người bệnh khẳng định không còn triệu chứng nào khác. Tín hiệu MỀM."""
+
+
+NO_STOP_SIGNALS = StopSignals()
+"""Mặc định dùng chung - `StopSignals` là frozen nên chia sẻ được một thể hiện."""
+
+
+@dataclass(frozen=True, slots=True)
 class Advance:
     """Kết quả duyệt tới cụm kế tiếp, có thể đã BĂNG QUA ranh giới stage."""
 
@@ -142,6 +235,8 @@ class Advance:
     """Stage của `cluster`, hoặc stage cuối cùng đã tới nếu dừng."""
     stop_reason: StopReason | None
     """Chỉ khác `None` khi `cluster is None` - lý do phiên nên kết thúc."""
+    deferred_ids: frozenset[str] = frozenset()
+    """Cụm đủ điều kiện hỏi nhưng thua điểm ở lượt này - caller ghi vào `CoverageLedger`."""
 
 
 def advance(
@@ -152,6 +247,8 @@ def advance(
     asked_ids: frozenset[str] = frozenset(),
     asked_count: int | None = None,
     known_triage_level: str | None = None,
+    context: RankingContext | None = None,
+    stop_signals: StopSignals = NO_STOP_SIGNALS,
 ) -> Advance:
     """Cụm kế tiếp THẬT SỰ sẽ được hỏi, băng qua stage nếu stage hiện tại đã hết cụm.
 
@@ -167,14 +264,17 @@ def advance(
     count = len(asked_ids) if asked_count is None else asked_count
     while True:
         stop = should_stop(
-            protocol, current_stage, answers, asked_count=count,
-            known_triage_level=known_triage_level,
+            protocol, current_stage, answers, asked_count=count, asked_ids=asked_ids,
+            known_triage_level=known_triage_level, context=context,
+            user_can_continue=stop_signals.user_can_continue,
+            uncooperative=stop_signals.uncooperative,
+            no_more_symptoms=stop_signals.no_more_symptoms,
         )
         if stop is not None:
             return Advance(None, current_stage, stop)
-        cluster = next_cluster(protocol, current_stage, answers, asked_ids=asked_ids)
-        if cluster is not None:
-            return Advance(cluster, current_stage, None)
+        choice = select_cluster(protocol, current_stage, answers, asked_ids=asked_ids, context=context)
+        if choice.cluster is not None:
+            return Advance(choice.cluster, current_stage, None, choice.deferred_ids)
         following = next_stage(protocol, current_stage)
         if following is None:
             stop = "SUFFICIENT_EVIDENCE" if protocol.self_care_checklist_satisfied(answers) else "BUDGET_EXHAUSTED"
@@ -232,17 +332,44 @@ def should_stop(
     answers: dict[str, object],
     *,
     asked_count: int,
+    asked_ids: frozenset[str] = frozenset(),
     route: str | None = None,
     known_triage_level: str | None = None,
     user_can_continue: bool = True,
+    uncooperative: bool = False,
+    no_more_symptoms: bool = False,
+    context: RankingContext | None = None,
 ) -> StopReason | None:
-    """Áp theo thứ tự: chốt đỏ > đủ căn cứ > hết ngân sách > người dùng không tiếp tục được.
-    `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ)."""
-    if not user_can_continue:
-        return "USER_CANNOT_CONTINUE"
+    """Áp theo thứ tự: chốt đỏ > ý định người bệnh > đủ căn cứ > hết ngân sách.
+    `asked_count` là số CỤM đã hỏi trong toàn phiên (không phải field đơn lẻ).
+
+    **`RED_FLAG` phải được xét TRƯỚC mọi nhánh ý định người bệnh** (P0.6). Bản cũ kiểm
+    `user_can_continue` đầu tiên, nên đúng lượt người bệnh vừa khai một dấu hiệu cấp cứu rồi nói
+    "thôi khỏi" thì phiên đóng với `USER_CANNOT_CONTINUE` - tức là KHÔNG escalate. Đó là một lỗi an
+    toàn, không phải một lựa chọn thứ tự: ý định dừng của người bệnh không bao giờ được tắt một tín
+    hiệu đỏ (`CLAUDE.md` nguyên tắc 4).
+
+    Ba tham số ý định đều chỉ được phép DỪNG phiên, không được đổi mức ưu tiên và không được chọn
+    cụm - chúng do `user_intent.classify` (thuần code) suy ra từ tin nhắn.
+
+    `no_more_symptoms` là tín hiệu MỀM: "không còn gì nữa" chỉ đóng phiên khi từ stage hiện tại trở
+    đi không còn cụm CHƯA HỎI nào mang field M0/M1. Người bệnh nói "hết rồi" khi chưa ai hỏi họ về
+    ngất hay đau lan xuống tay - họ không biết những thứ đó là triệu chứng cần khai (§1 bất biến 8:
+    được đổi THỨ TỰ hỏi, không được BỎ hỏi)."""
 
     if protocol.provisional_emergency_signal(answers) or known_triage_level == "EMERGENCY":
         return "RED_FLAG"
+
+    if not user_can_continue:
+        return "USER_CANNOT_CONTINUE"
+
+    if uncooperative:
+        return "USER_UNCOOPERATIVE"
+
+    if no_more_symptoms and not _unasked_mandatory_cluster_remains(
+        protocol, stage, answers, asked_ids,
+    ):
+        return "NO_MORE_SYMPTOMS"
 
     resolved_route = route or protocol.determine_route(answers)
 
@@ -256,8 +383,44 @@ def should_stop(
     if asked_count < budget_max:
         return None
 
-    candidate = next_cluster(protocol, stage, answers)
-    if candidate is None or _cluster_is_optional_tier(protocol, candidate):
-        return "BUDGET_EXHAUSTED"
+    candidate = next_cluster(protocol, stage, answers, context=context)
+    if candidate is not None and not _cluster_is_optional_tier(protocol, candidate):
+        return None
 
-    return None
+    # §8.5 quy tắc 2: không được đóng phiên khi còn cụm mang field M0/M1 CHƯA HỎI, kể cả khi cụm đó
+    # nằm ở stage SAU. Bản cũ chỉ nhìn cụm ứng viên của STAGE HIỆN TẠI, nên khi stage này hết cụm
+    # (hoặc chỉ còn cụm tuỳ chọn) thì phiên đóng ngay tại đó - `advance` gọi hàm này ở ĐẦU mỗi vòng
+    # lặp nên không bao giờ đi tới stage còn nợ.
+    #
+    # Ngưỡng ở đây là M0/M1 chứ không phải "mọi cụm không thuần O/H": tier C vẫn được ngân sách cắt
+    # đúng như trước (CS §6.5 cấp 12-16 cụm, và bộ test flow chốt trần 20 lượt cho ca lành tính).
+    # Điều kiện tính trên CỤM CHƯA HỎI chứ không trên `mandatory_fields_covered`: một field bắt buộc
+    # có thể vĩnh viễn `unknown` vì người bệnh không trả lời được, và "chưa đủ độ phủ" không được
+    # biến thành "phiên không bao giờ đóng".
+    if _unasked_mandatory_cluster_remains(protocol, stage, answers, asked_ids):
+        return None
+
+    return "BUDGET_EXHAUSTED"
+
+
+def _cluster_carries_mandatory_field(protocol: SymptomProtocol, cluster: QuestionCluster) -> bool:
+    return any(
+        protocol.fields_by_key[key].tier in MANDATORY_TIERS
+        for key in cluster.fields
+        if key in protocol.fields_by_key
+    )
+
+
+def _unasked_mandatory_cluster_remains(
+    protocol: SymptomProtocol, stage: str, answers: dict[str, object], asked_ids: frozenset[str],
+) -> bool:
+    """Từ `stage` trở đi còn cụm CHƯA HỎI nào mang field M0/M1 không."""
+    try:
+        index = protocol.stage_order.index(stage)
+    except ValueError:
+        return False
+    return any(
+        _cluster_carries_mandatory_field(protocol, cluster)
+        for later_stage in protocol.stage_order[index:]
+        for cluster in eligible_clusters(protocol, later_stage, answers, asked_ids=asked_ids)
+    )

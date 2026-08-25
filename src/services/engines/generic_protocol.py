@@ -26,6 +26,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.services.checklists.generic_checklist import (
+    CRITICAL_SCAN_STAGE,
+    EARLY_VISIT_SCAN_STAGE,
+    EMERGENCY_SCAN_STAGE,
     FIELDS_BY_KEY,
     GATE_STAGES,
     QUESTION_CLUSTERS,
@@ -33,7 +36,7 @@ from src.services.checklists.generic_checklist import (
 )
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
-from src.services.symptom_protocol.common_safety.emergency_message import EMERGENCY_MESSAGE
+from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
 from src.services.symptom_protocol.common_safety.predicates import age_in_months, array_has_any, is_true
 from src.services.symptom_protocol.models import QuestionCluster, RuleMatch
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -167,8 +170,9 @@ RULE_CATALOG: tuple = (
 # phiền ngoài sốt phải trả lời tuần tự từng cụm quét đỏ một, đúng thứ mà `screening.py` sinh ra để
 # tránh - và generic lại là protocol phục vụ 6/7 nhóm triệu chứng.
 SCREENING_GROUPS: tuple = (
-    common_screening.emergency_scan_groups(GATE_STAGES[0])
-    + common_screening.early_visit_scan_groups(GATE_STAGES[1])
+    common_screening.critical_scan_groups(CRITICAL_SCAN_STAGE)
+    + common_screening.emergency_scan_groups(EMERGENCY_SCAN_STAGE)
+    + common_screening.early_visit_scan_groups(EARLY_VISIT_SCAN_STAGE)
     + common_screening.risk_context_groups("4")
 )
 
@@ -184,8 +188,12 @@ GENERIC_PROTOCOL = SymptomProtocol(
     name=PROTOCOL_NAME,
     fields_by_key=FIELDS_BY_KEY,
     clusters=QUESTION_CLUSTERS,
+    derived_field_keys=("complaint_duration_days",),
     stage_order=STAGE_ORDER,
     gate_stages=GATE_STAGES,
+    critical_scan_stage=CRITICAL_SCAN_STAGE,
+    emergency_scan_stage=EMERGENCY_SCAN_STAGE,
+    early_visit_scan_stage=EARLY_VISIT_SCAN_STAGE,
     budget=BUDGET,
     budget_floor_stage=BUDGET_FLOOR_STAGE,
     determine_route=determine_route,
@@ -196,7 +204,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     rule_catalog=RULE_CATALOG,
     fallback_rule=common_rules.default_early_visit_rule,
     self_care_default_rule=_self_care_default_rule,
-    emergency_message=EMERGENCY_MESSAGE,
+    patient_red_flag_message=SUSPECTED_RED_FLAG_MESSAGE,
     safety_signal_fields=SAFETY_SIGNAL_FIELDS,
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS,
     screening_groups=SCREENING_GROUPS,

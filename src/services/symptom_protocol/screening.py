@@ -45,6 +45,13 @@ MIN_GROUPS_PER_PROBE = 2
 """Dưới 2 nhóm thì hỏi gộp không tiết kiệm được lượt nào, mà lại đánh đổi: câu hỏi dài hơn và phải
 qua đường verdict thay vì hỏi thẳng đúng script chuẩn của cụm."""
 
+CRITICAL_STAGE_MIN_GROUPS = 1
+"""Stage quét cấp cứu phổ quát (`critical_scan_stage`) cố ý có đúng MỘT nhóm.
+
+Nhóm đó gộp nhiều cụm nguy kịch vào câu hỏi tĩnh đầu tiên, nên vẫn tiết kiệm lượt dù số *nhóm* là
+một. Áp `MIN_GROUPS_PER_PROBE = 2` cho stage này sẽ âm thầm bỏ qua câu quét, rồi hỏi từng cụm bằng
+LLM — vừa sai thứ tự F01 vừa làm mất bảo đảm danh sách dấu hiệu được đọc nguyên văn."""
+
 MAX_GROUPS_PER_PROBE = 3
 """Trần TRÊN, đối trọng của `MIN_GROUPS_PER_PROBE`. Cả cơ chế này dựa trên tiền đề "nhóm chỉ được
 đóng khi người bệnh đã THỰC SỰ nhìn thấy danh sách dấu hiệu của nó" - tiền đề đó yếu dần theo độ dài
@@ -142,6 +149,8 @@ def next_probe(
        cần luật đặc biệt nào: chúng đứng TRƯỚC trong thứ tự tài liệu nên `next_cluster` trả chúng ra
        trước, và điều kiện này tự loại lượt sàng lọc.
     2. Ít nhất `MIN_GROUPS_PER_PROBE` nhóm chưa giải quyết - dưới ngưỡng thì hỏi thẳng cụm rẻ hơn.
+       Ngoại lệ duy nhất là `critical_scan_stage`: stage này cố ý có đúng một nhóm gộp nhiều cụm
+       và phải phát thành câu quét tĩnh ở lượt đầu.
     3. Chưa hết hạn mức vòng sàng lọc của stage (`history` là các tập nhóm đã sàng lọc ở stage này).
     4. Vòng sau phải ĐỌC LÊN ít nhất một nhóm CHƯA từng đọc. Đây là điều đo được khi chạy thử chứ
        không phải suy đoán: nếu vòng đầu không thu được gì (người bệnh trả lời "em không hiểu ý câu
@@ -156,13 +165,18 @@ def next_probe(
     """
     if candidate is None or len(history) >= protocol.max_screening_rounds:
         return ()
+    min_groups = (
+        CRITICAL_STAGE_MIN_GROUPS
+        if protocol.critical_scan_stage and stage == protocol.critical_scan_stage
+        else MIN_GROUPS_PER_PROBE
+    )
     groups = unresolved_groups(protocol, stage, answers, closed_ids=closed_ids)
-    if len(groups) < MIN_GROUPS_PER_PROBE:
+    if len(groups) < min_groups:
         return ()
     if not any(candidate.id in group.cluster_ids for group in groups):
         return ()
     selected = _select_groups(groups, history)
-    if len(selected) < MIN_GROUPS_PER_PROBE:
+    if len(selected) < min_groups:
         return ()
     already_read = frozenset().union(*history) if history else frozenset()
     if all(group.id in already_read for group in selected):

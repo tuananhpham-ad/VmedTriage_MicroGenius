@@ -126,9 +126,11 @@ def llm_attempt(
     model: str,
     ok: bool,
     latency_ms: int | None = None,
+    role: str | None = None,
+    output: str = "",
     note: str = "",
 ) -> None:
-    """In provider + MODEL của từng lần gọi LLM, cả lần thành công lẫn lần bị bỏ qua.
+    """In provider + MODEL + OUTPUT của từng lần gọi LLM, cả lần thành công lẫn lần bị bỏ qua.
 
     Không nhận `session_id` vì `provider_router` không biết phiên nào đang gọi - đổi lại, dòng này
     nằm ngay giữa các dòng của phiên đang chạy nên vẫn đọc được theo thứ tự thời gian.
@@ -138,13 +140,19 @@ def llm_attempt(
     """
     if not enabled():
         return
+    role_label = role or "-"
     if ok:
         detail = f"{latency_ms}ms" if latency_ms is not None else ""
-        body = f"{provider} {_DOT} {model}" + (f" {_DOT} {detail}" if detail else "")
+        body = f"{role_label} {_DOT} {provider} {_DOT} {model}" + (f" {_DOT} {detail}" if detail else "")
         _emit(f"{_MID}   {_ARROW} {_paint('LLM  ' + body, _Color.DIM)}")
+        if output:
+            _emit(f"{_MID}      {_paint('OUT  ' + _clip(output, 220), _Color.DIM)}")
         return
     reason = note or "lỗi"
-    _emit(f"{_MID}   {_ARROW} {_paint(f'LLM  {provider} {_DOT} {model} {_DOT} bỏ qua: {reason}', _Color.YELLOW)}")
+    _emit(
+        f"{_MID}   {_ARROW} "
+        f"{_paint(f'LLM  {role_label} {_DOT} {provider} {_DOT} {model} {_DOT} bỏ qua: {reason}', _Color.YELLOW)}"
+    )
 
 
 def agent_question(session_id: str, question: str, *, llm_used: bool) -> None:

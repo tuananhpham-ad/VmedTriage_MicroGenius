@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.database import configure_database, create_tables, dispose_database
+from src.database import configure_database, create_tables, dispose_database, normalize_database_url
 from src.models.schemas import CaseStatus, TriageCase, TriagePriority, TriageProposal
 from src.services.stores.approval_store import ApprovalStatusRecord, AuditLogEntry, approval_store
 from src.services.stores.case_store import case_store
@@ -41,6 +41,13 @@ def _case(case_id: str, priority: TriagePriority = TriagePriority.EMERGENCY) -> 
         status=CaseStatus.NEEDS_NURSE_REVIEW,
         created_at=datetime.now(timezone.utc),
         triage_proposal=TriageProposal(priority=priority, reason="test"),
+    )
+
+
+def test_postgres_platform_url_is_normalized_for_sqlalchemy():
+    assert (
+        normalize_database_url("postgres://user:password@host:5432/vmedtriage")
+        == "postgresql://user:password@host:5432/vmedtriage"
     )
 
 

@@ -79,3 +79,90 @@ class AuditLogRow(Base):
     new_value: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class ConversationRow(Base):
+    """Phiên hỏi-đáp đang dở, persist sau MỖI lượt (§4.9 M1).
+
+    **Vì sao đây là điều kiện tiên quyết của M2/M3, không phải một tối ưu.** `ARCHITECTURE.md` ghi
+    `session_store` mất khi restart: phiên đang dở còn chưa sống nổi qua một lần deploy, mà kế hoạch
+    đã bàn tới ký ức xuyên phiên. Bàn về "lấy 3 phiên gần nhất để hỏi thăm" khi phiên hiện tại còn
+    biến mất giữa chừng là làm ngược thứ tự.
+
+    **Khoá composite `user_id + conversation_id`** đúng như yêu cầu - mỗi hội thoại là một collection
+    độc lập, và mọi đường đọc buộc phải đi kèm `user_id` (`CLAUDE.md` nguyên tắc 5: chỉ nhân viên y tế
+    được gán ca hoặc chính chủ mới truy cập được dữ liệu triệu chứng).
+
+    ⚠️ **`conversation_id` là UUID, KHÔNG phải timestamp.** Hai phiên mở cùng một giây sẽ đụng khoá
+    nhau, và một timestamp nằm trong khoá là metadata rò ra ngoài cho bất kỳ ai đọc URL. `created_at`
+    là một cột riêng.
+
+    **Credential KHÔNG bao giờ được persist.** `payload` là `Session` đã lược bỏ khoá API - phiên
+    khôi phục lại dùng credential mặc định của protocol. Ghi key vào DB để tiện khôi phục là đổi một
+    bất tiện lấy một sự cố bảo mật.
+    """
+
+    __tablename__ = "conversations"
+
+    conversation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    """Phiên khách (chưa đăng nhập) dùng `0`. Không nullable vì nó là một nửa của khoá chính - và một
+    khoá chính nullable là khoá không dùng được."""
+    protocol_name: Mapped[str] = mapped_column(String(64), default="")
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Tách phẳng để truy được "phiên nào còn dở" mà không phải nạp và parse cả payload."""
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    payload: Mapped[dict] = mapped_column(JSON)
+    """`Session` đã serialize (`conversation_store.dump_session`). Cột JSON vì cùng lý do với
+    `TriageCaseRow.payload`: hình dạng `Session` còn đang đổi theo sprint."""
+    nurse_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    """Phiếu bàn giao (`HandoffSummary`) của phiên đã đóng - cột riêng cho Memory **M3** (§4.9,
+    `F04_memory.md` §3).
+
+    **Vì sao là cột riêng chứ không đọc lại từ `payload`.** Mở một hội thoại mới phải lấy được 3
+    phiên gần nhất của cùng người dùng để agent hỏi thăm; đọc `payload` nghĩa là nạp và dựng lại
+    trọn `Session` của cả ba phiên (kèm cụm, ledger, metrics) chỉ để lấy đúng một dòng "lần trước
+    kể bị gì". Đó là công việc của một truy vấn, không phải của một lần khôi phục phiên.
+
+    **`None` là bình thường, không phải lỗi:** phiên còn đang dở chưa có phiếu, và phiếu chỉ được
+    sinh khi phiên đã đóng (`_attach_narrative`, ADR-006).
+
+    ⚠️ Nội dung ở đây là PHI và nó sống LÂU HƠN phiên sinh ra nó. Consent + retention là điều kiện
+    3 của §3 `F04_memory.md`, và là câu hỏi cho PM - `Settings.long_memory_enabled` mặc định TẮT cho
+    tới khi có câu trả lời bằng văn bản."""
+
+
+class FollowupQuestionRow(Base):
+    """Câu hỏi thăm ĐÃ CHẮT LỌC SẴN cho một người dùng — Memory **M3**, phần "hỏi luôn khi mở".
+
+    **Vì sao lưu câu hỏi chứ không tính lại lúc mở hội thoại.** Lượt mở là lượt duy nhất người bệnh
+    phải chờ mà chưa nhận lại được gì; nhét vào đó một truy vấn 3 hàng + một lần chắt lọc là bắt họ
+    trả phí cho một tính năng xã giao. Câu hỏi được sinh ở chỗ RẢNH (lúc phiên trước vừa đóng), lượt
+    mở chỉ còn một lần `SELECT` theo khoá chính.
+
+    **Một hàng cho mỗi người dùng, không phải một hàng cho mỗi lần sinh.** Thứ cần trả lời ở lượt mở
+    là "câu hỏi thăm HIỆN TẠI của người này", không phải lịch sử các câu hỏi thăm - và một bảng chỉ
+    thêm sẽ phải kèm một câu `ORDER BY ... LIMIT 1` đúng ở chỗ vừa bỏ công làm cho rẻ.
+
+    ⚠️ `question` là văn bản dẫn xuất từ PHI (nó nêu lại than phiền chính người bệnh đã kể). Nó sống
+    dưới cùng chính sách retention với `ConversationRow.nurse_summary_json`, và cùng công tắc
+    `LONG_MEMORY_ENABLED`."""
+
+    __tablename__ = "followup_questions"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    """Khoá chính là `user_id` - KHÔNG có hàng nào cho khách (`user_id = 0`): "chưa biết là ai" thì
+    không có ai để hỏi thăm, và gộp mọi phiên khách vào một hàng là rò dữ liệu giữa người lạ."""
+    question: Mapped[str] = mapped_column(Text, default="")
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    """Dùng để BỎ câu hỏi đã quá hạn ở lượt đọc. Câu hỏi được sinh một lần rồi nằm đó chờ; nếu người
+    bệnh ba tháng sau mới quay lại thì thứ đang chờ họ là một câu hỏi thăm lạc đề."""
+    asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    """`None` = chưa hỏi. Hỏi xong thì đóng dấu, vì hỏi thăm là một câu HỎI chứ không phải một lời
+    chào: lặp lại đúng câu đó ở mọi lần mở hội thoại biến nó thành tiếng ồn."""
+    source_conversation_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    """Các phiên đã được chắt lọc ra câu hỏi này - để truy được "câu này từ đâu ra" khi có ai hỏi,
+    và để không phải đoán bằng cách dựng lại lịch sử tại thời điểm đó."""

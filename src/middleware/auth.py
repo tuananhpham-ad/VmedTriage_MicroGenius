@@ -27,6 +27,7 @@ AUTHENTICATED = frozenset({UserRole.PATIENT, UserRole.NURSE})
 ROUTE_POLICIES = (
     RoutePolicy("POST", re.compile(r"^/api/v1/chat/?$"), PATIENT),
     RoutePolicy("POST", re.compile(r"^/api/v1/chat/stream/?$"), PATIENT),
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/force-complete/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
     RoutePolicy("PUT", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/auth/change-password/?$"), AUTHENTICATED),
@@ -35,6 +36,7 @@ ROUTE_POLICIES = (
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/patient/history/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/summary/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
 )

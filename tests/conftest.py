@@ -7,7 +7,39 @@ from httpx import ASGITransport, AsyncClient
 from src.config import get_settings
 from src.database import configure_database, create_tables, dispose_database
 from src.main import app
-from src.services.infra.account_mailer import account_mailer
+from src.services.infra.account_mailer import DELIVERED, account_mailer
+
+
+@pytest.fixture(autouse=True)
+def _source_support_off_by_default():
+    """Không một bài test nào được gọi API thật của tầng trích nguồn (part 3).
+
+    `.env` của người phát triển có SOURCE_SUPPORT_ENABLED=true, và `Settings` đọc file đó, nên nếu
+    không chặn ở đây thì mọi bài test chạm vào `decide_for_case` sẽ lặng lẽ gọi Gemini + OpenAI thật -
+    đã xảy ra một lần (2026-08-19) và chỉ lộ ra nhờ dòng log guard_0c giữa output pytest.
+
+    Bài nào cần bật thì tự `monkeypatch.setattr(get_settings(), "source_support_enabled", True)` và
+    vá luôn `pipeline.run` - tức phải nói rõ ý định, không bật nhầm được."""
+    settings = get_settings()
+    previous = settings.source_support_enabled
+    settings.source_support_enabled = False
+    yield
+    settings.source_support_enabled = previous
+
+
+@pytest.fixture(autouse=True)
+def _graph_triage_off_by_default():
+    """Không để `.env` của developer làm test route gọi model thật.
+
+    Mode đều best-effort và mặc định nguồn là tắt, nhưng máy local có thể đang bật để thử tay. Test
+    nào cần kiểm C6 phải chọn mode tường minh và mock nhánh model; nhờ vậy suite không
+    treo ở network call ngoài ý muốn.
+    """
+    settings = get_settings()
+    previous_mode = settings.graph_triage_mode
+    settings.graph_triage_mode = "off"
+    yield
+    settings.graph_triage_mode = previous_mode
 
 
 @pytest_asyncio.fixture
@@ -58,7 +90,13 @@ async def _create_session(client: AsyncClient, role: str) -> dict[str, str]:
 
     delivered_codes: list[str] = []
     original_sender = account_mailer.send_email_verification_code
-    account_mailer.send_email_verification_code = lambda *, recipient, code: delivered_codes.append(code)
+    # Tra DELIVERED chu khong phai None: `register`/`resend` doc `.delivered` de biet thu co di
+    # khong - mot stub tra None se lam route no `AttributeError` thay vi chay duong thanh cong.
+    def _capture(*, recipient, code):
+        delivered_codes.append(code)
+        return DELIVERED
+
+    account_mailer.send_email_verification_code = _capture
     try:
         resend_response = await client.post(
             "/api/v1/auth/email-verification/resend", json={"email": email}

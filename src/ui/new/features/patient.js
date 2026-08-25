@@ -1,43 +1,447 @@
 import { api, ApiError, apiStream } from "../api.js";
-import { accountMenu, bindAccountMenu } from "./account.js?v=settings-full-20260813";
-import { setActiveCase, state } from "../state.js";
-import { escapeHtml, logo, shortCaseId, showToast, statusClass, statusLabels, symptomGroupLabels } from "../shared.js";
+import { accountMenu, bindAccountMenu } from "./account.js?v=design-20260819b";
+import { completedStatuses, setActiveCase, state } from "../state.js";
+import {
+  appHeader,
+  escapeHtml,
+  formatDate,
+  icon,
+  identityBlock,
+  paragraphs,
+  priorityClass,
+  priorityDot,
+  priorityLabels,
+  shortCaseId,
+  showToast,
+  statusClass,
+  statusLabels,
+  symptomGroupLabels,
+} from "../shared.js";
 
-const commonSymptoms = [
-  ["Sốt", "Tôi bị sốt."], ["Đau bụng", "Tôi bị đau bụng."], ["Đau ngực", "Tôi bị đau ngực."], ["Khó thở", "Tôi cảm thấy khó thở."], ["Đau đầu", "Tôi bị đau đầu."],
-];
+// G1 "make capabilities explicit" — nguyên văn của bản thiết kế, dùng ở CẢ W-02 (mục 1) và dải năng
+// lực của W-03. Một hằng số cho cả hai chỗ: hai bản chép tay lệch nhau nghĩa là phạm vi của trợ lý
+// được mô tả hai kiểu khác nhau tuỳ người bệnh đang đứng ở màn nào.
+const AI_SCOPE_VI =
+  "Trợ lý AI hỗ trợ người dùng đánh giá mức độ khẩn cấp dựa trên các triệu chứng được cung cấp — không chẩn đoán bệnh, không kê đơn thuốc.";
 
+// ── Đồng bộ trạng thái ca ─────────────────────────────────────────────────────────────────────
+// Điều dưỡng duyệt ở máy khác, nên màn hình bệnh nhân không có cách nào tự biết ngoài việc hỏi lại.
+// ADR-005 đã chốt polling thay vì WebSocket cho MVP; hàng đợi điều dưỡng vốn đã polling 15s, phía
+// bệnh nhân thì chưa có gì - đó là lý do trước đây phải F5 mới thấy kết quả.
+let casePolling = null;
+
+export function stopCasePolling() {
+  if (casePolling) window.clearInterval(casePolling);
+  casePolling = null;
+}
+
+/** Chỉ vẽ lại khi có thay đổi THẬT. Vẽ lại mỗi 10s vô điều kiện sẽ nháy màn hình và cuộn lại khung
+ *  chat trong lúc người bệnh đang đọc. */
+function statusSignature(item) {
+  return [item?.status, item?.triage_proposal?.priority, item?.patient_visible_response, item?.red_flags?.length, item?.conversation?.length].join("|");
+}
+
+function startCasePolling(root, context, render) {
+  stopCasePolling();
+  if (!state.caseId) return;
+  casePolling = window.setInterval(async () => {
+    // Đang giữa một lượt chat thì không chen: `submitMessage` sẽ tự cập nhật case khi xong.
+    if (state.patientBusy) return;
+    let fresh;
+    try {
+      fresh = await api(`/api/v1/cases/${state.caseId}`);
+    } catch {
+      return; // Mất mạng tạm thời không được làm hỏng màn hình đang xem.
+    }
+    if (statusSignature(fresh) === statusSignature(state.currentPatientCase)) return;
+    state.currentPatientCase = fresh;
+    // Giữ lại phần người bệnh đang gõ dở - vẽ lại mà mất chữ thì tệ hơn là chậm cập nhật.
+    const draft = root.querySelector("#patient-message")?.value || "";
+    render(root, context);
+    const input = root.querySelector("#patient-message");
+    if (input && draft) input.value = draft;
+    // Ca đã có kết luận thì không còn gì để chờ.
+    if (fresh.status === "approved" || fresh.status === "rejected") stopCasePolling();
+  }, 10000);
+}
+
+/** Chỉ hai mục. "Khai báo triệu chứng" đã rời thanh điều hướng: nó là một HÀNH ĐỘNG bắt đầu từ
+ *  trang chủ, không phải một nơi để lui tới - và khi đang có ca dở dang thì bấm vào nó lại rơi vào
+ *  ca đó chứ không mở ca mới, đúng kiểu mục điều hướng làm hai việc khác nhau tuỳ trạng thái.
+ *
+ *  Mọi ca đã khai báo giờ tập trung ở "Kết quả của tôi". */
+function patientNav(active) {
+  return [
+    { label: "Trang chủ", active: active === "home", action: "home" },
+    { label: "Kết quả của tôi", active: active === "cases", action: "cases" },
+  ];
+}
+
+function bindPatientNav(root, { navigate }) {
+  root.querySelectorAll("[data-nav]").forEach((button) =>
+    button.addEventListener("click", () => {
+      if (button.dataset.nav === "home") navigate("patient-home");
+      if (button.dataset.nav === "cases") navigate("patient-cases");
+    }),
+  );
+}
+
+/** Dải "Trường hợp khẩn cấp - Gọi 115". Nằm TRÊN header và có mặt ở MỌI màn bệnh nhân, kể cả màn
+ *  chỉ đọc lịch sử: người đang có triệu chứng nguy hiểm không nhất thiết đang đứng ở trang chủ, và
+ *  câu này chỉ có tác dụng nếu nó ở chỗ họ đang nhìn. */
+function emergencyBar() {
+  return `<div class="patient-emergency-bar"><div><span class="patient-emergency-signal" aria-hidden="true"></span><span><strong>Trường hợp khẩn cấp:</strong> Đau ngực dữ dội, khó thở cấp, ngất xỉu hoặc chấn thương nặng, vui lòng không chờ trong ứng dụng.</span></div><a href="tel:115">${icon("phone", 15)}<span>Gọi 115</span></a></div>`;
+}
+
+/** Header chuẩn của mọi màn bệnh nhân. Đi qua đây thay vì gọi thẳng `appHeader` để dải khẩn cấp
+ *  không thể sót ở màn nào. */
+function patientHeader(active, { title = "", right = "" } = {}) {
+  return emergencyBar() + appHeader({
+    nav: patientNav(active),
+    title,
+    right: right || `<div class="header-right">${identityBlock("Bệnh nhân")}${accountMenu()}</div>`,
+  });
+}
+
+/** W-00 — trang chủ bệnh nhân. */
+function renderPatientHomeLegacy(root, { navigate, logout }) {
+  const current = state.currentPatientCase;
+  const name = state.user?.full_name || "bạn";
+  root.innerHTML = `<section class="app-shell">${patientHeader("home")}
+    <main class="page">
+      <div class="home-stack">
+        <div class="home-top">
+          <section class="home-hero">
+            <div>
+              <p class="home-hello">Chào ${escapeHtml(name)}</p>
+              <h1>Bạn đang gặp vấn đề gì hôm nay?</h1>
+            </div>
+            <p>Mô tả triệu chứng bằng lời của bạn. Trợ lý sẽ hỏi thêm theo checklist y tế, sau đó nhân viên y tế xác nhận mức ưu tiên và gửi hướng dẫn xử trí cho bạn.</p>
+            <div class="action-row">
+              <button class="primary-button" type="button" data-start>${icon("chat", 18)}<span>Bắt đầu khai báo triệu chứng</span></button>
+              <button class="secondary-button" type="button" data-guide>Xem hướng dẫn sử dụng</button>
+            </div>
+            <p class="fine-print">Thời gian trung bình để có hướng dẫn ban đầu: dưới 3 phút.</p>
+          </section>
+
+          <div class="home-aside">
+            <div class="alert-card">
+              <b>${icon("phone", 19)} Trường hợp khẩn cấp</b>
+              <p>Đau ngực dữ dội, khó thở nặng, co giật, chảy máu không cầm — gọi <strong class="num">115</strong> ngay, không chờ trong ứng dụng.</p>
+            </div>
+            ${openCaseCard(current)}
+          </div>
+        </div>
+
+        <div class="feature-row">
+          <article><span class="feature-icon">${icon("clipboard", 21)}</span><h3>Khai báo triệu chứng</h3><p>5 nhóm triệu chứng: Sốt, Đau bụng, Đau ngực, Khó thở, Đau đầu / Chấn thương đầu nhẹ.</p></article>
+          <article><span class="feature-icon is-green">${icon("shieldCheck", 21)}</span><h3>Kết quả đã duyệt</h3><p>Hướng dẫn xử trí chỉ hiển thị sau khi nhân viên y tế xác nhận.</p></article>
+          <article><span class="feature-icon is-grey">${icon("user", 21)}</span><h3>Hồ sơ sức khoẻ</h3><p>Tiền sử bệnh, thuốc đang dùng và dị ứng — giúp phân loại chính xác hơn.</p></article>
+        </div>
+
+        <section class="history-card">
+          <div class="head"><h2>Lịch sử phiên khai báo</h2></div>
+          <div class="history-body" id="history-list"><p class="muted-copy">Đang tải lịch sử.</p></div>
+        </section>
+
+        <p class="fine-print">VMedTriage là công cụ hỗ trợ phân loại ưu tiên ban đầu, không phải chẩn đoán. Mọi hướng dẫn xử trí đều do nhân viên y tế xác nhận trước khi gửi.</p>
+      </div>
+    </main>
+  </section>`;
+
+  bindPatientNav(root, { navigate });
+  root.querySelectorAll("[data-start]").forEach((button) => button.addEventListener("click", () => navigate("disclaimer")));
+  root.querySelector("[data-guide]").addEventListener("click", () => navigate("disclaimer"));
+  root.querySelector("[data-open-case]")?.addEventListener("click", () => navigate("patient-cases"));
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientHome(root, { navigate, logout }) });
+  loadPatientHistory(root, { navigate, logout });
+}
+
+/** Dashboard bệnh nhân: áp dụng bố cục hero + theo dõi ca, chỉ dùng trạng thái có trong hệ thống. */
 export function renderPatientHome(root, { navigate, logout }) {
   const current = state.currentPatientCase;
-  root.innerHTML = `<section class="app-shell patient-home"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link is-active" type="button">Trang chủ</button><button class="nav-link" type="button" data-start>Phiên khai báo</button></nav>${accountMenu()}</header><main class="page-content" id="patient-main"><section class="home-hero"><div><p class="eyebrow">Không gian bệnh nhân</p><h1>Bắt đầu khai báo triệu chứng.</h1><p>Trợ lý sẽ ghi nhận thông tin ban đầu. Hướng dẫn xử trí chỉ được gửi sau khi nhân viên y tế xác nhận.</p><button class="primary-button hero-button" type="button" data-start>Bắt đầu khai báo</button></div><aside class="safety-card"><strong>Trong trường hợp khẩn cấp</strong><p>Đau ngực dữ dội, khó thở nặng, co giật hoặc chảy máu không cầm được: gọi 115 ngay.</p></aside></section><section class="case-overview"><div class="section-heading"><div><h2>Ca đang mở</h2><p>Theo dõi trạng thái phiên khai báo gần nhất.</p></div>${current ? `<span class="status-badge ${statusClass(current.status)}">${statusLabels[current.status] || "Đang xử lý"}</span>` : ""}</div>${current ? currentCaseCard(current) : `<div class="empty-state"><strong>Chưa có ca nào đang mở</strong><span>Khi bắt đầu khai báo, tiến trình và kết quả đã duyệt sẽ xuất hiện tại đây.</span></div>`}</section><section class="history-overview"><div class="section-heading"><div><h2>Lịch sử phiên khai báo</h2><p>Các ca thuộc tài khoản của bạn.</p></div></div><div id="history-list" class="history-list"><p class="muted-copy">Đang tải lịch sử.</p></div></section><section class="feature-row"><article><strong>Khai báo triệu chứng</strong><span>Mô tả tự do hoặc chọn nhóm triệu chứng phổ biến.</span></article><article><strong>Kết quả đã duyệt</strong><span>Không hiển thị hướng dẫn cho đến khi có xác nhận của nhân viên y tế.</span></article><article><strong>Hồ sơ bảo mật</strong><span>Thông tin của bạn chỉ dùng cho mục đích phân luồng ban đầu.</span></article></section></main></section>`;
+  const name = state.user?.full_name || "bạn";
+  root.innerHTML = `<section class="app-shell patient-dashboard-shell">
+    ${patientHeader("home")}
+    <main class="page">
+      <div class="patient-dashboard">
+        <div class="patient-dashboard-top">
+          <section class="patient-action-hero">
+            <div class="patient-action-copy">
+              <span class="patient-action-tag">${icon("chat", 15)} Trợ lý AI hỗ trợ sàng lọc triệu chứng</span>
+              <p class="home-hello">Chào ${escapeHtml(name)}</p>
+              <h1>Bạn cảm thấy không khỏe ở đâu?</h1>
+              <p>Mô tả triệu chứng bằng lời của bạn. Trợ lý sẽ hỏi thêm các thông tin cần thiết để nhân viên y tế đánh giá và gửi hướng dẫn phù hợp.</p>
+              <div class="action-row">
+                <button class="primary-button" type="button" data-start>${icon("chat", 18)}<span>Bắt đầu khai báo triệu chứng</span></button>
+                <button class="secondary-button" type="button" data-guide>${icon("clipboard", 17)}<span>Hướng dẫn sử dụng</span></button>
+              </div>
+            </div>
+            <div class="patient-action-footer">
+              <p class="patient-action-note">${icon("shieldCheck", 16)} Mọi hướng dẫn xử trí đều được nhân viên y tế thẩm định trước khi gửi.</p>
+              <span class="patient-action-availability"><i aria-hidden="true"></i>Tiếp nhận thông tin 24/7</span>
+            </div>
+          </section>
+          <div id="open-case-slot">${openCaseCard(current)}</div>
+        </div>
+
+        <div class="patient-quick-grid">
+          <button class="patient-quick-card" type="button" data-start><span class="feature-icon">${icon("clipboard", 21)}</span><span><strong>Khai báo triệu chứng</strong><small>Nhập thông tin theo cách tự nhiên, trợ lý sẽ hỏi thêm khi cần.</small></span>${icon("chevronRight", 18)}</button>
+          <button class="patient-quick-card is-result" type="button" data-result><span class="feature-icon is-green">${icon("shieldCheck", 21)}</span><span><strong>Kết quả của tôi</strong><small>Toàn bộ ca đã khai báo, kèm kết quả phân loại và hướng dẫn xử trí.</small></span>${icon("chevronRight", 18)}</button>
+          <article class="patient-quick-card"><span class="feature-icon is-health">${icon("user", 21)}</span><span><strong>Hồ sơ sức khỏe</strong><small>Thông tin dị ứng, bệnh mạn tính và các lưu ý giúp sàng lọc an toàn hơn.</small></span></article>
+        </div>
+
+        <section class="history-card">
+          <div class="head"><div><h2>Lịch sử phiên khai báo triệu chứng</h2><p>Danh sách các phiên sàng lọc trước đây của bạn.</p></div><button class="history-all-link" type="button" data-history-all>Xem tất cả lịch sử ${icon("chevronRight", 16)}</button></div>
+          <div class="history-body" id="history-list"><p class="muted-copy">Đang tải lịch sử.</p></div>
+        </section>
+        <p class="fine-print">VMedTriage hỗ trợ sàng lọc mức độ ưu tiên ban đầu, không thay thế chẩn đoán. Mọi hướng dẫn xử trí đều do nhân viên y tế xác nhận trước khi gửi.</p>
+      </div>
+    </main>
+  </section>`;
+
+  bindPatientNav(root, { navigate });
   root.querySelectorAll("[data-start]").forEach((button) => button.addEventListener("click", () => navigate("disclaimer")));
+  root.querySelector("[data-guide]").addEventListener("click", () => navigate("disclaimer"));
+  root.querySelector("[data-result]").addEventListener("click", () => navigate("patient-cases"));
+  root.querySelector("[data-open-case]")?.addEventListener("click", () => openCurrentCaseHistory(navigate));
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientHome(root, { navigate, logout }) });
-  root.querySelector("[data-open-case]")?.addEventListener("click", () => renderPatientChat(root, { navigate, logout }));
   loadPatientHistory(root, { navigate, logout });
+}
+
+function openCaseCard(current) {
+  if (!current) {
+    return `<div class="open-case-card is-empty">
+      <div class="head"><span class="section-label">Tiến trình hiện tại</span><span class="case-ready-status"><i aria-hidden="true"></i>Sẵn sàng</span></div>
+      <div class="open-case-empty-state"><span class="open-case-illustration">${icon("clipboard", 25)}</span><strong>Chưa có ca đang chờ duyệt</strong><p>Khi gửi khai báo mới, tình trạng và phản hồi sẽ hiển thị tại đây.</p></div>
+      <div id="recent-case-slot"></div>
+      <div class="open-case-availability"><i aria-hidden="true"></i>Hệ thống tiếp nhận thông tin 24/7</div>
+    </div>`;
+  }
+  const complaint = current.summary?.chief_complaint || symptomGroupLabels[current.structured_data?.symptom_group] || "Triệu chứng đang khai báo";
+  const isEmergency = current.status === "escalated";
+  const statusCopy = isEmergency
+    ? "Tình trạng này cần được cấp cứu. Không chờ phản hồi trong ứng dụng."
+    : current.status === "approved"
+      ? "Phản hồi đã được nhân viên y tế gửi đến bạn."
+      : "Nhân viên y tế đang xem xét thông tin.";
+  return `<div class="open-case-card">
+    <div class="head"><span class="section-label">Tiến trình hiện tại</span><span class="status-badge ${statusClass(current.status)}">${statusLabels[current.status] || "Đang xử lý"}</span></div>
+    <div class="title">${shortCaseId(current.case_id)} · ${escapeHtml(complaint)}</div>
+    <p>Gửi lúc ${formatDate(current.created_at)} · ${statusCopy}</p>
+    <div class="open-case-actions">${isEmergency ? `<a class="open-case-emergency-button" href="tel:115">${icon("phone", 16)} Gọi 115 ngay</a>` : ""}<button class="secondary-button open-case-detail-button" type="button" data-open-case>Xem chi tiết ca</button></div>
+  </div>`;
 }
 
 async function loadPatientHistory(root, { navigate, logout }) {
   const list = root.querySelector("#history-list");
   try {
     const cases = await api("/api/v1/patient/history");
-    if (!cases.length) { list.innerHTML = `<p class="muted-copy">Chưa có phiên khai báo nào.</p>`; return; }
-    list.innerHTML = cases.slice(0, 5).map((item) => `<button class="history-row" type="button" data-history-case="${item.case_id}"><span>${escapeHtml(item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Triệu chứng chung")}</span><span class="status-badge ${statusClass(item.status)}">${statusLabels[item.status] || item.status}</span><small>${shortCaseId(item.case_id)}</small></button>`).join("");
-    list.querySelectorAll("[data-history-case]").forEach((button) => button.addEventListener("click", async () => {
-      try { state.currentPatientCase = await api(`/api/v1/cases/${button.dataset.historyCase}`); setActiveCase(state.currentPatientCase.case_id); state.patientMessages = initialMessages(state.currentPatientCase); renderPatientChat(root, { navigate, logout }); } catch (problem) { showToast(problem.message, true); }
-    }));
-  } catch (problem) {
+    const historyControl = root.querySelector("[data-history-all]");
+    if (!cases.length) {
+      historyControl.hidden = true;
+      list.innerHTML = `<div class="patient-history-empty"><span>${icon("clipboard", 24)}</span><strong>Chưa có phiên khai báo</strong><p>Khi bạn gửi thông tin triệu chứng, lịch sử sàng lọc sẽ xuất hiện ở đây.</p><button class="secondary-button" type="button" data-empty-start>Bắt đầu khai báo</button></div>`;
+      list.querySelector("[data-empty-start]").addEventListener("click", () => navigate("disclaimer"));
+      return;
+    }
+    const header = `<div class="history-head-row"><span class="col-label">Mã ca · Ngày</span><span class="col-label">Nhóm triệu chứng</span><span class="col-label">Mức ưu tiên</span><span class="col-label">Nhân viên duyệt</span><span class="col-label">Trạng thái</span><span aria-hidden="true"></span></div>`;
+    let showingAll = false;
+    const renderRows = () => {
+      list.innerHTML = header + (showingAll ? cases : cases.slice(0, 5)).map(historyRow).join("");
+      list.querySelectorAll("[data-history-case]").forEach((button) =>
+        button.addEventListener("click", () => openPatientCase(button.dataset.historyCase, { navigate })),
+      );
+    };
+    // "Tiến trình hiện tại" phải là ca MỚI NHẤT, không phải ca cuối cùng người dùng bấm mở.
+    // `state.currentPatientCase` giữ ca vừa xem (khôi phục cả từ `sessionStorage`), nên mở lại một ca
+    // cũ trong lịch sử là trang chủ kẹt luôn ở ca đó. `/patient/history` đã sắp theo `updated_at`
+    // giảm dần nên phần tử đầu chính là ca mới nhất.
+    state.currentPatientCase = cases[0];
+    const slot = root.querySelector("#open-case-slot");
+    if (slot) {
+      slot.innerHTML = openCaseCard(cases[0]);
+      slot.querySelector("[data-open-case]")?.addEventListener("click", () => openPatientCase(cases[0].case_id, { navigate }));
+    }
+    historyControl.hidden = cases.length <= 5;
+    historyControl.addEventListener("click", () => {
+      showingAll = !showingAll;
+      historyControl.innerHTML = `${showingAll ? "Thu gọn lịch sử" : "Xem tất cả lịch sử"} ${icon("chevronRight", 16)}`;
+      renderRows();
+    });
+    renderRows();
+    renderRecentCaseLink(root, cases[0], { navigate });
+  } catch {
     list.innerHTML = `<p class="muted-copy">Không thể tải lịch sử phiên khai báo.</p>`;
   }
 }
 
-function currentCaseCard(current) {
-  const complaint = current.summary?.chief_complaint || symptomGroupLabels[current.structured_data?.symptom_group] || "Triệu chứng đang khai báo";
-  const body = current.status === "approved" ? current.patient_visible_response || current.response : patientStatusHelp(current.status);
-  return `<div class="case-card"><div><small>Mã ca</small><strong>${shortCaseId(current.case_id)}</strong></div><div><small>Triệu chứng chính</small><strong>${escapeHtml(complaint)}</strong></div><div><small>Trạng thái</small><span>${escapeHtml(body)}</span></div><button class="secondary-button" type="button" data-open-case>Xem chi tiết</button></div>`;
+/** Mở một ca đã khai báo và sang màn chi tiết. Trước đây logic này bị chép ba lần (lịch sử trang
+ *  chủ, link ca gần nhất, và giờ là màn "Kết quả của tôi") - ba bản chép là ba chỗ để quên
+ *  `setActiveCase` hoặc quên khoá chỉ-đọc. */
+async function openPatientCase(caseId, { navigate }, { fromCases = false } = {}) {
+  try {
+    state.currentPatientCase = await api(`/api/v1/cases/${caseId}`);
+    setActiveCase(state.currentPatientCase.case_id);
+    state.patientMessages = initialMessages(state.currentPatientCase);
+    // Ca ĐANG MỞ (kể cả đang chat trực tiếp với điều dưỡng, "needs_more_info") vẫn phải gõ được -
+    // chỉ khoá thành lịch sử chỉ-đọc khi ca đã thật sự kết thúc.
+    state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
+    state.patientFromCases = fromCases;
+    navigate("patient-chat");
+  } catch (problem) {
+    showToast(problem.message, true);
+  }
+}
+
+function historyRow(item) {
+  const priority = item.triage_proposal?.priority;
+  const group = item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Triệu chứng chung";
+  const isEmergency = item.status === "escalated";
+  const reviewer = isEmergency ? "Không chờ duyệt" : item.reviewed_by_name || (item.reviewed_at ? "Nhân viên y tế" : "Chờ duyệt");
+  return `<button class="history-row" type="button" data-history-case="${item.case_id}">
+    <span class="case-meta"><b>#${shortCaseId(item.case_id)}</b><small>${formatDate(item.created_at)}</small></span>
+    <span class="group">${escapeHtml(group)}</span>
+    <span class="priority-cell">${priority ? `<span class="priority-badge ${priorityClass(priority)}">${priorityLabels[priority] || priority}</span>` : `<span class="muted-copy">Chưa có</span>`}</span>
+    <span class="reviewer ${isEmergency ? "is-emergency" : item.reviewed_by_name || item.reviewed_at ? "" : "is-pending"}">${escapeHtml(reviewer)}</span>
+    <span class="status ${statusClass(item.status)}">${statusLabels[item.status] || item.status}</span>
+    <span class="history-detail">Chi tiết ${icon("chevronRight", 16)}</span>
+  </button>`;
+}
+
+function renderRecentCaseLink(root, item, { navigate }) {
+  const slot = root.querySelector("#recent-case-slot");
+  if (!slot || !item) return;
+  const group = item.summary?.chief_complaint || symptomGroupLabels[item.structured_data?.symptom_group] || "Ca khai báo gần nhất";
+  slot.innerHTML = `<button class="recent-case-link" type="button" data-recent-case="${item.case_id}"><span><small>Ca gần nhất</small><strong>#${shortCaseId(item.case_id)} · ${escapeHtml(group)}</strong></span><span>Chi tiết ${icon("chevronRight", 15)}</span></button>`;
+  slot.querySelector("[data-recent-case]").addEventListener("click", () => openPatientCase(item.case_id, { navigate }));
+}
+
+/**
+ * W-09 — "Kết quả của tôi": TOÀN BỘ ca người bệnh đã khai báo, gom về một chỗ.
+ *
+ * Ba trạng thái lọc bám đúng câu hỏi người bệnh thật sự hỏi ("ca của tôi xong chưa?"), chứ không
+ * bám vocab `CaseStatus` của backend - `approved`/`rejected`/`withdrawn` với người bệnh đều là
+ * "nhân viên y tế đã xem xong", còn `collecting_information` và `needs_nurse_review` đều là "chưa".
+ */
+const caseFilters = {
+  all: { label: "Tất cả", includes: () => true, empty: "Bạn chưa khai báo ca nào." },
+  settled: {
+    label: "Đã được xác nhận",
+    includes: (item) => completedStatuses.has(item.status),
+    empty: "Chưa có ca nào được nhân viên y tế xác nhận xong.",
+  },
+  open: {
+    label: "Chưa được xác nhận",
+    includes: (item) => !completedStatuses.has(item.status),
+    empty: "Không có ca nào đang khai báo hoặc đang chờ xác nhận.",
+  },
+};
+
+export function renderPatientCases(root, { navigate, logout }) {
+  root.innerHTML = `<section class="app-shell">
+    ${patientHeader("cases")}
+    <main class="page">
+      <div class="cases-page">
+        <div class="queue-head">
+          <div>
+            <h1>Kết quả của tôi</h1>
+            <p>Toàn bộ ca bạn đã khai báo. Chọn một ca để xem lại hội thoại và kết quả phân loại.</p>
+          </div>
+          <button class="primary-button" type="button" data-start>${icon("chat", 17)}<span>Khai báo ca mới</span></button>
+        </div>
+
+        <div class="queue-toolbar">
+          <div class="filter-chips" role="group" aria-label="Lọc theo trạng thái xác nhận">
+            ${Object.entries(caseFilters)
+              .map(([key, filter], index) => `<button class="filter-chip${index === 0 ? " is-active" : ""}" type="button" data-case-filter="${key}"><span>${filter.label}</span><b data-count="${key}">0</b></button>`)
+              .join("")}
+          </div>
+        </div>
+
+        <section class="history-card">
+          <div class="history-body" id="cases-list"><p class="muted-copy">Đang tải danh sách ca.</p></div>
+        </section>
+      </div>
+    </main>
+  </section>`;
+
+  bindPatientNav(root, { navigate });
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientCases(root, { navigate, logout }) });
+  root.querySelector("[data-start]").addEventListener("click", () => navigate("disclaimer"));
+  root.dataset.caseFilter = "all";
+  root.querySelectorAll("[data-case-filter]").forEach((button) =>
+    button.addEventListener("click", () => {
+      root.querySelectorAll("[data-case-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
+      root.dataset.caseFilter = button.dataset.caseFilter;
+      paintPatientCases(root, { navigate });
+    }),
+  );
+  loadPatientCases(root, { navigate });
+}
+
+async function loadPatientCases(root, { navigate }) {
+  try {
+    state.patientCases = await api("/api/v1/patient/history");
+  } catch {
+    root.querySelector("#cases-list").innerHTML = `<p class="muted-copy">Không thể tải danh sách ca.</p>`;
+    return;
+  }
+  paintPatientCases(root, { navigate });
+}
+
+function paintPatientCases(root, { navigate }) {
+  const cases = state.patientCases || [];
+  for (const [key, filter] of Object.entries(caseFilters)) {
+    root.querySelector(`[data-count="${key}"]`).textContent = cases.filter(filter.includes).length;
+  }
+
+  const filter = caseFilters[root.dataset.caseFilter] || caseFilters.all;
+  const rows = cases.filter(filter.includes);
+  const list = root.querySelector("#cases-list");
+
+  if (!rows.length) {
+    list.innerHTML = `<div class="patient-history-empty"><span>${icon("clipboard", 24)}</span><strong>${escapeHtml(filter.empty)}</strong><p>Ca bạn khai báo sẽ xuất hiện ở đây cùng kết quả phân loại.</p><button class="secondary-button" type="button" data-empty-start>Bắt đầu khai báo</button></div>`;
+    list.querySelector("[data-empty-start]").addEventListener("click", () => navigate("disclaimer"));
+    return;
+  }
+
+  const header = `<div class="history-head-row"><span class="col-label">Mã ca · Ngày</span><span class="col-label">Nhóm triệu chứng</span><span class="col-label">Mức ưu tiên</span><span class="col-label">Nhân viên duyệt</span><span class="col-label">Trạng thái</span><span aria-hidden="true"></span></div>`;
+  list.innerHTML = header + rows.map(historyRow).join("");
+  list.querySelectorAll("[data-history-case]").forEach((button) =>
+    button.addEventListener("click", () => openPatientCase(button.dataset.historyCase, { navigate }, { fromCases: true })),
+  );
+}
+
+/** W-02 — disclaimer bắt buộc mỗi phiên khai báo mới, không có đường bỏ qua ngoài nút CTA. */
+function openCurrentCaseHistory(navigate) {
+  if (!state.currentPatientCase) return;
+  state.patientMessages = initialMessages(state.currentPatientCase);
+  state.viewingPatientHistory = completedStatuses.has(state.currentPatientCase.status);
+  navigate("patient-chat");
 }
 
 export function renderDisclaimer(root, { navigate, onAccept, logout }) {
-  root.innerHTML = `<section class="disclaimer-shell"><div class="disclaimer-card"><a class="brand brand-large" href="/">${logo()}</a><p class="eyebrow">Trước khi bắt đầu</p><h1>Thông tin an toàn quan trọng</h1><p>VMedTriage hỗ trợ ghi nhận triệu chứng ban đầu, không thay thế chẩn đoán, khám trực tiếp hoặc dịch vụ cấp cứu.</p><ol><li>Không chờ phản hồi trực tuyến nếu triệu chứng trở nặng hoặc xuất hiện dấu hiệu nguy hiểm.</li><li>Gọi 115 hoặc đến cơ sở y tế gần nhất khi cần cấp cứu.</li><li>Chỉ cung cấp thông tin cần thiết để hỗ trợ phân luồng.</li></ol><div class="action-row"><button class="primary-button" type="button" data-accept>Tôi đã hiểu, bắt đầu</button><button class="secondary-button" type="button" data-back>Quay lại</button></div></div></section>`;
+  root.innerHTML = `<section class="app-shell">
+    ${patientHeader("", { title: "Bước 1 / 3 · Trước khi khai báo", right: `<div class="header-right">${accountMenu()}</div>` })}
+    <div class="disclaimer-wrap">
+      <div class="disclaimer-card">
+        <div class="disclaimer-head">
+          <span class="disclaimer-icon">${icon("info", 28)}</span>
+          <div><h1>Thông tin quan trọng</h1><p>Vui lòng đọc trước khi bắt đầu khai báo triệu chứng.</p></div>
+        </div>
+        <ol class="rule-list">
+          <li><span class="rule-index">1</span><span>${AI_SCOPE_VI.replace("mức độ khẩn cấp", "<b>mức độ khẩn cấp</b>")}</span></li>
+          <li><span class="rule-index">2</span><span>Mọi đề xuất đều được <b>nhân viên y tế xác nhận</b> trước khi gửi cho bạn.</span></li>
+          <li><span class="rule-index">3</span><span>Trường hợp khẩn cấp, hãy <b>gọi 115 ngay</b> thay vì chờ trong ứng dụng.</span></li>
+        </ol>
+        <div class="action-row">
+          <button class="primary-button" type="button" data-accept>Tôi đã hiểu, bắt đầu</button>
+          <button class="secondary-button" type="button" data-back>Quay lại</button>
+        </div>
+      </div>
+    </div>
+  </section>`;
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderDisclaimer(root, { navigate, onAccept, logout }) });
   root.querySelector("[data-accept]").addEventListener("click", onAccept);
   root.querySelector("[data-back]").addEventListener("click", () => navigate("patient-home"));
 }
@@ -48,29 +452,160 @@ export function startPatientCase(root, { navigate, logout, fresh = false }) {
     state.currentPatientCase = null;
     state.patientMessages = [];
     state.summaryConfirmed = false;
+    state.patientForcedComplete = false;
+    state.redFlagShownCaseId = null;
   }
+  state.viewingPatientHistory = false;
   renderPatientChat(root, { navigate, logout });
 }
 
+/** W-03 — khai báo triệu chứng. Chat bên trái, cột phải là nhóm đã nhận diện + tiến độ checklist. */
 export function renderPatientChat(root, { navigate, logout }) {
   const current = state.currentPatientCase;
   const messages = state.patientMessages.length ? state.patientMessages : initialMessages(current);
-  // `state.patientBusy` trước đây chỉ dùng để chặn double-submit bên trong `submitMessage`, không hề
-  // đi vào markup - nên ô nhập và nút Gửi vẫn bấm được trong lúc chờ, người dùng gõ tiếp mà không
-  // hiểu vì sao không có gì xảy ra. Đưa vào markup để trạng thái chờ có đúng MỘT nguồn sự thật.
-  const busyAttr = state.patientBusy ? " disabled" : "";
-  root.innerHTML = `<section class="app-shell patient-chat"><header class="app-header"><a class="brand" href="/">${logo()}</a><nav aria-label="Điều hướng bệnh nhân"><button class="nav-link" type="button" data-home>Trang chủ</button><button class="nav-link is-active" type="button">Phiên khai báo</button></nav>${accountMenu()}</header><main class="chat-layout"><section class="chat-panel" aria-labelledby="chat-title"><header class="chat-header"><div><p class="eyebrow">Phiên tư vấn</p><h1 id="chat-title">Trao đổi với trợ lý y tế</h1></div><span class="case-reference">${shortCaseId(state.caseId)}</span></header><div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div><div class="symptom-chips">${commonSymptoms.map(([label, value]) => `<button type="button" data-symptom="${escapeHtml(value)}">${label}</button>`).join("")}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="patient-message">Mô tả triệu chứng</label><textarea id="patient-message" name="message" rows="2" maxlength="5000" placeholder="Mô tả triệu chứng bạn đang gặp phải"${busyAttr}></textarea><p class="form-error" id="chat-error" role="alert"></p><button class="primary-button" type="submit"${busyAttr}>${state.patientBusy ? "Đang gửi…" : "Gửi"}</button></form></section><aside class="chat-sidebar"><section class="case-state-card"><p>Ca đang mở</p><strong>${current ? shortCaseId(current.case_id) : "Chưa bắt đầu"}</strong><span class="status-badge ${statusClass(current?.status)}">${statusLabels[current?.status] || "Đang khai báo"}</span><small>${patientStatusHelp(current?.status)}</small></section>${summaryMarkup(current)}<section class="safety-mini"><strong>Cần cấp cứu?</strong><span>Gọi 115 ngay, không chờ phản hồi trong ứng dụng.</span></section></aside></main>${current && current.status !== "collecting_information" ? outcomeMarkup(current) : ""}</section>`;
-  root.querySelector("[data-home]").addEventListener("click", () => navigate("patient-home"));
+  const viewingHistory = state.viewingPatientHistory;
+  // `state.patientBusy` phải đi vào markup chứ không chỉ chặn double-submit trong `submitMessage`:
+  // nếu không, ô nhập và nút Gửi vẫn bấm được trong lúc chờ và người dùng gõ tiếp mà không hiểu vì
+  // sao không có gì xảy ra. Một nguồn sự thật duy nhất cho trạng thái chờ.
+  const busy = state.patientBusy ? " disabled" : "";
+  root.innerHTML = `<section class="app-shell">
+    ${patientHeader("cases", {
+      // Cùng khuôn với màn "Hướng dẫn xử trí": tên màn + mã ca ở `title`, nút quay lại + tài khoản ở
+      // bên phải. Chip trạng thái cũ bỏ đi - "Lịch sử trao đổi" lặp lại đúng thứ tiêu đề đã nói, còn
+      // trạng thái đang gửi đã hiện ngay trên nút Gửi và ô nhập.
+      title: `${viewingHistory || state.patientFromCases ? "Chi tiết ca" : "Khai báo triệu chứng"}${current ? ` · <b>${shortCaseId(current.case_id)}</b>` : ""}`,
+      // Nút quay lại chỉ hiện khi vào từ "Kết quả của tôi". Ca đang khai báo mới đi ra từ trang chủ,
+      // ở đó "quay lại" nghĩa là bỏ dở giữa chừng - không nên mời người bệnh làm việc đó.
+      right: `<div class="header-right">${state.patientFromCases ? `<button class="back-button" type="button" data-cases-back>${icon("chevronLeft", 15)}<span>Kết quả của tôi</span></button>` : ""}${accountMenu()}</div>`,
+    })}
+    <main class="page">
+      <div class="chat-grid">
+        <section class="chat-panel" aria-label="Hội thoại với trợ lý">
+          <div class="capability-strip">${icon("info", 15)}<span>${AI_SCOPE_VI}</span></div>
+          <div class="chat-log" id="chat-log">${messages.map(messageMarkup).join("")}</div>
+          ${viewingHistory ? `<div class="chat-history-note">${icon("lock", 17)}<span>Đây là lịch sử trao đổi đã lưu của ca này. Bạn không thể gửi thêm tin nhắn tại đây.</span><button class="link-button" type="button" data-history-back>Quay lại Kết quả của tôi</button></div>`
+          : state.patientForcedComplete ? `<div class="chat-history-note">${icon("lock", 17)}<span>Bạn đã xác nhận khai báo xong triệu chứng. Thông tin đã được chuyển cho nhân viên y tế, bạn không thể gửi thêm tin nhắn tại đây.</span></div>`
+          : `<form id="chat-form" class="chat-composer">
+            <label class="sr-only" for="patient-message">Mô tả triệu chứng</label>
+            <textarea id="patient-message" name="message" rows="1" maxlength="5000" placeholder="Mô tả triệu chứng của bạn..."${busy}></textarea>
+            <button class="primary-button" type="submit"${busy}>${icon("send", 18)}<span>${state.patientBusy ? "Đang gửi…" : "Gửi"}</span></button>
+            <p class="form-error" id="chat-error" role="alert"></p>
+          </form>
+          <button class="secondary-button btn-sm" type="button" id="declare-done-button"${busy}>${icon("check", 16)}<span>Tôi đã khai báo hết triệu chứng, không còn bất thường nào khác</span></button>`}
+        </section>
+
+        <aside class="chat-side">
+          <section class="side-card">
+            <span class="section-label">Nhóm đã nhận diện</span>
+            <div class="detected-group">${icon("check", 18)}<span>${escapeHtml(detectedGroup(current))}</span></div>
+          </section>
+          ${caseStatusCard(current)}
+          <div class="note-card">${icon("lock", 18)}<span>Thông tin chỉ dùng để phân loại mức ưu tiên và được nhân viên y tế xem xét.</span></div>
+        </aside>
+      </div>
+    </main>
+  </section>`;
+
+  bindPatientNav(root, { navigate });
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientChat(root, { navigate, logout }) });
-  root.querySelectorAll("[data-symptom]").forEach((button) => button.addEventListener("click", () => { root.querySelector("#patient-message").value = button.dataset.symptom; root.querySelector("#patient-message").focus(); }));
-  root.querySelector("#chat-form").addEventListener("submit", (event) => submitMessage(event, root, { navigate, logout }));
-  root.querySelector("[data-check-result]")?.addEventListener("click", () => checkResult(root, { navigate, logout }));
+  root.querySelector("[data-history-back]")?.addEventListener("click", () => navigate("patient-cases"));
+  root.querySelector("[data-cases-back]")?.addEventListener("click", () => navigate("patient-cases"));
+  const form = root.querySelector("#chat-form");
+  form?.addEventListener("submit", (event) => submitMessage(event, root, { navigate, logout }));
+  // Enter gửi, Shift+Enter xuống dòng — đúng hành vi bản thiết kế mô tả cho ô nhập.
+  root.querySelector("#patient-message")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); }
+  });
   root.querySelectorAll("[data-confirm]").forEach((button) => button.addEventListener("click", () => confirmSummary(root, { navigate, logout }, button.dataset.confirm === "yes")));
-  root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
-  // Không focus khi đang khoá: focus vào ô disabled là no-op ở mọi trình duyệt, nhưng gọi nó
-  // vẫn kéo màn hình về composer trên mobile giữa lúc người dùng đang đọc câu trả lời.
-  if (!state.patientBusy) root.querySelector("#patient-message").focus();
+  root.querySelector("#declare-done-button")?.addEventListener("click", () => declareDone(root, { navigate, logout }));
+  root.querySelector("[data-goto-result]")?.addEventListener("click", () => navigate("patient-result"));
+  // Không focus khi đang khoá: focus vào ô disabled là no-op ở mọi trình duyệt, nhưng vẫn kéo màn
+  // hình về composer trên mobile giữa lúc người dùng đang đọc câu trả lời.
+  if (!state.patientBusy && !viewingHistory && !state.patientForcedComplete) root.querySelector("#patient-message")?.focus();
   scrollChat(root);
+  if (!viewingHistory) startCasePolling(root, { navigate, logout }, renderPatientChat);
+}
+
+function detectedGroup(current) {
+  const group = current?.structured_data?.symptom_group;
+  if (group && group !== "general") return symptomGroupLabels[group] || group;
+  return current?.summary?.chief_complaint || "Đang xác định";
+}
+
+/**
+ * Cột phải W-03 — TRẠNG THÁI CA, không phải checklist nội bộ.
+ *
+ * Trước 2026-08-19 chỗ này là thanh tiến độ "2/39" cộng phiếu tóm tắt liệt kê từng trường. Cả hai
+ * đều phơi cấu trúc bên trong của hệ thống ra cho bệnh nhân: con số 39 là số field của protocol,
+ * nó không có nghĩa gì với người đang đau và chỉ tạo cảm giác còn 37 câu hỏi nữa. Thay bằng ba
+ * chặng mà bệnh nhân thật sự cần biết mình đang ở đâu.
+ *
+ * Thứ tự ưu tiên có chủ đích: nghi ngờ dấu hiệu nguy hiểm chen TRƯỚC bước xác nhận phiếu — không
+ * bao giờ để một câu "chờ bạn xác nhận" đứng trên một ca đang cần chuyển gấp.
+ */
+function caseStatusCard(current) {
+  const status = current?.status;
+  if (status === "approved") return resultStatusCard(current);
+  if (Boolean(current?.red_flags?.length) || status === "escalated") return suspectedRedFlagCard();
+  if (current?.summary_ready && !state.summaryConfirmed) return confirmPendingCard();
+  if (status === "needs_nurse_review" || status === "awaiting_approval" || state.summaryConfirmed) return waitingCard();
+  return collectingCard();
+}
+
+function statusCard(tone, iconName, title, copy, extra = "") {
+  return `<section class="side-card status-card${tone ? ` is-${tone}` : ""}">
+    <span class="section-label">Tình trạng ca</span>
+    <div class="status-head">${icon(iconName, 19)}<b>${escapeHtml(title)}</b></div>
+    <p class="status-copy">${copy}</p>
+    ${extra}
+  </section>`;
+}
+
+function collectingCard() {
+  return statusCard("active", "info", "Đang bổ sung thông tin",
+    "Trợ lý đang hỏi để thu thập đủ thông tin cho nhân viên y tế. Bạn cứ trả lời theo những gì mình biết — không chắc thì nói không chắc cũng được.");
+}
+
+function confirmPendingCard() {
+  return statusCard("active", "check", "Chờ bạn xác nhận",
+    "Trợ lý đã ghi nhận đủ thông tin chính. Bạn xem lại phần tóm tắt trợ lý vừa nhắn trong hội thoại và xác nhận giúp.",
+    `<div class="action-row" style="margin-top:14px">
+      <button class="primary-button btn-sm" type="button" data-confirm="yes">Đúng rồi</button>
+      <button class="secondary-button btn-sm" type="button" data-confirm="no">Chưa đúng</button>
+    </div>`);
+}
+
+function waitingCard() {
+  return statusCard("", "clock", "Đợi kết quả",
+    "Thông tin của bạn đã chuyển tới nhân viên y tế. Hướng dẫn xử trí sẽ hiện ở đây sau khi được duyệt.",
+    `<span class="pill" style="margin-top:12px">${icon("clock", 16)}<span>Ước tính <b>~5-10 phút</b></span></span>`);
+}
+
+/**
+ * Ngôn ngữ ở đây theo quyết định 2026-08-19 (`_guidance/what_to_do_next.md` §4.12): hệ thống nêu
+ * NGHI NGỜ và chuyển cho người, KHÔNG tự khẳng định "đây là cấp cứu". Câu thứ hai là lưới an toàn
+ * phổ quát — nó đúng với mọi người bệnh trong mọi tình huống nên nói ra không phải là chẩn đoán.
+ * Không nêu tên dấu hiệu và không nêu lý do lâm sàng: hệ thống không chẩn đoán, và một lời giải
+ * thích sai ở đây đắt hơn nhiều so với việc không giải thích.
+ */
+function suspectedRedFlagCard() {
+  return statusCard("alert", "warning", "Nghi ngờ dấu hiệu nguy hiểm",
+    "Có một số thông tin bạn vừa mô tả cần nhân viên y tế xem trực tiếp. Ca của bạn đã được chuyển lên mức ưu tiên cao nhất và sẽ có người liên hệ trong ít phút.",
+    `<p class="status-copy" style="margin-top:10px"><b>Trong lúc chờ, nếu bạn thấy tình trạng xấu đi hoặc thấy không ổn, hãy gọi 115 ngay</b> — đừng chờ phản hồi ở đây.</p>
+     <span class="pill status-hotline" style="margin-top:12px">${icon("phone", 16)}<span>Cấp cứu <b class="num">115</b> · Trực 24/7</span></span>`);
+}
+
+/** Chặng 3 — dùng lại đúng khối kết quả của W-05 để hai màn không nói hai kiểu về cùng một ca. */
+function resultStatusCard(current) {
+  const priority = current.triage_proposal?.priority;
+  return `<section class="side-card status-card">
+    <span class="section-label">Kết quả phân loại</span>
+    <span class="pill approved-chip">${icon("lock", 15)}<span>Đã duyệt bởi nhân viên y tế</span></span>
+    <div class="final-card is-compact ${priorityClass(priority)}">
+      <div class="final-priority">${priorityDot(priority)}<b>${priorityLabels[priority] || "Chưa xác định"}</b></div>
+    </div>
+    <button class="secondary-button btn-sm" type="button" data-goto-result style="margin-top:14px;width:100%">Xem hướng dẫn xử trí</button>
+  </section>`;
 }
 
 function initialMessages(current) {
@@ -82,29 +617,32 @@ function messageMarkup(message) {
   // Bong bóng "đang xử lý" là thông báo trạng thái, không phải lời thoại: `role="status"` +
   // `aria-live` để trình đọc màn hình đọc lên, còn ba chấm là trang trí nên `aria-hidden`.
   if (message.role === "pending") {
-    return `<div class="chat-message is-pending" role="status" aria-live="polite"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(message.text)}</span></div>`;
+    return `<div class="bubble is-pending" role="status" aria-live="polite"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(message.text)}</span></div>`;
   }
-  return `<div class="chat-message is-${escapeHtml(message.role)}">${escapeHtml(message.text)}</div>`;
+  if (message.role === "system") {
+    return `<div class="bubble is-system">${icon("check", 14)}<span>${escapeHtml(message.text)}</span></div>`;
+  }
+  // Bong bóng đang stream giữ nguyên văn bản thô: con trỏ nhấp nháy là `::after` của chính div này,
+  // mà chèn `<p>` vào giữa sẽ đẩy nó xuống dòng riêng sau mỗi mẩu chữ mới về.
+  if (message.role === "streaming") return `<div class="bubble is-streaming">${escapeHtml(message.text)}</div>`;
+  return `<div class="bubble is-${escapeHtml(message.role)}">${paragraphs(message.text)}</div>`;
 }
 
-// Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`,
-// `intakeChecklistMarkup`) ngày 2026-08-14, đúng đích đến ghi trong ghi chú 2026-08-13. Nó phơi ra
-// checklist nội bộ mà bệnh nhân không cần thấy - họ chỉ cần trả lời câu trợ lý đang hỏi - trong khi
-// điều dưỡng thì cần biết chính xác ca này còn thiếu gì trước khi duyệt.
+// Danh sách "thông tin cần làm rõ" đã CHUYỂN sang màn hình điều dưỡng (`nurse.js`) ngày 2026-08-14:
+// nó phơi ra checklist nội bộ mà bệnh nhân không cần thấy - họ chỉ cần trả lời câu trợ lý đang hỏi -
+// trong khi điều dưỡng thì cần biết chính xác ca này còn thiếu gì trước khi duyệt.
+//
+// 2026-08-19 đi nốt bước còn lại: bỏ luôn THANH TIẾN ĐỘ. Mẫu số của nó là số field của protocol
+// (39 với generic), một con số nội bộ mà bệnh nhân đọc thành "còn 37 câu hỏi nữa". Cột phải W-03
+// nay là TRẠNG THÁI CA (`caseStatusCard`) - thứ bệnh nhân thật sự cần biết.
 
 // Stage 6 CS: hết phiên hỏi-đáp, agent dựng phiếu tóm tắt và chờ bệnh nhân xác nhận ĐÚNG/CHƯA ĐÚNG
 // trước khi bàn giao điều dưỡng. `case_id` chính là `session_id` của phiên agent nên gọi thẳng
 // `/api/v1/fever/sessions/{id}/confirm` được, không cần endpoint mới.
-function summaryMarkup(current) {
-  if (!current?.summary_ready || state.summaryConfirmed) return "";
-  const rows = (current.summary_fields || []).filter((row) => !row.is_missing);
-  if (!rows.length) return "";
-  return `<section class="checklist-card summary-card"><h2>Phiếu tóm tắt</h2><p class="muted-copy">Bạn xem giúp phần thông tin đã ghi nhận có đúng không.</p>${rows
-    .slice(0, 10)
-    .map((row) => `<div class="check-row"><span>✓</span>${escapeHtml(row.label)}</div>`)
-    .join("")}<div class="action-row"><button class="primary-button" type="button" data-confirm="yes">Đúng rồi</button><button class="secondary-button" type="button" data-confirm="no">Chưa đúng</button></div></section>`;
-}
-
+//
+// Danh sách trường của phiếu ĐÃ BỎ khỏi cột phải (2026-08-19) - bệnh nhân xác nhận theo phần tóm
+// tắt trợ lý nhắn trong hội thoại, không theo một bảng field song song. Bước xác nhận vẫn còn:
+// hai nút nay nằm trong `confirmPendingCard`, nên endpoint `/confirm` không mất đường gọi.
 async function confirmSummary(root, context, isCorrect) {
   try {
     await api(`/api/v1/fever/sessions/${state.caseId}/confirm`, { method: "POST", body: JSON.stringify({ is_correct: isCorrect }) });
@@ -119,13 +657,28 @@ async function confirmSummary(root, context, isCorrect) {
   }
 }
 
-function outcomeMarkup(current) {
-  const status = current.status;
-  const approved = status === "approved";
-  const emergency = status === "escalated";
-  const heading = approved ? "Phản hồi đã được nhân viên y tế duyệt" : emergency ? "Ca đã được chuyển cấp cứu" : "Thông tin đang chờ nhân viên y tế duyệt";
-  const body = approved ? current.patient_visible_response || current.response : emergency ? "Không chờ phản hồi trực tuyến nếu triệu chứng đang diễn ra. Hãy gọi 115 ngay." : "Hướng dẫn xử trí sẽ chỉ hiển thị sau khi có xác nhận của nhân viên y tế.";
-  return `<section class="patient-outcome ${emergency ? "is-emergency" : ""}"><div><p class="eyebrow">${statusLabels[status] || "Đang xử lý"}</p><h2>${heading}</h2><p>${escapeHtml(body)}</p></div><div class="action-row">${!approved && !emergency ? '<button class="secondary-button" type="button" data-check-result>Kiểm tra kết quả</button>' : ""}<button class="link-button" type="button" data-new-case>Bắt đầu ca mới</button></div></section>`;
+// Bệnh nhân tự chốt "không còn gì để khai báo thêm" — có thể bấm bất cứ lúc nào, kể cả khi agent
+// chưa hỏi hết checklist. Đây là lối thoát chủ động của người dùng nên KHÔNG chờ agent xác nhận đủ
+// thông tin (`summary_ready`); dừng hội thoại ngay và chuyển ca cho nhân viên y tế với dữ liệu hiện
+// có — nhân viên y tế nhìn tag "Thiếu thông tin" trên phiếu tóm tắt để biết checklist chưa đầy đủ.
+async function declareDone(root, context) {
+  if (!window.confirm("Xác nhận bạn đã khai báo hết triệu chứng và không còn bất thường nào khác?")) return;
+  try {
+    // KHÔNG dùng `/api/v1/fever/sessions/{id}/confirm`: router đó là demo độc lập, không đụng tới
+    // case_store nên nurse queue không bao giờ thấy ca, và AI đề xuất/nguồn đối chiếu/trace
+    // Braintrust cũng không bao giờ sinh ra (xem docstring `force_complete_case` ở backend).
+    const data = await api(`/api/v1/cases/${state.caseId}/force-complete`, { method: "POST" });
+    state.currentPatientCase = await api(`/api/v1/cases/${data.case_id}`).catch(() => state.currentPatientCase);
+    state.summaryConfirmed = true;
+    state.patientForcedComplete = true;
+    state.patientMessages.push({
+      role: "system",
+      text: "Bạn đã xác nhận khai báo xong triệu chứng. Thông tin hiện tại đã được chuyển cho nhân viên y tế duyệt.",
+    });
+    renderPatientChat(root, context);
+  } catch (problem) {
+    showToast(problem.message || "Không gửi được xác nhận.", true);
+  }
 }
 
 /**
@@ -196,21 +749,158 @@ async function submitMessage(event, root, context) {
     state.patientMessages.push({ role: "error", text: problem.message || "Không thể gửi thông tin. Vui lòng thử lại." });
   } finally {
     state.patientBusy = false;
+    // W-04 chen vào NGAY khi phát hiện dấu hiệu cấp cứu, không chờ hết checklist và không chờ điều
+    // dưỡng duyệt (CLAUDE.md nguyên tắc 4 - ngoại lệ có chủ đích của HITL). Chỉ chen MỘT LẦN cho
+    // mỗi ca: xem ghi chú ở `state.redFlagShownCaseId`.
+    if (needsRedFlagScreen()) {
+      state.redFlagShownCaseId = state.caseId;
+      context.navigate("red-flag");
+      return;
+    }
     renderPatientChat(root, context);
   }
 }
 
-async function checkResult(root, context) {
-  if (!state.caseId) return;
-  try { state.currentPatientCase = await api(`/api/v1/cases/${state.caseId}`); renderPatientChat(root, context); showToast("Đã cập nhật trạng thái ca."); } catch (problem) { showToast(problem.message, true); }
+function needsRedFlagScreen() {
+  const current = state.currentPatientCase;
+  if (!current) return false;
+  if (state.redFlagShownCaseId === current.case_id) return false;
+  return Boolean(current.red_flags?.length) || current.status === "escalated";
 }
 
-function patientStatusHelp(status) {
-  if (status === "approved") return "Phản hồi đã được xác nhận.";
-  if (status === "escalated") return "Ưu tiên liên hệ dịch vụ cấp cứu.";
-  if (status === "needs_nurse_review" || status === "awaiting_approval") return "Chưa có hướng dẫn nào được gửi trước khi duyệt.";
-  if (status === "needs_more_info") return "Nhân viên y tế đã yêu cầu bổ sung thông tin.";
-  return "Trợ lý có thể cần thêm một vài thông tin.";
+/**
+ * W-04 — màn hình cảnh báo khẩn cấp, chiếm trọn khung.
+ *
+ * Đây là màn DUY NHẤT lấy đỏ làm màu chủ đạo. Không đặt nó thành một khối trong trang chat: người
+ * bệnh phải dừng lại đọc, và một khối cuộn qua được thì không làm được việc đó.
+ */
+export function renderRedFlag(root, { navigate }) {
+  const current = state.currentPatientCase;
+  const reason = current?.red_flags?.[0]?.label || current?.triage_proposal?.reason || "dấu hiệu nguy hiểm được phát hiện";
+  root.innerHTML = `<section class="redflag-shell">
+    <div class="redflag-card">
+      <div class="redflag-bar">${icon("warning", 19)}<b>Cảnh báo khẩn cấp</b><span>Ca ${shortCaseId(current?.case_id)} · ${formatDate(current?.updated_at || Date.now())}</span></div>
+      <div class="redflag-body">
+        <div class="redflag-inner">
+          <div class="redflag-head">
+            <span class="redflag-icon">${icon("warning", 44)}</span>
+            <div>
+              <h1>Dấu hiệu cần cấp cứu: ${escapeHtml(reason)}</h1>
+              <p>Đây có thể là dấu hiệu của một tình trạng cấp cứu. Nếu triệu chứng xấu đi, hãy <b>gọi 115</b> hoặc đến cơ sở y tế gần nhất ngay.</p>
+            </div>
+          </div>
+          <div class="redflag-cards">
+            <div>${icon("check", 20)}<span>Ca của bạn đã được chuyển ngay tới nhân viên y tế trực với <strong>mức ưu tiên cao nhất</strong>.</span></div>
+            <div class="hotline">${icon("phone", 20)}<span>Cấp cứu <strong class="num">115</strong> · Trực 24/7</span></div>
+          </div>
+          <button class="danger-button" type="button" data-continue>Tôi đã đọc, tiếp tục</button>
+        </div>
+      </div>
+    </div>
+  </section>`;
+  // Quay lại đoạn chat đang dở thay vì màn kết quả riêng: đoạn hội thoại vẫn còn ý nghĩa (điều dưỡng
+  // có thể chat trực tiếp tiếp theo), và trạng thái "đang chờ/đã chuyển cấp cứu" đã có sẵn ở cột phải
+  // (`caseStatusCard` → `suspectedRedFlagCard`) nên không cần một màn hình riêng chỉ để chờ.
+  root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-chat"));
 }
 
-function scrollChat(root) { const log = root.querySelector("#chat-log"); log.scrollTop = log.scrollHeight; }
+/** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải. */
+export function renderPatientResult(root, { navigate, logout }) {
+  const current = state.currentPatientCase;
+  const header = patientHeader("cases", {
+    title: current ? `Hướng dẫn xử trí · <b>${shortCaseId(current.case_id)}</b>` : "Hướng dẫn xử trí",
+    // Màn này là nhánh CUỐI của chuỗi Kết quả của tôi -> Chi tiết ca -> Hướng dẫn xử trí, nên nút
+    // quay lại trỏ về chi tiết ca chứ không nhảy thẳng về danh sách.
+    right: `<div class="header-right">${current ? `<button class="back-button" type="button" data-case-back>${icon("chevronLeft", 15)}<span>Chi tiết ca</span></button>` : ""}${accountMenu()}</div>`,
+  });
+
+  let body;
+  if (!current) {
+    body = `<div class="state-panel">
+      <span class="state-icon is-neutral">${icon("broken", 38)}</span>
+      <h2>Không thể tải kết quả</h2>
+      <p>Chưa có ca nào đang mở trong phiên này. Kết quả của bạn vẫn được lưu.</p>
+      <button class="secondary-button" type="button" data-retry>${icon("retry", 17)}<span>Thử lại</span></button>
+    </div>`;
+  } else if (current.status === "approved") {
+    body = approvedMarkup(current);
+  } else {
+    body = `<div class="state-panel">
+      <span class="state-icon">${icon("clock", 44)}</span>
+      <h2>${current.status === "escalated" ? "Ca đã được chuyển cấp cứu" : "Đang chờ nhân viên y tế duyệt"}</h2>
+      <p>${current.status === "escalated"
+        ? "Không chờ phản hồi trực tuyến nếu triệu chứng đang diễn ra. Hãy gọi 115 ngay."
+        : "Nhân viên y tế sẽ xem xét và gửi hướng dẫn xử trí sớm nhất có thể. Bạn có thể đóng trang này, chúng tôi sẽ thông báo khi có kết quả."}</p>
+      <span class="pill">${icon("clock", 18)}<span>Thời gian chờ ước tính <b>~5-10 phút</b></span></span>
+      <p class="state-hint">Ca Cấp cứu được xử lý nhanh hơn.</p>
+      <div class="action-row" style="margin-top:22px">
+        <button class="secondary-button" type="button" data-retry>${icon("retry", 17)}<span>Kiểm tra kết quả</span></button>
+        <button class="link-button" type="button" data-new-case>Bắt đầu ca mới</button>
+      </div>
+    </div>`;
+  }
+
+  root.innerHTML = `<section class="app-shell">${header}<main class="page">${body}</main></section>`;
+  bindPatientNav(root, { navigate });
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientResult(root, { navigate, logout }) });
+  root.querySelector("[data-retry]")?.addEventListener("click", () => refreshResult(root, { navigate, logout }));
+  root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
+  root.querySelector("[data-home]")?.addEventListener("click", () => navigate("patient-home"));
+  root.querySelector("[data-case-back]")?.addEventListener("click", () => navigate("patient-chat"));
+  startCasePolling(root, { navigate, logout }, renderPatientResult);
+}
+
+function approvedMarkup(current) {
+  const priority = current.triage_proposal?.priority;
+  const guidance = current.patient_visible_response || current.response || "";
+  return `<div class="result-grid">
+    <div class="result-main">
+      <span class="pill approved-chip">${icon("lock", 16)}<span>Đã duyệt bởi nhân viên y tế</span></span>
+      <div class="final-card ${priorityClass(priority)}">
+        <span class="section-label">Mức ưu tiên cuối cùng</span>
+        <div class="final-priority">${priorityDot(priority)}<b>${priorityLabels[priority] || "Chưa xác định"}</b></div>
+        <hr />
+        <h3>Hướng dẫn xử trí đã xác nhận</h3>
+        <ol class="instruction-list">${guidanceSteps(guidance).map((step) => `<li><span>${escapeHtml(step)}</span></li>`).join("")}</ol>
+      </div>
+      <p class="fine-print">Đây không phải chẩn đoán, hãy gặp bác sĩ để được tư vấn đầy đủ.</p>
+    </div>
+    <div class="result-main">
+      <div class="meta-card">
+        <div><span>Nhóm triệu chứng</span><b>${escapeHtml(detectedGroup(current))}</b></div>
+        <div><span>Người duyệt</span><b>${escapeHtml(current.reviewed_by_name || "Nhân viên y tế trực")}</b></div>
+        <div><span>Thời điểm duyệt</span><b class="num">${formatDate(current.reviewed_at || current.updated_at)}</b></div>
+      </div>
+      ${priority === "Emergency" ? `<div class="alert-card"><b>Cần cấp cứu ngay</b><p>Nếu tình trạng xấu đi trên đường di chuyển, gọi <strong>115</strong>.</p></div>` : ""}
+      <button class="secondary-button" type="button" data-home>Về trang chủ</button>
+    </div>
+  </div>`;
+}
+
+/** Thiết kế trình bày hướng dẫn thành danh sách đánh số. Phản hồi từ điều dưỡng là văn bản tự do,
+ *  nên tách theo đánh số sẵn có hoặc theo câu — KHÔNG viết lại nội dung, chỉ ngắt dòng. */
+function guidanceSteps(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return ["Nhân viên y tế đã xem thông tin bạn cung cấp."];
+  const numbered = clean.split(/\s*(?:\r?\n|^)\s*\d+[.)]\s+/).map((part) => part.trim()).filter(Boolean);
+  if (numbered.length > 1) return numbered;
+  const lines = clean.split(/\r?\n+/).map((line) => line.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
+  if (lines.length > 1) return lines;
+  return clean.split(/(?<=[.!?])\s+(?=[A-ZĐÀ-Ỹ])/).map((part) => part.trim()).filter(Boolean);
+}
+
+async function refreshResult(root, context) {
+  if (!state.caseId) { showToast("Chưa có ca nào đang mở.", true); return; }
+  try {
+    state.currentPatientCase = await api(`/api/v1/cases/${state.caseId}`);
+    renderPatientResult(root, context);
+    showToast("Đã cập nhật trạng thái ca.");
+  } catch (problem) {
+    showToast(problem.message, true);
+  }
+}
+
+function scrollChat(root) {
+  const log = root.querySelector("#chat-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}

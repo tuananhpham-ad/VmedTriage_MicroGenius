@@ -60,8 +60,12 @@ make eval         # python eval/scripts/run_eval.py
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | API key cho provider tương ứng (chỉ cần key của provider đang dùng) | tuỳ provider |
 | `WEAVIATE_URL` / `WEAVIATE_API_KEY` | Lưu trữ case dạng vector (best-effort, pipeline vẫn chạy nếu để trống) | — |
 | `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` | Gửi email xác thực / reset mật khẩu; để trống `SMTP_HOST` khi dev sẽ ghi nội dung email ra log server | — |
-| `ENABLE_GRAPH_TRIAGE_AGENT` | Bật module `src/graph_triage/` (second opinion, không bao giờ ghi đè `TriageProposal.priority`) — mặc định `false` | — |
+| `GRAPH_TRIAGE_MODE` | `off` (mặc định), `c6` (GPT direct OR Fusion OR documented-rule emergency; sau đó chạy Part 3 nếu bật) hoặc `ensemble` (LogReg + PhoBERT + Fusion + LLM để second opinion) | — |
 | `CORS_ORIGINS` | Danh sách origin FE, phân tách bằng dấu phẩy | — |
+| `BRAINTRUST_API_KEY` | Key cho tracing/eval qua Braintrust (`eval/`) — dùng để log span trace của Track 1 (`TriagePipeline`) và Track 2 (`graph_triage`/`source_support`). Hoàn toàn tuỳ chọn: để trống thì tracing tự tắt thành no-op, app/script KHÔNG crash | — |
+| `BRAINTRUST_PROJECT` | Tên project Braintrust để log trace (mặc định `vmedtriage-eval`) | — |
+
+Production deploy không được dùng SQLite mặc định vì filesystem của web service có thể bị xoá khi redeploy. `render.yaml` hiện khai báo Render Postgres `vmedtriage-postgres` bằng gói `basic-256mb` và bind `DATABASE_URL` bằng `fromDatabase.connectionString`; khi `APP_ENV=production`, app sẽ từ chối khởi động nếu `DATABASE_URL` vẫn trỏ tới SQLite.
 
 ## API & luồng chính
 
@@ -70,6 +74,7 @@ Luồng production thật là `/api/v1/chat` (xem `src/api/routes.py` + `src/ser
 - **Auth & phân quyền:** [docs/AUTH.md](docs/AUTH.md) — flow đăng ký/đăng nhập 2 role (`patient`/`nurse`), curl mẫu cho PowerShell/bash.
 - **API reference đầy đủ:** [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md), [docs/openapi.yaml](docs/openapi.yaml).
 - **Kiến trúc:** [ARCHITECTURE.md](ARCHITECTURE.md), [docs/architecture_diagram.md](docs/architecture_diagram.md).
+- **Deploy:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Azure Container Apps (đầy đủ, có graph triage) hoặc Render free; bí mật cần xin, ràng buộc vùng, bảng lỗi thường gặp.
 
 ### Sample query — chat triage
 

@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,10 +8,39 @@ from src.api.routers.fever_intake import router as fever_intake_router
 from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
-from src.database import configure_database, create_tables, dispose_database
+from src.database import configure_database, create_tables, dispose_database, normalize_database_url
 from src.middleware.auth import RoleAuthorizationMiddleware
 from src.services.infra import provider_router
 from src.ui.static_files import build_demo_static_app
+
+
+def _configure_app_logging(level: str) -> None:
+    """Cho log của chính dự án (`vmedtriage.*`) hiện ra khi chạy bằng `uvicorn src.main:app`.
+
+    Uvicorn chỉ cấu hình logger của riêng nó; mọi logger khác rơi về root logger, mặc định ở mức
+    WARNING và không có handler - nên `graph_triage.decided`/`graph_triage.model` (đều là INFO) biến
+    mất hoàn toàn và chỉ khi HỎNG mới thấy gì đó. Gọi ở lifespan, tức là SAU khi uvicorn đã dựng
+    xong cấu hình logging của nó, nên handler thêm ở đây không bị ghi đè.
+
+    Đặt trên logger `vmedtriage` thay vì root: bật INFO cho root sẽ kéo theo log nội bộ của httpx,
+    sqlalchemy, transformers... làm ngập terminal.
+    """
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s | %(message)s", datefmt="%H:%M:%S"))
+    project_logger = logging.getLogger("vmedtriage")
+    project_logger.handlers.clear()
+    project_logger.addHandler(handler)
+    project_logger.setLevel(level)
+    project_logger.propagate = False
+
+    # Ở mức DEBUG, mở thêm `httpx` - thư viện mà cả openai lẫn google-genai dùng để gọi API. Đây là
+    # thứ duy nhất cho thấy TỪNG lời gọi DeepSeek/OpenAI thật sự đi ra, kèm mã HTTP trả về. Không bật
+    # ở INFO vì mỗi lượt hỏi-đáp cũng gọi LLM một lần, 45 lượt là 45 dòng lấp mất log của dự án.
+    http_logger = logging.getLogger("httpx")
+    http_logger.handlers.clear()
+    http_logger.addHandler(handler)
+    http_logger.setLevel(logging.INFO if level == "DEBUG" else logging.WARNING)
+    http_logger.propagate = False
 
 
 @asynccontextmanager
@@ -21,6 +51,18 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("JWT_SECRET_KEY must be changed in production")
         if not settings.nurse_registration_code:
             raise RuntimeError("NURSE_REGISTRATION_CODE must be configured in production")
+        if normalize_database_url(settings.database_url).startswith("sqlite"):
+            raise RuntimeError("DATABASE_URL must point to a deployable Postgres database in production")
+        if settings.demo_login_enabled:
+            # KHÔNG raise: bản demo/nghiệm thu chạy với app_env=production nhưng vẫn cần lối vào
+            # theo vai trò. Nhưng phải nói ra ở log khởi động, vì đây là cửa duy nhất tạo được tài
+            # khoản bỏ qua xác thực email và mã đăng ký nhân viên y tế.
+            logging.getLogger("vmedtriage").warning(
+                "DEMO_LOGIN_ENABLED đang BẬT ở môi trường production: ai cũng tạo được tài khoản "
+                "dùng thử (kể cả vai trò nhân viên y tế) qua POST /api/v1/auth/demo-login. "
+                "Đặt DEMO_LOGIN_ENABLED=false khi phục vụ người dùng thật."
+            )
+    _configure_app_logging(settings.log_level)
     configure_database(settings.database_url)
     create_tables()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")

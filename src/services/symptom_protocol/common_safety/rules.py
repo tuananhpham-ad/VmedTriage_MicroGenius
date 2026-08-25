@@ -17,6 +17,8 @@ nào khác khớp chưa. Protocol nào ghép catalog riêng phải giữ rule ph
 
 from __future__ import annotations
 
+import unicodedata
+
 from src.services.symptom_protocol.common_safety.predicates import (
     age_in_months,
     array_has_any,
@@ -28,6 +30,8 @@ from src.services.symptom_protocol.common_safety.predicates import (
 from src.services.symptom_protocol.models import RuleMatch
 
 CHRONIC_SEVERE = frozenset({"cardiac", "pulmonary", "renal", "hepatic", "hematologic_thalassemia", "malignancy"})
+CHEST_PAIN_TEXT_MARKERS = frozenset({"dau nguc", "tuc nguc", "nang nguc", "that nguc", "nguc"})
+ALTERED_CONSCIOUSNESS_VALUES = frozenset({"drowsy_but_rousable", "difficult_to_rouse", "unresponsive"})
 
 # Field tri-state "đỏ tuyệt đối" + giá trị enum coi là đỏ. Dùng cho `provisional_emergency_signal`
 # (biết khi nào nên dừng hỏi thường quy) và cho việc quét kèm field an toàn ngoài cụm đang hỏi.
@@ -101,6 +105,7 @@ REASON_CODE_LABELS: dict[str, str] = {
     "RF-41": "Sưng đau khớp / không đi lại được",
     "RF-43": "Ổ nhiễm khuẩn khu trú",
     "RF-44": "Người nhà rất lo lắng / trông rất mệt",
+    "RF-45": "Đau ngực nặng lên kèm khó thở và giảm tỉnh táo",
 }
 
 
@@ -230,6 +235,35 @@ def r_e_21(a: dict[str, object], matches: tuple[RuleMatch, ...]) -> RuleMatch | 
     other_emergency_matched = any(m.level == "EMERGENCY" for m in matches)
     if has_flags or other_emergency_matched:
         return RuleMatch("R-E-21", ("RF-32",), "EMERGENCY", "now")
+    return None
+
+
+def _fold_text(value: object) -> str:
+    text = str(value or "").casefold().replace("đ", "d")
+    stripped = unicodedata.normalize("NFD", text)
+    return "".join(char for char in stripped if unicodedata.category(char) != "Mn")
+
+
+def _has_chest_pain_complaint(a: dict[str, object]) -> bool:
+    if is_true(a.get("chest_pain")):
+        return True
+    text = " ".join(_fold_text(a.get(key)) for key in ("chief_complaint", "complaint_site"))
+    return any(marker in text for marker in CHEST_PAIN_TEXT_MARKERS)
+
+
+def r_e_22(a: dict[str, object], _matches: tuple[RuleMatch, ...]) -> RuleMatch | None:
+    """High-risk chest-pain pattern in the generic protocol.
+
+    Generic has no chest-pain-specific protocol yet, so this deliberately narrow rule only catches the
+    combination from the unsafe transcript: chest pain that is severe, worsening, with dyspnea and
+    altered alertness. Each component alone remains on the normal common-safety path.
+    """
+    severe = (as_float(a.get("complaint_severity")) or 0) >= 7
+    worse = a.get("complaint_progression") == "worse"
+    dyspnea = a.get("breathing_difficulty") in {"mild", "severe"} or is_true(a.get("rapid_breathing"))
+    altered = a.get("consciousness_level") in ALTERED_CONSCIOUSNESS_VALUES or is_true(a.get("new_confusion"))
+    if _has_chest_pain_complaint(a) and severe and worse and dyspnea and altered:
+        return RuleMatch("R-E-22", ("RF-45",), "EMERGENCY", "now")
     return None
 
 
@@ -432,7 +466,7 @@ def _has_any_risk_context(a: dict[str, object]) -> bool:
 
 EMERGENCY_RULES: tuple = (
     r_e_01, r_e_02, r_e_03, r_e_04, r_e_05, r_e_06, r_e_07, r_e_08, r_e_09, r_e_10,
-    r_e_11, r_e_12, r_e_13, r_e_20,
+    r_e_11, r_e_12, r_e_13, r_e_20, r_e_22,
 )
 """KHÔNG gồm `r_e_21` - rule đó phụ thuộc thứ tự và phải đứng sau MỌI rule EMERGENCY khác, kể cả rule
 đặc thù bệnh mà protocol tự thêm vào. Protocol ghép catalog phải tự đặt nó đúng chỗ."""
