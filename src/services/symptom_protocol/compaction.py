@@ -40,7 +40,9 @@ _MAX_SUMMARY_CHARS = 1200
 """Trần độ dài bản tóm tắt. Không có trần thì mỗi lần nén lại nối thêm vào bản cũ, và sau vài chục
 lượt "bản nén" tự nó trở thành thứ làm tràn context - đúng thứ nó sinh ra để tránh."""
 
-_SUMMARY_TEMPERATURE = 0.0
+# Nhiet do cua vai tro nay da chuyen sang `Settings.role_temperature_context_summary` (2026-08-25) de moi vai tro
+# chinh duoc mot cho, thay vi rai hang so khap cac module. `provider_router._resolve_temperature`
+# doc no theo `role=` da truyen san o loi goi ben duoi.
 
 _SYSTEM_PROMPT = """Bạn tóm tắt phần đầu của một cuộc hỏi-đáp y tế để lưu vào bộ nhớ ngắn hạn.
 
@@ -127,7 +129,6 @@ def _summarize(
     try:
         result = provider_router.complete(
             [{"role": "user", "content": prompt}],
-            temperature=_SUMMARY_TEMPERATURE,
             credential=credential,
             role=provider_router.ROLE_CONTEXT_SUMMARY,
         )

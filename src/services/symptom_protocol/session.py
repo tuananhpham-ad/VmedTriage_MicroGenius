@@ -379,6 +379,17 @@ class ProtocolSessionStore:
         if restored is not None:
             restored.user_id = user_id
             self._sessions[session_id] = restored
+            # Sổ log của phiên nằm trong RAM và chỉ do `start()` điền, mà `start()` đã chạy ở TIẾN
+            # TRÌNH TRƯỚC. Không nhận lại ở đây thì nửa sau của phiên rơi sang namespace mặc định và
+            # luồng hội thoại bị chẻ làm hai thư mục - xem docstring `stage_log.adopt`.
+            stage_log.adopt(
+                session_id,
+                fallback_namespace=(
+                    restored.protocol_name
+                    if restored.protocol_pinned and restored.protocol_name
+                    else registry.DEFAULT_PROTOCOL_NAME
+                ),
+            )
         return restored
 
     def _remember(self, session: Session) -> None:
@@ -498,6 +509,20 @@ class ProtocolSessionStore:
     def submit_message(
         self, session_id: str, message: str, *, on_token: agent.TokenSink | None = None,
     ) -> Session:
+        """Một lượt của người bệnh, rồi chốt sổ (`_remember`) đúng MỘT lần cho lượt đó.
+
+        Chốt sổ ở đây chứ không rải trong `_turn`: đường đi của một lượt rẽ ra 9 nhánh `return` (đỏ,
+        phi lâm sàng, fail-closed, lượt mở, ...) và mỗi nhánh phải tự nhớ gọi `_remember` là một danh
+        sách 9 điểm không ai giữ đồng bộ nổi. Nó đã lệch thật: nhánh đỏ `_escalate_from_text_signal`
+        không gọi, nên một ca CẤP CỨU chốt ngay lượt đầu **không có hàng nào trong DB** - không sống
+        qua restart, và không bao giờ có `nurse_summary_json` để M3 chắt lọc."""
+        session = self._turn(session_id, message, on_token=on_token)
+        self._remember(session)
+        return session
+
+    def _turn(
+        self, session_id: str, message: str, *, on_token: agent.TokenSink | None = None,
+    ) -> Session:
         """`on_token` != None: phát từng mẩu CÂU HỎI ra ngoài ngay khi model sinh (endpoint SSE).
 
         Không đổi gì khác trong vòng đời phiên - cùng một lượt, cùng một kết quả, chỉ khác ở chỗ văn
@@ -524,7 +549,6 @@ class ProtocolSessionStore:
                 console_log.user_message(session.session_id, cleaned, turn=session.turn_count)
                 session.conversation.append({"role": "user", "content": cleaned})
                 self._finish(session, "USER_CANNOT_CONTINUE")
-                self._remember(session)
                 return session
             if decision is False:
                 session.turn_count += 1
@@ -536,7 +560,6 @@ class ProtocolSessionStore:
                 session.last_question = question
                 session.conversation.append({"role": "assistant", "content": question})
                 console_log.agent_question(session.session_id, question, llm_used=False)
-                self._remember(session)
                 return session
 
         # L0.5 ý định người bệnh - THUẦN code, chạy SAU tín hiệu an toàn và TRƯỚC mọi lời gọi model.
@@ -736,7 +759,6 @@ class ProtocolSessionStore:
             stage_log.finish(session_id, triage_level=result.triage_level, stop_reason="RED_FLAG", turns=session.turn_count)
             console_log.red_flag(session.session_id, list(result.reason_codes))
             console_log.session_end(session.session_id, state="emergency", turns=session.turn_count, percent=100)
-            self._remember(session)
             return session
 
         # Cập nhật kết luận triage MỚI NHẤT do rule engine tính ở lượt này (kể cả khi chưa EMERGENCY)
@@ -750,17 +772,14 @@ class ProtocolSessionStore:
         session.last_question = agent_message
         if hold:
             # KHÔNG `_progress`: giữ nguyên cụm hiện tại để lượt sau vẫn trích theo đúng schema đó.
-            self._remember(session)
             return session
         if session.uncooperative.should_stop:
             # Đã hỏi một lần "bạn có muốn dừng không" và người bệnh vẫn không hợp tác thêm một lượt
             # nữa. Đứng SAU nhánh cấp cứu (đã `return` ở trên) và sau `hold`, nên nó không bao giờ
             # nuốt mất một tín hiệu đỏ hay một lời đính chính đang chờ xác nhận.
             self._finish(session, "USER_UNCOOPERATIVE")
-            self._remember(session)
             return session
         self._progress(session, result)
-        self._remember(session)
         return session
 
     def _submit_open_message(
@@ -962,7 +981,6 @@ class ProtocolSessionStore:
             llm_used=llm_used,
         )
         console_log.agent_question(session.session_id, reply, llm_used=llm_used)
-        self._remember(session)
         return session
 
     def _answer_joking_non_answer(self, session: Session, message: str) -> Session:
@@ -991,7 +1009,6 @@ class ProtocolSessionStore:
             llm_used=False,
         )
         console_log.agent_question(session.session_id, reply, llm_used=False)
-        self._remember(session)
         return session
 
     def _run_model_red_flag_branch(self, session: Session, message: str) -> None:

@@ -96,6 +96,57 @@ class Settings(BaseSettings):
     role_order_followup_question: str = os.getenv("ROLE_ORDER_FOLLOWUP_QUESTION", "")
     """M3 - model viết câu hỏi thăm mở đầu hội thoại mới. Rỗng = kế thừa thứ tự toàn cục."""
 
+    # ---- Temperature theo VAI TRÒ ----
+    #
+    # VÌ SAO CẦN TÁCH: `llm_temperature` là MỘT số cho MỌI vai trò, và `deploy/azure/env` đặt nó
+    # bằng 0.7. Vai trò nào không tự truyền temperature thì rơi về con số đó - trong đó có
+    # `fact_extractor`, tức bước TRÍCH XUẤT FIELD LÂM SÀNG (`intake_agent._invoke_json` gọi mà không
+    # truyền temperature). Trích xuất có cấu trúc ở 0.7 là nguyên nhân trực tiếp của việc model bịa
+    # giá trị field. `claim_splitter` cũng kế thừa 0.7 -> claim không ổn định -> truy vấn tìm kiếm
+    # lệch -> embedding sai -> retrieval sai, đúng chuỗi hỏng quan sát được ở phần trích nguồn.
+    #
+    # NGUYÊN TẮC ĐẶT SỐ, không phải khẩu vị: temperature > 0 chỉ dành cho vai trò mà đầu ra là VĂN
+    # PHONG. Vai trò nào đầu ra là DỮ KIỆN (field, nhãn, claim, phán quyết) thì phải 0.0 - ở đó sự
+    # đa dạng không phải "tự nhiên hơn", nó là sai số.
+    #
+    # Thứ tự ưu tiên khi giải: tham số `temperature=` truyền tường minh > số của vai trò dưới đây >
+    # `llm_temperature` toàn cục.
+    fever_log_redact: bool = Field(default=False)
+    """Che PHI trong `fever_stage_log`: `user_message`/`agent_message`/`text`/`response_text`/
+    `content` thành `{len, sha256_8}`, ở CẢ hai đích (JSONL trên đĩa và span Braintrust).
+
+    ĐỌC QUA `Settings` chứ không chỉ `os.getenv`: pydantic-settings nạp `.env` mà KHÔNG ghi vào
+    `os.environ`, và repo không có `load_dotenv()` nào (xem đầu `provider_router.py`). Bản cũ chỉ
+    gọi `os.getenv("FEVER_LOG_REDACT")`, nên đặt cờ này trong `.env` là HỎNG CÂM - người đặt tin
+    rằng PHI đã được che, thực tế nguyên văn hội thoại vẫn đi lên Braintrust. Trên Azure thì lại
+    chạy đúng (`--env-vars` đặt biến môi trường thật), nên hai môi trường hành xử khác nhau mà
+    không có thông báo nào. Với một cờ canh PHI, hỏng câm là kiểu hỏng tệ nhất.
+
+    `fever_stage_log._redact_enabled()` vẫn đọc `os.getenv` TRƯỚC để lệnh
+    `FEVER_LOG_REDACT=1 python -m ...` một lần vẫn bật được mà không phải sửa file.
+    """
+
+    role_temperature_fact_extractor: float = Field(default=0.0, ge=0.0, le=2.0)
+    """TRÍCH XUẤT field lâm sàng. PHẢI là 0.0 - đầu ra đi thẳng vào hồ sơ bệnh nhân."""
+    role_temperature_symptom_group_router: float = Field(default=0.0, ge=0.0, le=2.0)
+    """Phân loại nhóm triệu chứng. Đầu ra là một nhãn, không phải một câu."""
+    role_temperature_claim_splitter: float = Field(default=0.0, ge=0.0, le=2.0)
+    """Tách claim cho part 3. Claim đổi theo từng lần chạy = truy vấn tìm kiếm đổi theo = retrieval
+    không tái lập được."""
+    role_temperature_source_verdict: float = Field(default=0.0, ge=0.0, le=2.0)
+    """Phán quyết nguồn có ủng hộ claim không. Đây là phán xét đúng/sai, không phải diễn đạt."""
+    role_temperature_source_explain: float = Field(default=0.3, ge=0.0, le=2.0)
+    """Diễn giải cho người đọc - là VĂN PHONG, nhưng bị guard trích dẫn ràng nên giữ thấp."""
+    role_temperature_synthesis: float = Field(default=0.2, ge=0.0, le=2.0)
+    """Văn xuôi phiếu bàn giao. Giữ đúng 0.2 như hằng số cũ trong `narrative.py`."""
+    role_temperature_chitchat: float = Field(default=0.7, ge=0.0, le=2.0)
+    """Trò chuyện ngoài lâm sàng. Vai trò DUY NHẤT mà đa dạng là ưu điểm thật."""
+    role_temperature_context_summary: float = Field(default=0.0, ge=0.0, le=2.0)
+    """M2 - nén hội thoại. Bản nén là dữ kiện cho model sau đọc, không phải văn."""
+    role_temperature_followup_question: float = Field(default=0.3, ge=0.0, le=2.0)
+    """M3 - câu hỏi thăm đi THẲNG tới người bệnh. Giữ 0.3 như hằng số cũ: đủ để không đọc như máy,
+    đủ thấp để `followup_writer._accept` không phải chặn liên tục."""
+
     # Bộ lọc phạm vi y tế rẻ (`non_clinical.classify_with_zero_shot`) đứng TRƯỚC LLM domain
     # classifier - model NLI nhỏ qua HF Inference API, không sinh văn bản nên rẻ và nhanh hơn một
     # lượt chat completion. Mặc định TẮT: đây là dịch vụ phụ trợ chưa qua eval, bật nhầm trong test

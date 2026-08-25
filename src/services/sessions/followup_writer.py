@@ -33,7 +33,9 @@ from src.services.stores.conversation_store import PastConversation
 
 logger = logging.getLogger("vmedtriage.followup_writer")
 
-_TEMPERATURE = 0.3
+# Nhiet do cua vai tro nay da chuyen sang `Settings.role_temperature_followup_question` (2026-08-25) de moi vai tro
+# chinh duoc mot cho, thay vi rai hang so khap cac module. `provider_router._resolve_temperature`
+# doc no theo `role=` da truyen san o loi goi ben duoi.
 """Cao hơn `compaction` (0.0) một chút và chỉ một chút: việc ở đây là ĐỔI CÁCH NÓI cho đỡ máy móc,
 nên cần một biên độ; nhưng nội dung đã bị chốt sẵn nên biên độ rộng chỉ mua thêm rủi ro trượt guard."""
 
@@ -71,7 +73,6 @@ def compose(
     try:
         result = provider_router.complete(
             [{"role": "user", "content": _prompt(complaint, occurrences, entries)}],
-            temperature=_TEMPERATURE,
             role=provider_router.ROLE_FOLLOWUP_QUESTION,
         )
         text = " ".join(result.text.split()).strip()

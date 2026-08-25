@@ -85,6 +85,8 @@ tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
-deploy/azure/env
+# Moi bien the cua file env that (ke ca "env copy", "env.bak", "env.prod") - CHI env.example duoc commit.
+deploy/azure/env*
+!deploy/azure/env.example
 
 render.yaml
