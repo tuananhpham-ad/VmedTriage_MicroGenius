@@ -47,7 +47,7 @@ def test_search_pubmed_builds_urls_from_pmids(monkeypatch, pubmed_settings):
     assert captured["url"] == search._ESEARCH_URL
     assert captured["params"] == {
         "db": "pubmed",
-        "term": "acute abdominal pain",
+        "term": f"(acute abdominal pain) AND {search._PUBMED_PUBLICATION_TYPE_FILTER}",
         "retmax": str(search.MAX_RESULTS),
         "retmode": "json",
         "sort": "relevance",
@@ -157,8 +157,12 @@ def test_search_pubmed_sends_the_trimmed_term(monkeypatch, pubmed_settings):
     claim = "Acute appendicitis in patients with fever requires clinical evaluation"
     search._search_pubmed(claim, PUBMED_ALLOWLIST)
 
-    assert captured["params"]["term"] == search._pubmed_query(claim)
+    expected_term = search._pubmed_query(claim, max_terms=search._PUBMED_MAX_TERMS_FILTERED)
+    assert captured["params"]["term"] == f"({expected_term}) AND {search._PUBMED_PUBLICATION_TYPE_FILTER}"
     assert captured["params"]["term"] != claim
+    # Ghép filter KHÔNG được nới trần từ khoá về `_PUBMED_MAX_TERMS` (10) - dùng đúng trần thấp hơn
+    # dành riêng cho truy vấn có lọc, nếu không sẽ tái lập bug "0 kết quả" đã đo 2026-08-26.
+    assert len(expected_term.split()) <= search._PUBMED_MAX_TERMS_FILTERED
 
 
 # ---------- auto (chain gemini -> tavily -> pubmed) ----------

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -212,47 +213,71 @@ def _documented_rule_for(summary_text: str) -> dict[str, Any]:
     )
 
 
-def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[str, Any]:
-    """Apply the non-lowering C6 emergency combiner and retain a compact audit trail."""
-    updated = dict(decision)
-    escalated_by: list[str] = []
-    audit: dict[str, Any] = {}
-    direct_decision: dict[str, Any] | None = None
-
+def _run_direct_branch(summary_text: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Run the `direct` C6 arm, catching failure the same way the sequential version did."""
     try:
         direct_decision = _direct_decision_for(summary_text)
-        audit["direct"] = {"available": True, "triage_label": direct_decision["triage_label"]}
-        if direct_decision["triage_label"] == "cap_cuu":
-            escalated_by.append("direct")
+        return direct_decision, {"available": True, "triage_label": direct_decision["triage_label"]}
     except Exception as error:
         logger.debug("graph_triage.c6_direct_unavailable error=%s: %s", type(error).__name__, error)
-        audit["direct"] = {"available": False, "error": type(error).__name__}
+        return None, {"available": False, "error": type(error).__name__}
 
-    # This is the second arm of the C6 benchmark formula. Fusion only votes for emergency;
-    # non-emergency Fusion output must not replace the GPT-direct label.
+
+def _run_fusion_branch(summary_text: str) -> tuple[str | None, dict[str, Any]]:
+    """Run the `fusion` C6 arm. Fusion only votes for emergency; a non-emergency Fusion output
+    must not replace the GPT-direct label (second arm of the C6 benchmark formula)."""
     try:
         fusion_label = _fusion_label_for(summary_text)
-        audit["fusion"] = {"available": True, "triage_label": fusion_label}
-        if fusion_label == "cap_cuu":
-            escalated_by.append("fusion")
+        return fusion_label, {"available": True, "triage_label": fusion_label}
     except Exception as error:
         logger.debug("graph_triage.c6_fusion_unavailable error=%s: %s", type(error).__name__, error)
-        audit["fusion"] = {"available": False, "error": type(error).__name__}
+        return None, {"available": False, "error": type(error).__name__}
 
+
+def _run_documented_rule_branch(summary_text: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Run the `documented_rule` C6 arm."""
     try:
         documented_rule = _documented_rule_for(summary_text)
-        audit["documented_rule"] = {
+        return documented_rule, {
             "available": bool(documented_rule.get("available")),
             "emergency": bool(documented_rule.get("emergency")),
             "protocol": documented_rule.get("protocol"),
             "triggered_rules": documented_rule.get("triggered_rules", []),
             "reason_codes": documented_rule.get("reason_codes", []),
         }
-        if documented_rule.get("emergency"):
-            escalated_by.append("documented_rule")
     except Exception as error:
         logger.debug("graph_triage.c6_rule_unavailable error=%s: %s", type(error).__name__, error)
-        audit["documented_rule"] = {"available": False, "error": type(error).__name__}
+        return None, {"available": False, "error": type(error).__name__}
+
+
+def _apply_c6_safety_gate(decision: dict[str, Any], summary_text: str) -> dict[str, Any]:
+    """Apply the non-lowering C6 emergency combiner and retain a compact audit trail.
+
+    The three arms below never consume each other's output, and each makes its own network call
+    (OpenAI direct decision, DeepSeek graph extraction feeding Fusion, OpenAI rule-gate
+    extraction). Running them on their own threads turns per-case latency from the SUM of three
+    round-trips into the MAX of them. The combining logic still runs single-threaded afterwards,
+    in the same direct/fusion/documented_rule order the sequential version used, so the audit
+    trail and escalation outcome are unchanged - only wall-clock time drops.
+    """
+    updated = dict(decision)
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        direct_future = pool.submit(_run_direct_branch, summary_text)
+        fusion_future = pool.submit(_run_fusion_branch, summary_text)
+        rule_future = pool.submit(_run_documented_rule_branch, summary_text)
+        direct_decision, direct_audit = direct_future.result()
+        fusion_label, fusion_audit = fusion_future.result()
+        documented_rule, rule_audit = rule_future.result()
+
+    escalated_by: list[str] = []
+    if direct_decision is not None and direct_decision["triage_label"] == "cap_cuu":
+        escalated_by.append("direct")
+    if fusion_label == "cap_cuu":
+        escalated_by.append("fusion")
+    if documented_rule is not None and documented_rule.get("emergency"):
+        escalated_by.append("documented_rule")
+    audit: dict[str, Any] = {"direct": direct_audit, "fusion": fusion_audit, "documented_rule": rule_audit}
 
     if escalated_by and updated["triage_label"] != "cap_cuu":
         updated["triage_label"] = "cap_cuu"
@@ -505,7 +530,14 @@ def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSuppor
     try:
         from src.source_support import pipeline as source_support_pipeline
 
-        return source_support_pipeline.run(decision, triage_label=decision["triage_label"])
+        # Bản sao, không mutate `decision` gốc: nó còn được `_compact_payload` đọc lại sau lời gọi
+        # này. `chief_complaint` cho bước 1 của Part 3 (claim-splitter) biết triệu chứng nào là
+        # trọng tâm, để nó không chọn nhầm một dấu hiệu phụ khi phải chọn tối đa 3 claim.
+        # `triage_case.summary` là optional (case dựng tay/test có thể để trống) - rỗng thì bỏ qua
+        # tín hiệu này, KHÔNG để cả Part 3 fail vì thiếu mỗi một trường không bắt buộc.
+        chief_complaint = triage_case.summary.chief_complaint if triage_case.summary else ""
+        payload = {**decision, "chief_complaint": chief_complaint}
+        return source_support_pipeline.run(payload, triage_label=decision["triage_label"])
     except Exception as error:
         logger.warning(
             "graph_triage.source_support_failed case_id=%s error=%s: %s",

@@ -109,3 +109,48 @@
 - **Ghi chú phạm vi:** `ProtocolTriageEngine`, `RedFlagSafetyLayer`, và `TriagePipeline` được nhắc
   trong một số tài liệu cũ không phải nguồn priority của luồng `/chat` hiện tại. Việc dọn dead code
   được tách thành công việc riêng, không nằm trong ADR này.
+
+## ADR-010: Gợi ý bệnh viện gần nhất — adapter 3 nhà cung cấp, và một ngoại lệ có phạm vi hẹp với ADR-002
+
+- **Ngày:** 25/08/2026 · **Trạng thái:** Đã chốt (tính năng mới, ngoài phạm vi `docs/brief.md`/`docs/prd.md` gốc — xem lưu ý bên dưới)
+- **Bối cảnh:** Bệnh nhân chỉ nhận được khuyến cáo dạng văn bản tĩnh ("đến cơ sở y tế gần nhất",
+  `docs/prd.md:38`), không có địa điểm cụ thể. Cần tích hợp một API địa điểm bên thứ 3 để tìm bệnh
+  viện gần vị trí bệnh nhân. Đây là tính năng hoàn toàn mới, không nằm trong đặc tả MVP gốc — brief
+  đã liệt kê "Scope creep" là rủi ro Cao/Cao (mục 8); tính năng này nên được PM/mentor biết trước khi
+  merge lên nhánh chính, dù không bị chặn ở bước lập kế hoạch.
+- **Quyết định 1 — nhà cung cấp:** Adapter chung (`src/services/hospital_lookup/`), 3 implementation
+  cùng chữ ký hàm (`goong.py`, `google_maps.py`, `openstreetmap.py`), chọn qua
+  `Settings.hospital_lookup_provider` (mặc định `"goong"`). Lý do không chốt cứng một nhà cung cấp:
+  Goong (free 1.000 request/ngày, không cần thẻ quốc tế, dữ liệu địa chỉ VN tốt, nhưng KHÔNG có
+  nearby-search theo category nên phải tự ghép `Place/AutoComplete` + `Place/Detail`, tức 1 lượt tốn
+  1+N request) và Google Maps Platform (có `type=hospital` thật, 1 request/lượt, nhưng cần bật billing
+  bằng thẻ quốc tế) mỗi bên có đánh đổi riêng; OpenStreetMap (Nominatim + Overpass, miễn phí tuyệt
+  đối nhưng server công cộng giới hạn 1 request/giây và ToS cấm dùng production quy mô lớn) là
+  phương án dự phòng khi hết free tier hai bên kia. Đổi nhà cung cấp là đổi một biến môi trường,
+  không sửa router/DB/frontend.
+- **Quyết định 2 (nhạy cảm, đọc kỹ trước khi áp dụng cho tính năng khác) — không có bước duyệt của
+  điều dưỡng:** Gợi ý bệnh viện hiển thị **trực tiếp cho bệnh nhân** ngay sau khi tra cứu — route
+  `/cases/{case_id}/hospital-suggestions` chỉ có role `PATIENT`, không có role `NURSE`, không có
+  endpoint duyệt. Đây là **ngoại lệ có phạm vi hẹp** với ADR-002 (HITL bắt buộc 100%), lý lẽ: danh
+  sách bệnh viện là **thông tin logistics** (tên/địa chỉ/khoảng cách/SĐT lấy nguyên văn từ nhà cung
+  cấp bản đồ), không phải **đề xuất xử trí lâm sàng** mà CLAUDE.md nguyên tắc 1 nói tới — cùng tinh
+  thần với ngoại lệ đã có cho banner red-flag (ADR-004/008, nơi an toàn tức thời được ưu tiên hơn chờ
+  duyệt). **Ngoại lệ này CHỈ áp dụng cho chính tính năng gợi ý bệnh viện** — không phải tiền lệ để bất
+  kỳ output nào khác của Agent (checklist, red-flag, mức ưu tiên, hướng dẫn xử trí) bỏ qua HITL.
+- **Phương án khác đã xem xét:**
+  - Google Maps Platform làm nhà cung cấp duy nhất — bị loại vì rào cản thẻ billing quốc tế cho một
+    sản phẩm MVP tiếng Việt; giữ làm một trong 3 lựa chọn trong adapter thay vì loại hẳn.
+  - Gợi ý bệnh viện vẫn qua màn hình duyệt của điều dưỡng như luồng triage chính (tái dùng
+    `hitl_review.py`/`nurse_triage_decisions`) — bị loại: đây là track duyệt độc lập về thời điểm
+    (bệnh nhân có thể xin gợi ý bất kỳ lúc nào, kể cả sau khi case chính đã `approved`) và độc lập về
+    nội dung (không đụng `TriageCase.status`/`priority`); nhét chung sẽ phình `NurseReviewRequest` và
+    trộn hai audit domain khác nhau.
+- **Hệ quả:** Bảng cache `hospital_suggestions` (`src/models/hospital_suggestion.py`, FK vào
+  `triage_cases.case_id`, không có cột trạng thái duyệt) chỉ đóng vai trò cache + audit trail (tái
+  dùng `audit_log` chung qua action `hospital_suggestion_requested`, không tạo bảng audit riêng).
+  Route mới bắt buộc khai báo trong `src/middleware/auth.py::ROUTE_POLICIES` (middleware đó fail-open
+  — thiếu dòng khai báo nghĩa là route mở public không cần token). Thiếu cấu hình nhà cung cấp đang
+  chọn (API key/contact email) → tính năng tự tắt (`ProviderNotConfiguredError` → HTTP 503), không
+  crash luồng triage chính, đúng nguyên tắc best-effort toàn repo (xem `src/source_support/`). Vị trí
+  bệnh nhân lấy qua GPS trình duyệt (HTML5 Geolocation), fallback nhập địa chỉ text khi từ chối quyền/
+  không hỗ trợ — geocode qua chính nhà cung cấp đang chọn.
