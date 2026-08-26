@@ -14,6 +14,8 @@ erDiagram
     USERS ||--o{ NURSE_TRIAGE_DECISIONS : makes
     NURSE_SHIFTS o|--o{ NURSE_TRIAGE_DECISIONS : context
     CASES ||--o{ NURSE_TRIAGE_DECISIONS : receives
+    CASES ||--o| HOSPITAL_SUGGESTIONS : caches
+    USERS ||--o{ HOSPITAL_SUGGESTIONS : requests
 
     USERS {
         uuid id PK
@@ -91,6 +93,19 @@ erDiagram
         boolean is_current
         timestamptz decided_at
     }
+
+    HOSPITAL_SUGGESTIONS {
+        uuid case_id PK_FK
+        uuid requested_by FK
+        timestamptz requested_at
+        varchar location_source
+        double patient_lat
+        double patient_lng
+        varchar address_text
+        varchar provider
+        jsonb suggestions_json
+        timestamptz updated_at
+    }
 ```
 
 ## Triage workflow
@@ -104,3 +119,15 @@ Checklist responses
 
 `ai_triage_suggestions` chỉ là khuyến nghị của Agent. Kết quả chính thức phải
 được lấy từ bản ghi hiện tại trong `nurse_triage_decisions`.
+
+## Gợi ý bệnh viện gần nhất (patient-only)
+
+`hospital_suggestions` (ADR-010, `docs/context/decisions.md`) là bảng CACHE, không có bước duyệt
+của điều dưỡng — bệnh nhân thấy danh sách trực tiếp, khác hẳn `ai_triage_suggestions` →
+`nurse_triage_decisions` ở trên. Đây là ngoại lệ có phạm vi hẹp với HITL (ADR-002), chỉ áp dụng cho
+tính năng này.
+
+⚠️ **Bảng này CHỈ là tài liệu tham khảo**, giống mọi bảng khác trong file này (xem
+[`data/db_schema.sql`](../data/db_schema.sql)) — app KHÔNG đọc/ghi qua đây. Bảng thật (chạy được)
+nằm ở `src/models/hospital_suggestion.py`, khoá theo `TriageCaseRow.case_id` dạng chuỗi, không phải
+UUID như `cases.id` ở trên. Đừng coi lệch nhau giữa hai nguồn này là lỗi.

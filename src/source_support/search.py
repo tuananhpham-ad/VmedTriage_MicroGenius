@@ -230,35 +230,66 @@ _PUBMED_MAX_TERMS = 10
 2026-08-23, cùng một mệnh đề COPD: câu đầy đủ (14 từ) -> 1 kết quả, `best_score` 0.532, verdict
 `unsupported`; bản rút còn 7 từ khoá -> 5 kết quả, `best_score` 0.644, verdict `supports`."""
 
+_PUBMED_PUBLICATION_TYPE_FILTER = '("guideline"[pt] OR "practice guideline"[pt] OR "review"[pt])'
+"""Ép ESearch chỉ trả bài THUỘC THỂ LOẠI hướng dẫn/tổng quan, không phải case report/nghiên cứu gốc.
 
-def _pubmed_query(claim: str) -> str:
+Đo thật 2026-08-26 (`eval/scripts/eval_part2_part3_web_search.py`, 45 ca Semigran, index rỗng): không
+lọc publication type, PubMed tìm được ứng viên cho 14/49 claim (29%) - GẦN BẰNG tỉ lệ của Tavily
+(25/69, 36%) - nhưng verdict chỉ công nhận 4/14 (29%) là supports/partial, so với 16/25 (64%) của
+Tavily. Nguyên nhân: PubMed trả trang ABSTRACT của bài nghiên cứu gốc (case report, kết quả thử
+nghiệm...) - đúng thể loại mô tả nghiên cứu chứ không phát biểu kiểu "nếu có X thì cần Y" như hướng
+dẫn lâm sàng, nên bộ chấm blind (đúng thiết kế, không được nương tay - xem `verdict.py`) đa số gạt
+`unsupported` dù chủ đề khớp. Bài publication-type "Guideline"/"Practice Guideline"/"Review" là đúng
+thể loại VĂN BẢN HƯỚNG DẪN mà claim (viết ở "mức khái quát của sách hướng dẫn" - xem `claims.py` quy
+tắc 3b) cần đối chiếu.
+
+ĐÁNH ĐỔI CÓ CHỦ Ý: bộ lọc này thu hẹp tập bài rất nhiều (đa số PubMed là nghiên cứu gốc), nên một số
+claim hẹp có thể ra 0 kết quả thay vì có candidate-nhưng-bị-gạt như trước. Chấp nhận được vì mục tiêu
+là độ CHÍNH XÁC của trích dẫn cho điều dưỡng, không phải số lượng candidate đưa vào bước chấm."""
+
+_PUBMED_MAX_TERMS_FILTERED = 5
+"""Trần từ khoá RIÊNG khi có `_PUBMED_PUBLICATION_TYPE_FILTER` đi kèm - thấp hơn hẳn `_PUBMED_MAX_TERMS`
+(10) dùng khi không lọc. Đo thật 2026-08-26, 2 claim mẫu (COPD/gan cấp): ghép nguyên `_PUBMED_MAX_TERMS`
+(7-9 từ) với bộ lọc pt ra ĐÚNG 0 kết quả cho cả hai; giữ 5 từ đầu (thứ tự ưu tiên vốn có của
+`_pubmed_query`) thì ra 11 và 2 kết quả. Bộ lọc pt đã tự nó là một phép AND rất chặt (thu hẹp còn
+~4 triệu/37 triệu bản ghi PubMed), nên phần từ khoá phải nới ra để bù lại - ghép hai tầng AND chặt
+lên nhau collapse về 0 nhanh hơn nhiều so với dùng riêng lẻ."""
+
+
+def _pubmed_query(claim: str, *, max_terms: int = _PUBMED_MAX_TERMS) -> str:
     """Câu mệnh đề tiếng Anh -> chuỗi từ khoá cho ESearch. Hàm THUẦN: không mạng, không LLM.
 
     Phải deterministic. Nhánh `documented_rule` của C6 đã có một tầng LLM trích fact không tái lập
     được (chạy 3 lần ra 2 kết quả khác nhau); thêm một tầng LLM nữa ở chỗ dựng câu truy vấn thì
     không còn cách nào truy ngược vì sao một ca trích được nguồn còn ca kia thì không.
 
+    `max_terms` cho `_search_pubmed` nới xuống `_PUBMED_MAX_TERMS_FILTERED` khi ghép thêm bộ lọc
+    publication-type - xem docstring hằng số đó. Mặc định vẫn `_PUBMED_MAX_TERMS` cho mọi lời gọi
+    khác (kể cả test gọi trực tiếp hàm này) để không đổi hành vi ngoài phạm vi bộ lọc mới.
+
     Rỗng sau khi lọc thì TRẢ LẠI câu gốc: chuỗi rỗng khiến ESearch khớp toàn bộ PubMed."""
     cleaned = _PUBMED_OPERATOR_CHARS.sub(" ", claim)
     terms = [word for word in cleaned.split() if word.lower().strip(",.;") not in _PUBMED_STOPWORDS]
-    return " ".join(terms[:_PUBMED_MAX_TERMS]) if terms else claim
+    return " ".join(terms[:max_terms]) if terms else claim
 
 
 def _search_pubmed(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[str]:
     """Gọi NCBI ESearch và dựng URL PubMed trực tiếp từ PMID.
 
     Không tốn LLM call và không cần key. URL PubMed vẫn phải đi qua allowlist trước khi fetch.
-    `query` là câu mệnh đề đầy đủ; ESearch cần từ khoá nên đi qua `_pubmed_query` trước.
+    `query` là câu mệnh đề đầy đủ; ESearch cần từ khoá nên đi qua `_pubmed_query` trước, ghép thêm
+    `_PUBMED_PUBLICATION_TYPE_FILTER` để ưu tiên bài hướng dẫn/tổng quan thay vì nghiên cứu gốc.
     """
     import httpx
 
     settings = get_settings()
-    term = _pubmed_query(query)
+    term = _pubmed_query(query, max_terms=_PUBMED_MAX_TERMS_FILTERED)
     if term != query:
         logger.info("source_support.pubmed_query_trimmed term=%r", term[:120])
+    final_term = f"({term}) AND {_PUBMED_PUBLICATION_TYPE_FILTER}"
     params = {
         "db": "pubmed",
-        "term": term,
+        "term": final_term,
         "retmax": str(MAX_RESULTS),
         "retmode": "json",
         # BẮT BUỘC truyền `sort`. Mặc định của ESearch là trả bài MỚI NHẤT, không phải bài LIÊN QUAN

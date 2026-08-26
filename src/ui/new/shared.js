@@ -178,6 +178,7 @@ const icons = {
   offline: `<path d="M2.5 8.5a14 14 0 0 1 19 0M6 12.6a9 9 0 0 1 12 0M12 20.2v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
   broken: `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.4"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
   flag: `<path d="M6 3.5v17M6 4.6h9.5l-1.4 3.4 1.4 3.4H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`,
+  mapPin: `<path d="M12 21s7-7.6 7-12.4A7 7 0 1 0 5 8.6C5 13.4 12 21 12 21Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="8.6" r="2.4" stroke="currentColor" stroke-width="1.6"/>`,
 };
 
 /** Icon nét theo bộ của bản thiết kế. Màu luôn thừa kế qua `currentColor` - đừng truyền stroke cứng

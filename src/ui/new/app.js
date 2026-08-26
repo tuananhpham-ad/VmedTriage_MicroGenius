@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
 import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260824g";
-import { renderDisclaimer, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260824g";
+import { destroyHospitalMap, renderDisclaimer, renderHospitalSuggestion, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260824g";
 import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260824g";
 import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260824g";
 
@@ -35,6 +35,7 @@ function render(view, options = {}) {
   stopDashboardPolling();
   stopNurseChatPolling();
   stopCasePolling();
+  destroyHospitalMap();
   state.view = view;
   if (view === "access") renderAccess(app, { navigate, logout });
   // `onAuthenticated` vì màn chọn vai trò có khối "dùng thử" tạo tài khoản tạm rồi vào thẳng luồng -
@@ -51,6 +52,7 @@ function render(view, options = {}) {
   if (view === "red-flag") renderRedFlag(app, { navigate, logout });
   if (view === "patient-cases") renderPatientCases(app, { navigate, logout });
   if (view === "patient-result") renderPatientResult(app, { navigate, logout });
+  if (view === "patient-hospital") renderHospitalSuggestion(app, { navigate, logout });
   if (view === "nurse-queue") renderNurseQueue(app, { navigate, logout });
   if (view === "nurse-done") renderNurseDone(app, { navigate, logout });
   if (view === "nurse-dashboard") renderNurseDashboard(app, { navigate, logout });

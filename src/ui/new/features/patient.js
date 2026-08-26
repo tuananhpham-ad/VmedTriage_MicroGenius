@@ -840,13 +840,21 @@ export function renderPatientResult(root, { navigate, logout }) {
     </div>`;
   }
 
-  root.innerHTML = `<section class="app-shell">${header}<main class="page">${body}</main></section>`;
+  // Gợi ý bệnh viện gần nhất KHÔNG chờ điều dưỡng duyệt (ADR-010 - đây là thông tin logistics, khác
+  // hướng xử trí lâm sàng ở trên), nên nút vào màn đó hiện ngay bất kể `current.status` là gì - chỉ
+  // cần đã có case đang mở.
+  const hospitalLink = current
+    ? `<div class="hospital-suggestion-link"><button class="secondary-button" type="button" data-goto-hospital>${icon("mapPin", 16)}<span>Tìm bệnh viện gần nhất</span></button></div>`
+    : "";
+
+  root.innerHTML = `<section class="app-shell">${header}<main class="page">${hospitalLink}${body}</main></section>`;
   bindPatientNav(root, { navigate });
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientResult(root, { navigate, logout }) });
   root.querySelector("[data-retry]")?.addEventListener("click", () => refreshResult(root, { navigate, logout }));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
   root.querySelector("[data-home]")?.addEventListener("click", () => navigate("patient-home"));
   root.querySelector("[data-case-back]")?.addEventListener("click", () => navigate("patient-chat"));
+  root.querySelector("[data-goto-hospital]")?.addEventListener("click", () => navigate("patient-hospital"));
   startCasePolling(root, { navigate, logout }, renderPatientResult);
 }
 
@@ -898,6 +906,288 @@ async function refreshResult(root, context) {
   } catch (problem) {
     showToast(problem.message, true);
   }
+}
+
+// ── Gợi ý bệnh viện gần nhất ─────────────────────────────────────────────────────────────────
+// PATIENT-ONLY, KHÔNG qua duyệt điều dưỡng - xem ADR-010 (docs/context/decisions.md). Danh sách là
+// thông tin logistics (tên/địa chỉ/khoảng cách), không phải đề xuất xử trí lâm sàng, nên bệnh nhân
+// thấy trực tiếp ngay khi backend trả kết quả - KHÔNG có màn "chờ duyệt" như W-05.
+//
+// GPS trình duyệt ưu tiên; từ chối quyền/không hỗ trợ/timeout đều rơi về form nhập địa chỉ tay - đây
+// là fallback bắt buộc chốt với PM, không phải nhánh phụ.
+
+export function renderHospitalSuggestion(root, { navigate, logout }) {
+  const current = state.currentPatientCase;
+  const header = patientHeader("cases", {
+    title: "Bệnh viện gần nhất",
+    right: `<div class="header-right"><button class="back-button" type="button" data-hospital-back>${icon("chevronLeft", 15)}<span>Quay lại</span></button>${accountMenu()}</div>`,
+  });
+
+  root.innerHTML = `<section class="app-shell">${header}<main class="page"><div id="hospital-body">${hospitalStatePanel("clock", "Đang tải…")}</div></main></section>`;
+  bindPatientNav(root, { navigate });
+  bindAccountMenu(root, { logout, onProfileSaved: () => renderHospitalSuggestion(root, { navigate, logout }) });
+  root.querySelector("[data-hospital-back]").addEventListener("click", () => navigate(current ? "patient-result" : "patient-cases"));
+
+  loadHospitalSuggestion(root, { navigate, logout });
+}
+
+function hospitalStatePanel(iconName, title, description = "", actionsHtml = "") {
+  return `<div class="state-panel">
+    <span class="state-icon${iconName === "broken" ? " is-neutral" : ""}">${icon(iconName, 44)}</span>
+    <h2>${escapeHtml(title)}</h2>
+    ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+    ${actionsHtml}
+  </div>`;
+}
+
+async function loadHospitalSuggestion(root, context) {
+  const body = root.querySelector("#hospital-body");
+  if (!state.caseId) {
+    body.innerHTML = hospitalStatePanel(
+      "broken",
+      "Chưa có ca nào đang mở",
+      "Hãy mở một ca đã khai báo trước khi tìm bệnh viện gần nhất.",
+      `<button class="secondary-button" type="button" data-hospital-goto-cases>Xem danh sách ca</button>`,
+    );
+    body.querySelector("[data-hospital-goto-cases]").addEventListener("click", () => context.navigate("patient-cases"));
+    return;
+  }
+  try {
+    const result = await api(`/api/v1/cases/${state.caseId}/hospital-suggestions`);
+    body.innerHTML = hospitalListMarkup(result);
+    renderHospitalMap(result);
+    bindHospitalListActions(root, context, result);
+  } catch (problem) {
+    if (problem.status === 404) {
+      body.innerHTML = hospitalRequestMarkup();
+      bindHospitalRequestActions(root, context);
+      return;
+    }
+    body.innerHTML = hospitalStatePanel(
+      "broken",
+      "Không thể tải gợi ý bệnh viện",
+      problem.message || "",
+      `<button class="secondary-button" type="button" data-hospital-retry>${icon("retry", 17)}<span>Thử lại</span></button>`,
+    );
+    body.querySelector("[data-hospital-retry]").addEventListener("click", () => loadHospitalSuggestion(root, context));
+  }
+}
+
+function hospitalRequestMarkup() {
+  return `<div class="state-panel">
+    <span class="state-icon">${icon("mapPin", 44)}</span>
+    <h2>Tìm bệnh viện gần bạn</h2>
+    <p>Cho phép truy cập vị trí để tìm cơ sở y tế gần nhất, hoặc nhập địa chỉ nếu bạn không muốn chia sẻ vị trí.</p>
+    <div class="action-row" style="margin-top:18px">
+      <button class="primary-button" type="button" data-use-gps>${icon("mapPin", 17)}<span>Dùng vị trí hiện tại</span></button>
+      <button class="link-button" type="button" data-use-address>Nhập địa chỉ thay thế</button>
+    </div>
+    <form class="hospital-address-form" data-address-form hidden>
+      <label class="field">Địa chỉ của bạn<input name="address_text" type="text" maxlength="500" required placeholder="Số nhà, đường, phường/xã, tỉnh/thành" /></label>
+      <button class="primary-button" type="submit">Tìm bệnh viện</button>
+    </form>
+  </div>`;
+}
+
+function bindHospitalRequestActions(root, context) {
+  const panel = root.querySelector("#hospital-body");
+  const form = panel.querySelector("[data-address-form]");
+  panel.querySelector("[data-use-gps]").addEventListener("click", () => requestHospitalsByGps(root, context, form));
+  panel.querySelector("[data-use-address]").addEventListener("click", () => {
+    form.hidden = false;
+    form.querySelector("input").focus();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const addressText = form.querySelector("input[name=address_text]").value.trim();
+    if (!addressText) return;
+    submitHospitalRequest(root, context, { address_text: addressText });
+  });
+}
+
+function requestHospitalsByGps(root, context, addressForm) {
+  if (!navigator.geolocation) {
+    showToast("Trình duyệt của bạn không hỗ trợ định vị. Vui lòng nhập địa chỉ.", true);
+    addressForm.hidden = false;
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (position) =>
+      submitHospitalRequest(root, context, { latitude: position.coords.latitude, longitude: position.coords.longitude }),
+    () => {
+      showToast("Không lấy được vị trí (từ chối quyền hoặc hết thời gian chờ). Vui lòng nhập địa chỉ.", true);
+      addressForm.hidden = false;
+    },
+    { enableHighAccuracy: false, timeout: 10000 },
+  );
+}
+
+async function submitHospitalRequest(root, context, payload) {
+  const body = root.querySelector("#hospital-body");
+  body.innerHTML = hospitalStatePanel("clock", "Đang tìm bệnh viện gần bạn…");
+  try {
+    const result = await api(`/api/v1/cases/${state.caseId}/hospital-suggestions`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    body.innerHTML = hospitalListMarkup(result);
+    renderHospitalMap(result);
+    bindHospitalListActions(root, context, result);
+  } catch (problem) {
+    body.innerHTML = hospitalStatePanel(
+      "broken",
+      "Không tìm được bệnh viện",
+      problem.message || "",
+      `<button class="secondary-button" type="button" data-hospital-retry>${icon("retry", 17)}<span>Thử lại</span></button>`,
+    );
+    body.querySelector("[data-hospital-retry]").addEventListener("click", () => loadHospitalSuggestion(root, context));
+  }
+}
+
+// Bản đồ trực quan (Leaflet + tile OpenStreetMap, miễn phí, không cần key - nhúng qua CDN ở
+// index.html). Hai biến module-level vì Leaflet giữ listener trên `window`/`document`; đổi màn hình
+// mà không gọi `.remove()`/xoá layer trước sẽ rò bộ nhớ và có thể vỡ lần khởi tạo tiếp theo trên
+// cùng id DOM.
+let hospitalMap = null;
+let hospitalRouteLine = null;
+
+export function destroyHospitalMap() {
+  if (hospitalMap) hospitalMap.remove();
+  hospitalMap = null;
+  hospitalRouteLine = null; // layer đã bị xoá cùng map ở dòng trên, chỉ cần bỏ tham chiếu cũ
+}
+
+/** Link chỉ đường Google Maps - PHƯƠNG ÁN CHẮC ĂN, không phụ thuộc CORS/uptime của OSRM demo server.
+ *  Luôn hiển thị cạnh mỗi bệnh viện, không chỉ khi vẽ route trên bản đồ thất bại. */
+function directionsUrl(originLat, originLng, destLat, destLng) {
+  return `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&travelmode=driving`;
+}
+
+/** Vẽ marker vị trí bệnh nhân (xanh) + từng bệnh viện (đỏ), tự fit khung hình để thấy hết mọi điểm.
+ *  Nếu CDN Leaflet chết (`window.L` không tồn tại) HOẶC response thiếu toạ độ hợp lệ thì bỏ qua lặng
+ *  lẽ - danh sách text vẫn dùng được bình thường, bản đồ chỉ là phần bổ sung trực quan. Từng vỡ thật
+ *  một lần vì backend quên trả `patient_lat/lng`; không để lỗi đó lan ra thành cả màn hình báo lỗi. */
+function renderHospitalMap(result) {
+  destroyHospitalMap();
+  if (typeof window.L === "undefined" || !document.getElementById("hospital-map")) return;
+  if (typeof result.patient_lat !== "number" || typeof result.patient_lng !== "number") {
+    console.warn("renderHospitalMap: thiếu patient_lat/patient_lng hợp lệ trong response", result);
+    return;
+  }
+
+  const patientPoint = [result.patient_lat, result.patient_lng];
+  hospitalMap = window.L.map("hospital-map").setView(patientPoint, 14); // scrollWheelZoom mặc định BẬT
+  window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+    maxZoom: 19,
+  }).addTo(hospitalMap);
+
+  const points = [patientPoint];
+  window.L.circleMarker(patientPoint, { radius: 9, color: "#2f78d5", fillColor: "#4a90e2", fillOpacity: 0.95, weight: 2 })
+    .addTo(hospitalMap)
+    .bindPopup("Vị trí của bạn");
+
+  for (const hospital of result.hospitals || []) {
+    if (typeof hospital.lat !== "number" || typeof hospital.lng !== "number") continue;
+    const point = [hospital.lat, hospital.lng];
+    points.push(point);
+    window.L.circleMarker(point, { radius: 8, color: "#c0392b", fillColor: "#e74c3c", fillOpacity: 0.9, weight: 2 })
+      .addTo(hospitalMap)
+      .bindPopup(
+        `<b>${escapeHtml(hospital.name || "(Chưa rõ tên)")}</b><br>${escapeHtml(hospital.address || "")}<br>${Number(hospital.distance_km).toFixed(1)} km<br>` +
+          `<a href="${directionsUrl(result.patient_lat, result.patient_lng, hospital.lat, hospital.lng)}" target="_blank" rel="noopener">Chỉ đường trên Google Maps ↗</a>`,
+      )
+      // Bấm marker: thử vẽ route thật lên bản đồ (best-effort). Popup ở trên vẫn có link Google Maps
+      // luôn sẵn sàng, không chờ kết quả gọi mạng này.
+      .on("click", () => drawRouteTo(hospital, result));
+  }
+  if (points.length > 1) hospitalMap.fitBounds(points, { padding: [28, 28] });
+}
+
+/** Vẽ đường đi (lái xe) từ vị trí bệnh nhân tới 1 bệnh viện, gọi OSRM demo server (miễn phí, không
+ *  cần key: router.project-osrm.org - Project OSRM tài trợ bởi FOSSGIS). server này KHÔNG đảm bảo
+ *  CORS/uptime (dùng cho demo/thử nghiệm, không phải production quy mô lớn) - mọi lỗi (mạng, CORS,
+ *  timeout, response bất thường) đều bị nuốt lặng lẽ, vì mỗi bệnh viện đã có sẵn link "Chỉ đường"
+ *  mở Google Maps không phụ thuộc lời gọi này. KHÔNG raise, KHÔNG báo lỗi lên UI. */
+async function drawRouteTo(hospital, result) {
+  if (!hospitalMap) return;
+  if (hospitalRouteLine) {
+    hospitalMap.removeLayer(hospitalRouteLine);
+    hospitalRouteLine = null;
+  }
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 6000);
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${result.patient_lng},${result.patient_lat};${hospital.lng},${hospital.lat}?overview=full&geometries=geojson`;
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return;
+    const data = await response.json();
+    const coordinates = data?.routes?.[0]?.geometry?.coordinates;
+    if (!Array.isArray(coordinates) || !coordinates.length) return;
+    const latLngs = coordinates.map(([lng, lat]) => [lat, lng]);
+    hospitalRouteLine = window.L.polyline(latLngs, { color: "#2f78d5", weight: 5, opacity: 0.85 }).addTo(hospitalMap);
+    hospitalMap.fitBounds(hospitalRouteLine.getBounds(), { padding: [28, 28] });
+  } catch {
+    // OSRM demo server sập/CORS/timeout - im lặng, người dùng vẫn dùng được link Google Maps.
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function hospitalListMarkup(result) {
+  const hospitals = result.hospitals || [];
+  if (!hospitals.length) {
+    return hospitalStatePanel(
+      "mapPin",
+      "Không tìm thấy cơ sở y tế gần đây",
+      "Thử lại với địa chỉ khác.",
+      `<button class="secondary-button" type="button" data-hospital-retry-request>${icon("retry", 17)}<span>Tìm lại</span></button>`,
+    );
+  }
+  const rows = hospitals
+    .map(
+      (item, index) => `<li class="hospital-row" data-hospital-index="${index}" tabindex="0" role="button" aria-label="Xem ${escapeHtml(item.name || "bệnh viện")} trên bản đồ">
+        <div class="hospital-row-main"><b>${escapeHtml(item.name || "(Chưa rõ tên trên bản đồ)")}</b><span>${escapeHtml(item.address || "")}</span></div>
+        <div class="hospital-row-meta">
+          <span class="pill">${icon("mapPin", 14)}<span>${Number(item.distance_km).toFixed(1)} km</span></span>
+          ${item.phone ? `<a class="link-button" href="tel:${escapeHtml(item.phone)}">${icon("phone", 14)}<span>${escapeHtml(item.phone)}</span></a>` : ""}
+          <a class="link-button" href="${directionsUrl(result.patient_lat, result.patient_lng, item.lat, item.lng)}" target="_blank" rel="noopener">${icon("mapPin", 14)}<span>Chỉ đường ↗</span></a>
+        </div>
+      </li>`,
+    )
+    .join("");
+  return `<div class="hospital-result">
+    <p class="fine-print">Địa chỉ tra cứu: ${escapeHtml(result.address_text || "")} · Nguồn dữ liệu: ${escapeHtml(result.provider || "")}</p>
+    <div id="hospital-map" class="hospital-map"></div>
+    <ul class="hospital-list">${rows}</ul>
+    <button class="link-button" type="button" data-hospital-retry-request>Tìm lại với vị trí khác</button>
+  </div>`;
+}
+
+/** Bấm 1 dòng bệnh viện: lượn bản đồ tới đó + thử vẽ route (giống bấm marker). Bấm vào link "Gọi"/
+ *  "Chỉ đường" bên trong dòng thì để trình duyệt tự xử lý bình thường, không chặn. */
+function bindHospitalListActions(root, context, result) {
+  root.querySelectorAll("[data-hospital-index]").forEach((row) => {
+    const activate = (event) => {
+      if (event.target.closest("a")) return; // đừng chặn link tel:/Google Maps bên trong dòng
+      const hospital = result.hospitals[Number(row.dataset.hospitalIndex)];
+      if (!hospital || !hospitalMap) return;
+      hospitalMap.setView([hospital.lat, hospital.lng], 16);
+      drawRouteTo(hospital, result);
+    };
+    row.addEventListener("click", activate);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate(event);
+      }
+    });
+  });
+  root.querySelector("[data-hospital-retry-request]")?.addEventListener("click", () => {
+    destroyHospitalMap();
+    root.querySelector("#hospital-body").innerHTML = hospitalRequestMarkup();
+    bindHospitalRequestActions(root, context);
+  });
 }
 
 function scrollChat(root) {

@@ -39,6 +39,9 @@ ROUTE_POLICIES = (
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/summary/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
+    # Gợi ý bệnh viện gần nhất - PATIENT-ONLY có chủ đích, không có vai trò NURSE (ADR-010).
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/hospital-suggestions/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/hospital-suggestions/?$"), PATIENT),
 )
 
 

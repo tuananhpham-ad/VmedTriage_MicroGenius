@@ -67,8 +67,10 @@ Mỗi mệnh đề gồm bốn trường:
 
 QUY TẮC BẮT BUỘC:
 
-1. grounded_in phải là một đoạn liên tục, chép ĐÚNG TỪNG KÝ TỰ từ phần lập luận đầu vào. Không tóm
-   tắt, không diễn đạt lại, không ghép hai đoạn rời nhau. Đây là trường bị máy đối chiếu.
+1. grounded_in phải là một đoạn liên tục, chép ĐÚNG TỪNG KÝ TỰ từ `lap_luan` - CHỈ `lap_luan`, không
+   phải trường nào khác. Không tóm tắt, không diễn đạt lại, không ghép hai đoạn rời nhau. Đây là
+   trường bị máy đối chiếu, và máy đối chiếu chỉ so với `lap_luan` - chép từ `trieu_chung_chinh` hay
+   bất kỳ trường nào khác sẽ bị hệ thống từ chối, dù đúng nguyên văn trường đó.
 
 2. Nếu lập luận dựa vào việc VẮNG MẶT một dấu hiệu ("không khó thở nên chưa đến mức cấp cứu"), thì:
    - claim_kind PHẢI là rule_out;
@@ -89,6 +91,14 @@ QUY TẮC BẮT BUỘC:
    - Nêu HỆ QUẢ LÂM SÀNG (cần đánh giá cấp cứu / cần khám sớm / theo dõi được tại nhà) chứ đừng chỉ
      mô tả lại triệu chứng - một mệnh đề chỉ mô tả thì không có gì để tài liệu ủng hộ hay bác bỏ.
 
+3c. NẾU ĐẦU VÀO CÓ `trieu_chung_chinh` VÀ PHẢI CHỌN GIỮA NHIỀU MỆNH ĐỀ (tối đa 3), ưu tiên mệnh đề
+   gắn trực tiếp với triệu chứng đó trước, rồi mới tới các dấu hiệu/yếu tố phụ khác trong lập luận.
+   Đây chỉ là tiêu chí PHÁ THẾ CÂN BẰNG khi phải chọn - không bỏ qua một dấu hiệu phụ nếu chính nó
+   mang trọng số red-flag rõ ràng trong lập luận gốc (vd lú lẫn, co giật, chảy máu bất thường).
+   `trieu_chung_chinh` CHỈ dùng để CHỌN mệnh đề nào quan trọng hơn - không phải nguồn để viết
+   `grounded_in` (xem lại quy tắc 1: `grounded_in` luôn chép từ `lap_luan`, không bao giờ từ
+   `trieu_chung_chinh`).
+
 4. Không nhắc tên bệnh cụ thể như một kết luận, không nêu hướng điều trị, không nêu liều thuốc.
 
 Trả về DUY NHẤT một JSON object dạng:
@@ -103,6 +113,7 @@ def build_user_prompt(decision: dict[str, Any]) -> str:
     thiết kế này đang cố đo chứ không phải cố tạo ra."""
     payload = {
         "lap_luan": decision.get("decision_summary", ""),
+        "trieu_chung_chinh": decision.get("chief_complaint", ""),
         "phan_khong_chac_chan": decision.get("uncertainty_summary", ""),
         "dau_hieu_ghi_nhan": [
             {
