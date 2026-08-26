@@ -88,7 +88,17 @@ class ActPolicy:
 # BẢNG. Phải phủ ĐỦ mọi `DialogueAct` - có test duyệt toàn bảng canh việc đó.
 DIALOGUE_POLICY: dict[DialogueAct, ActPolicy] = {
     DialogueAct.ANSWER: ActPolicy(
-        acknowledge_instruction="",
+        # Đây là lượt PHỔ BIẾN NHẤT của mọi phiên, và trước 2026-08-26 nó là hàng DUY NHẤT có
+        # `acknowledge_instruction` rỗng - tức người bệnh trả lời đúng thì hệ thống không công nhận
+        # gì cả, chỉ hỏi câu kế. Đó chính xác là hành vi của một cái form, và nó là lý do lớn nhất
+        # khiến hội thoại bị mô tả là "nhắn với máy". Rẻ để sửa vì nó không đụng quyết định lâm sàng
+        # nào: dữ kiện được nhắc lại nằm trong `ResponsePlan.acknowledge`, tức chính thứ vừa trích
+        # được từ lời người bệnh - renderer không có gì để bịa.
+        acknowledge_instruction=(
+            "Nhắc lại NGẮN đúng một dữ kiện người bệnh vừa cho biết để họ thấy mình đã nghe, rồi hỏi "
+            "tiếp. Một mệnh đề thôi, không tóm tắt lại cả hồ sơ, không đánh giá dữ kiện đó là tốt hay "
+            "xấu."
+        ),
         simplify=False,
     ),
     DialogueAct.PARTIAL_ANSWER: ActPolicy(

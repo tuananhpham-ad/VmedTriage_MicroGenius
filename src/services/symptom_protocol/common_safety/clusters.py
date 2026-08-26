@@ -46,7 +46,7 @@ def emergency_scan_clusters(stage: str) -> tuple[QuestionCluster, ...]:
         QuestionCluster("Q3-04", stage, ("neck_stiffness", "photophobia", "severe_headache", "bulging_fontanelle"), batch_negation=True, script_hint="Có cứng gáy, sợ ánh sáng, đau đầu dữ dội khác thường không"),
         QuestionCluster("Q3-05", stage, ("focal_neuro_deficit",), batch_negation=True, script_hint="Có yếu tay/chân một bên, méo miệng, nói khó mới xuất hiện không"),
         QuestionCluster("Q3-08", stage, ("cold_clammy_skin", "capillary_refill_ge_3s"), batch_negation=True, script_hint="Da có lạnh, ẩm, nổi vân tím không - CRT có chậm không"),
-        QuestionCluster("Q3-09", stage, ("urine_output", "feeding_intake", "vomiting_severity"), batch_negation=True, script_hint="6 giờ qua có đi tiểu không, ăn uống được không, có nôn nhiều không"),
+        QuestionCluster("Q3-09", stage, ("urine_output", "feeding_intake", "vomiting_severity"), batch_negation=True, script_hint="6 giờ qua có đi tiểu không, ăn uống được không, có thực sự nôn không - nếu nôn thì bao nhiêu lần, có giữ được nước không"),
         QuestionCluster("Q3-11", stage, ("non_blanching_rash", "rash_present", "rash_type"), batch_negation=True, script_hint="Trên da có nổi ban đỏ/tím không - ấn kính vào có mất không"),
         QuestionCluster("Q3-13", stage, ("abdominal_pain_severity", "abdominal_pain_location", "abdominal_guarding"), batch_negation=True, script_hint="Có đau bụng không - mức nào, bụng có cứng không"),
     )
@@ -117,6 +117,47 @@ def safety_netting_cluster(stage: str) -> QuestionCluster:
     return QuestionCluster(
         "Q4-08", stage, ("lives_alone", "caregiver_available", "access_to_care_minutes", "can_return_for_followup"),
         script_hint="Sống một mình hay có người theo dõi, từ nhà đến cơ sở y tế mất bao lâu, có thể quay lại tái khám khi trở nặng không",
+    )
+
+
+def chest_dyspnea_cluster(stage: str, cluster_id: str) -> QuestionCluster:
+    """Cụm phục vụ ĐỒNG THỜI `chest_pain` và `breathing` — cặp phủ chéo DUY NHẤT giữa 4 nhóm (F09 §3.10).
+
+    Đo được khi dựng F09: bốn nhóm gần như rời nhau ở mức field. 4/6 cặp có **0** field chung; chỉ
+    `chest_pain` × `breathing` giao nhau thật (`chest_pain`, `breathing_difficulty`). Và đó đúng là
+    cặp gắn nhau về lâm sàng - hội chứng vành cấp lẫn thuyên tắc phổi đều biểu hiện *đau ngực kèm
+    khó thở*.
+
+    Vì sao MỘT định nghĩa dùng chung chứ không hai cụm viết riêng: bảng mapping của **cả hai** nhóm
+    đều chốt EMERGENCY trên đúng tổ hợp này -
+
+        đau ngực -> Cấp cứu: "đau kèm khó thở / tim đập nhanh-không đều"
+        khó thở  -> Cấp cứu: "khó thở đột ngột + đau ngực / ho ra máu"
+
+    nên một lượt hỏi nạp dữ kiện cho rule của cả hai. Hai bản sao sẽ lệch nhau ngay lần đầu ai đó sửa
+    một bên, và lệch ở đây nghĩa là một trong hai nhóm mất căn cứ chốt cấp cứu.
+
+    `cluster_id` truyền vào chứ không cố định: mã cụm thuộc về tài liệu lâm sàng của từng nhóm
+    (`CP-03` với đau ngực, `BR-03` với khó thở), và mã là đường truy ngược về tài liệu đó."""
+    return QuestionCluster(
+        cluster_id, stage,
+        ("chest_pain", "breathing_difficulty", "hemoptysis", "diaphoresis", "palpitations"),
+        script_hint="Có kèm đau ngực, khó thở, ho ra máu, vã mồ hôi, tim đập nhanh/không đều không",
+    )
+
+
+def closing_cluster(stage: str, cluster_id: str) -> QuestionCluster:
+    """Câu chốt cuối pipeline: "ngoài những điều vừa kể, còn gì nữa không" (F09 §3.5).
+
+    Đặt ở stage CUỐI chứ không sớm hơn: hỏi "còn gì nữa không" khi mới đi được nửa bộ câu hỏi là mời
+    người bệnh kể lại thứ hệ thống sắp hỏi tới, rồi vẫn hỏi lại - đúng cảm giác "nó không nghe mình
+    nói" mà `ranking.py` sinh ra để chữa.
+
+    `batch_negation=False`: đây là câu hỏi MỞ, không phải danh sách dấu hiệu, nên không có "cụm" nào
+    để một câu phủ định gộp áp vào."""
+    return QuestionCluster(
+        cluster_id, stage, ("other_symptoms",),
+        script_hint="Ngoài những điều vừa kể, bạn còn thấy gì khác trong người không",
     )
 
 
