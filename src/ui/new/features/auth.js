@@ -64,9 +64,9 @@ export function renderAccess(root, { navigate }) {
             <h2>Ba bước, nhanh chóng, an toàn</h2>
           </div>
           <div class="step-grid">
-            <article class="step-card"><span class="step-num">01</span><span class="step-icon">${icon("clipboard", 22)}</span><h3>Mô tả cảm giác khó chịu</h3><p>Nhập triệu chứng tự do. Trợ lý AI sẽ gợi ý các câu hỏi chuyên sâu để nắm trọn vẹn tình hình.</p></article>
-            <article class="step-card"><span class="step-num">02</span><span class="step-icon">${icon("pulse", 22)}</span><h3>AI sàng lọc mức độ ưu tiên</h3><p>Hệ thống lập tức đối chiếu dữ liệu y khoa chuẩn để xác định mức độ cần can thiệp y tế khẩn cấp.</p></article>
-            <article class="step-card"><span class="step-num">03</span><span class="step-icon">${icon("user", 22)}</span><h3>Nhân viên y tế phê duyệt</h3><p>Bác sĩ/chuyên viên y tế trực tiếp đánh giá và gửi phác đồ xử trí ban đầu an toàn nhất cho bạn.</p></article>
+            <article class="step-card"><span class="step-num">01</span><div class="step-card-heading"><span class="step-icon">${icon("clipboard", 22)}</span><h3>Mô tả cảm giác khó chịu</h3></div><p>Nhập triệu chứng tự do. Trợ lý AI sẽ gợi ý các câu hỏi chuyên sâu để nắm trọn vẹn tình hình.</p></article>
+            <article class="step-card"><span class="step-num">02</span><div class="step-card-heading"><span class="step-icon">${icon("pulse", 22)}</span><h3>AI sàng lọc mức độ ưu tiên</h3></div><p>Hệ thống lập tức đối chiếu dữ liệu y khoa chuẩn để xác định mức độ cần can thiệp y tế khẩn cấp.</p></article>
+            <article class="step-card"><span class="step-num">03</span><div class="step-card-heading"><span class="step-icon">${icon("user", 22)}</span><h3>Nhân viên y tế phê duyệt</h3></div><p>Bác sĩ/chuyên viên y tế trực tiếp đánh giá và gửi phác đồ xử trí ban đầu an toàn nhất cho bạn.</p></article>
           </div>
         </section>
 
@@ -152,12 +152,12 @@ export function renderRoleSelect(root, { navigate, onAuthenticated, panel = "rol
             <span><b>Nhân viên y tế</b><small>Xem hàng đợi và duyệt phản hồi cho bệnh nhân.</small></span>
             ${icon("chevronRight", 18)}
           </button>
+          <button class="role-testing-toggle" type="button" data-testing-open aria-expanded="false">
+            <span class="role-select-icon">${icon("pulse", 20)}</span>
+            <span><b>Bạn đang kiểm thử hệ thống?</b><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span>
+            ${icon("chevronRight", 18)}
+          </button>
         </div>
-        <button class="role-testing-toggle" type="button" data-testing-open aria-expanded="false">
-          <span class="role-select-icon">${icon("pulse", 20)}</span>
-          <span><b>Bạn đang kiểm thử hệ thống?</b><small>Vào thẳng luồng của từng vai trò bằng tài khoản dùng thử tạm thời.</small></span>
-          ${icon("chevronRight", 18)}
-        </button>
       </div>
       <div class="role-select-copy role-testing-copy" data-role-panel="testing" hidden>
         <span class="brand brand-lg">${logo(28)}</span>
@@ -386,6 +386,12 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
 
   const draw = () => {
     const isRegister = mode === "register";
+    const roleName = selectedRole === "nurse" ? "Nhân viên y tế" : "Bệnh nhân / Người nhà";
+    const roleShort = selectedRole === "nurse" ? "Y tế" : "Bệnh nhân";
+    const roleIcon = selectedRole === "nurse" ? "shieldCheck" : "user";
+    const actionName = isRegister ? "đăng ký" : "đăng nhập";
+    const marqueeMsg = `Bạn đang <b>${actionName}</b> với vai trò <b>${roleName}</b>`;
+
     root.innerHTML = `
       <section class="auth-shell">
         <button class="back-button flow-back" type="button" data-back>${icon("chevronLeft", 16)}<span>Quay lại</span></button>
@@ -408,6 +414,25 @@ export function renderAuth(root, { navigate, role, onAuthenticated }) {
 
           <div class="auth-panel">
             <div class="auth-body">
+              <div class="auth-role-marquee" role="region" aria-label="Thông tin vai trò">
+                <span class="auth-marquee-tag">
+                  ${icon(roleIcon, 14)}
+                  <span>${roleShort}</span>
+                </span>
+                <div class="auth-marquee-viewport">
+                  <div class="auth-marquee-track">
+                    <span class="auth-marquee-item">${marqueeMsg}</span>
+                    <span class="auth-marquee-sep">✦</span>
+                    <span class="auth-marquee-item">${marqueeMsg}</span>
+                    <span class="auth-marquee-sep">✦</span>
+                    <span class="auth-marquee-item">${marqueeMsg}</span>
+                    <span class="auth-marquee-sep">✦</span>
+                    <span class="auth-marquee-item">${marqueeMsg}</span>
+                    <span class="auth-marquee-sep">✦</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="segmented auth-tabs" role="tablist" aria-label="Đăng nhập hoặc đăng ký">
                 <button type="button" role="tab" aria-selected="${!isRegister}" class="${!isRegister ? "is-active" : ""}" data-mode="login">Đăng nhập</button>
                 <button type="button" role="tab" aria-selected="${isRegister}" class="${isRegister ? "is-active" : ""}" data-mode="register">Đăng ký</button>

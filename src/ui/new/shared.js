@@ -9,8 +9,8 @@ export const priorityLabels = {
 };
 
 export const statusLabels = {
-  collecting_information: "Đang bổ sung thông tin",
-  needs_more_info: "Cần bổ sung thông tin",
+  collecting_information: "Trợ lý đang thu thập thông tin",
+  needs_more_info: "Nhân viên y tế cần bạn bổ sung",
   needs_nurse_review: "Cần nhân viên y tế duyệt",
   awaiting_approval: "Đang chờ duyệt",
   approved: "Đã duyệt",
@@ -167,6 +167,10 @@ const icons = {
   retry: `<path d="M20 12a8 8 0 1 1-2.6-5.9M20 4.5V10h-5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
   lock: `<rect x="5" y="10.5" width="14" height="9.5" rx="2.2" stroke="currentColor" stroke-width="1.6"/><path d="M8.4 10.5V8a3.6 3.6 0 0 1 7.2 0v2.5" stroke="currentColor" stroke-width="1.6"/>`,
   user: `<circle cx="12" cy="8.4" r="3.4" stroke="currentColor" stroke-width="1.6"/><path d="M5.6 19.4a6.4 6.4 0 0 1 12.8 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  allergy: `<path d="M12 4.1s-5.2 5.7-5.2 9.3a5.2 5.2 0 1 0 10.4 0C17.2 9.8 12 4.1 12 4.1Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M11 15.9c.8.5 1.8.5 2.6 0M18.6 4.5v3M17.1 6h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  stethoscope: `<path d="M6.3 4.5v4.2a5.7 5.7 0 0 0 11.4 0V4.5M6.3 7.1H4.8M17.7 7.1h1.5M17.7 13.4v1.9a2.7 2.7 0 0 1-2.7 2.7h-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11.3" cy="18" r="2.2" stroke="currentColor" stroke-width="1.6"/>`,
+  pill: `<rect x="4.4" y="8.2" width="15.2" height="7.6" rx="3.8" transform="rotate(-45 12 12)" stroke="currentColor" stroke-width="1.6"/><path d="m9.3 14.7 5.4-5.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  calendarCheck: `<rect x="4.5" y="5.6" width="15" height="14.1" rx="2.4" stroke="currentColor" stroke-width="1.6"/><path d="M8 3.7v3.8M16 3.7v3.8M4.5 10.1h15M8.7 14.1l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
   clipboard: `<path d="M6.5 3.5h11v17l-5.5-3-5.5 3v-17Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>`,
   pulse: `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 12.5h2.2l1.1-2.4 1.6 4.6 1.3-3.1.9.9h2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
   shieldCheck: `<rect x="4.5" y="3.5" width="15" height="17" rx="2.6" stroke="currentColor" stroke-width="1.6"/><path d="m8.6 12.4 2.2 2.2 4.6-4.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
@@ -175,8 +179,12 @@ const icons = {
   chevronRight: `<path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
   eye: `<path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"/>`,
   eyeOff: `<path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"/><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`,
+  sun: `<circle cx="12" cy="12" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  moon: `<path d="M19.4 15.4A8.2 8.2 0 0 1 8.6 4.6 8.3 8.3 0 1 0 19.4 15.4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>`,
   offline: `<path d="M2.5 8.5a14 14 0 0 1 19 0M6 12.6a9 9 0 0 1 12 0M12 20.2v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
   broken: `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.4"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  trash: `<path d="M4.8 7.2h14.4M9.2 7.2V4.6h5.6v2.6M7.2 7.2l.8 12.2h8l.8-12.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.2 10.5v5.6M13.8 10.5v5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+  settings: `<circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="1.6"/><path d="M19.1 13.8a1.7 1.7 0 0 0 .34 1.88l.06.06-2.25 2.25-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.1h-3.18v-.1a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.25-2.25.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.56-1.03h-.1V9.67h.1a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.25-2.25.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.1h3.18v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.25 2.25-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.1v3.18h-.1a1.7 1.7 0 0 0-1.56 1.03Z" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>`,
   flag: `<path d="M6 3.5v17M6 4.6h9.5l-1.4 3.4 1.4 3.4H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`,
   mapPin: `<path d="M12 21s7-7.6 7-12.4A7 7 0 1 0 5 8.6C5 13.4 12 21 12 21Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="8.6" r="2.4" stroke="currentColor" stroke-width="1.6"/>`,
 };
