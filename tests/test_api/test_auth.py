@@ -120,6 +120,35 @@ async def test_profile_updates_extended_optional_information(client, patient_hea
 
 
 @pytest.mark.asyncio
+async def test_patient_can_update_own_health_profile_but_nurse_cannot(client, patient_headers, nurse_headers):
+    initial = await client.get("/api/v1/me/health-profile", headers=patient_headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["allergy_status"] == "unknown"
+
+    updated = await client.put(
+        "/api/v1/me/health-profile",
+        headers=patient_headers,
+        json={
+            "allergy_status": "yes",
+            "allergies": "Dị ứng penicillin, từng nổi mẩn",
+            "chronic_conditions": ["tieu_duong", "tim_mach"],
+            "conditions_note": "Đang theo dõi định kỳ.",
+            "current_medications": "Thuốc theo đơn hiện tại",
+            "recent_care_status": "none",
+            "pregnancy_status": "unknown",
+            "recent_note": "Người bệnh chưa nhớ đầy đủ mốc thời gian.",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["chronic_conditions"] == ["tieu_duong", "tim_mach"]
+    assert updated.json()["confirmed_at"]
+
+    fetched = await client.get("/api/v1/me/health-profile", headers=patient_headers)
+    assert fetched.json()["allergies"] == "Dị ứng penicillin, từng nổi mẩn"
+    assert (await client.get("/api/v1/me/health-profile", headers=nurse_headers)).status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_registration_rejects_weak_password_and_missing_terms(client):
     weak_password = registration_payload(email="weak@example.com", username="weak.user")
     weak_password["password"] = weak_password["confirm_password"] = "weakpass"

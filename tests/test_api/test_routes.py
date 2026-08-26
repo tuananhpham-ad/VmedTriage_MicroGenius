@@ -302,6 +302,34 @@ async def test_nurse_can_approve_case(client, patient_headers, nurse_headers):
     assert data["patient_visible_response"] == "Phản hồi đã được điều dưỡng duyệt."
 
 
+@pytest.mark.asyncio
+async def test_patient_can_hide_own_case_from_history_without_deleting_audit_record(
+    client, patient_headers, scripted_llm,
+):
+    """Xóa ở giao diện người bệnh chỉ là ẩn mềm: không được phá trace HITL."""
+    scripted_llm({})
+    chat_response = await client.post(
+        "/api/v1/chat",
+        json={"message": "Tôi bị đau đầu từ sáng."},
+        headers=patient_headers,
+    )
+    assert chat_response.status_code == 200
+    case_id = chat_response.json()["case_id"]
+
+    hidden = await client.delete(f"/api/v1/cases/{case_id}", headers=patient_headers)
+    assert hidden.status_code == 200
+    assert hidden.json()["message"] == "Đã xóa ca khỏi lịch sử của bạn."
+
+    history = await client.get("/api/v1/patient/history", headers=patient_headers)
+    assert history.status_code == 200
+    assert case_id not in {item["case_id"] for item in history.json()}
+
+    patient_view = await client.get(f"/api/v1/cases/{case_id}", headers=patient_headers)
+    assert patient_view.status_code == 404
+    assert case_store.get(case_id) is not None
+    assert approval_store.audit_for_case(case_id)[-1].action == "hidden_from_patient_history"
+
+
 # --- streaming (SSE) ---------------------------------------------------------------------------
 
 

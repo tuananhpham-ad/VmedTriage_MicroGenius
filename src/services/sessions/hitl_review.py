@@ -79,14 +79,14 @@ class HumanReviewService:
 
         match request.action:
             case HITLAction.APPROVE:
-                self._approve(triage_case, request)
+                self._approve(triage_case, request, nurse_name)
             case HITLAction.EDIT:
-                self._edit(triage_case, request)
+                self._edit(triage_case, request, nurse_name)
             case HITLAction.REJECT:
                 triage_case.status = CaseStatus.REJECTED
                 triage_case.patient_visible_response = None
             case HITLAction.ASK_MORE:
-                self._ask_more(triage_case, request)
+                self._ask_more(triage_case, request, nurse_name)
 
         if nurse_id is not None:
             triage_case.reviewed_by_id = nurse_id
@@ -253,17 +253,25 @@ class HumanReviewService:
 
     # --- hành động -----------------------------------------------------------------------------
 
-    def _approve(self, triage_case: TriageCase, request: NurseReviewRequest) -> None:
+    def _approve(
+        self, triage_case: TriageCase, request: NurseReviewRequest, nurse_name: str | None
+    ) -> None:
         if not request.approved_response:
             raise ValueError("approved_response is required when approving a case.")
 
         triage_case.status = CaseStatus.APPROVED
         triage_case.patient_visible_response = request.approved_response
         triage_case.conversation.append(
-            ConversationMessage(role=ActorRole.NURSE, content=request.approved_response)
+            ConversationMessage(
+                role=ActorRole.NURSE,
+                content=request.approved_response,
+                author_name=nurse_name,
+            )
         )
 
-    def _edit(self, triage_case: TriageCase, request: NurseReviewRequest) -> None:
+    def _edit(
+        self, triage_case: TriageCase, request: NurseReviewRequest, nurse_name: str | None
+    ) -> None:
         if not request.approved_response:
             raise ValueError("approved_response is required when editing a case.")
 
@@ -273,17 +281,27 @@ class HumanReviewService:
         triage_case.status = CaseStatus.APPROVED
         triage_case.patient_visible_response = request.approved_response
         triage_case.conversation.append(
-            ConversationMessage(role=ActorRole.NURSE, content=request.approved_response)
+            ConversationMessage(
+                role=ActorRole.NURSE,
+                content=request.approved_response,
+                author_name=nurse_name,
+            )
         )
 
-    def _ask_more(self, triage_case: TriageCase, request: NurseReviewRequest) -> None:
+    def _ask_more(
+        self, triage_case: TriageCase, request: NurseReviewRequest, nurse_name: str | None
+    ) -> None:
         if not request.ask_more_question:
             raise ValueError("ask_more_question is required when asking for more information.")
 
         triage_case.status = CaseStatus.NEEDS_MORE_INFO
         triage_case.patient_visible_response = request.ask_more_question
         triage_case.conversation.append(
-            ConversationMessage(role=ActorRole.NURSE, content=request.ask_more_question)
+            ConversationMessage(
+                role=ActorRole.NURSE,
+                content=request.ask_more_question,
+                author_name=nurse_name,
+            )
         )
 
 
