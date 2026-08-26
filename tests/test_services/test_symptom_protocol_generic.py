@@ -173,3 +173,72 @@ def test_toy_protocol_and_fever_protocol_run_through_the_same_engine_independent
     assert toy_result.triggered_rules == ("T-E-01",)
     assert fever_result.triage_level == "EMERGENCY"
     assert fever_result.triggered_rules == ("R-E-02",)
+
+
+# --- Verdict `positive` ghi được field khi nhóm chỉ còn một ứng viên (2026-08-26) ------------------
+
+
+def test_positive_verdict_writes_the_only_remaining_sign_and_escalates() -> None:
+    """Người bệnh trả lời "có" cho câu sàng lọc cấp cứu ⇒ dấu hiệu duy nhất còn bỏ ngỏ phải được ghi.
+
+    Trước bản này `positive` không ghi gì cả, nên `stridor_or_drooling` ở lại `unknown`, rule engine
+    không có gì để khớp, và `R-E-06` (tắc nghẽn đường thở trên) không bao giờ nổ - hội thoại đi tiếp
+    như một ca thường. Đây là ca thật đã gặp trên transcript."""
+    from src.services.symptom_protocol import rule_engine, screening
+    from src.services.symptom_protocol.registry import PROTOCOL_REGISTRY
+
+    protocol = PROTOCOL_REGISTRY["fever"]
+    group = next(g for g in protocol.screening_groups if g.id == "GE-CRIT")
+
+    # Mọi dấu hiệu khác của nhóm đã được trả lời; chỉ còn `stridor_or_drooling`.
+    answers: dict[str, object] = {
+        "breathing_difficulty": "false", "cyanosis": "false", "chest_indrawing": "false",
+        "nasal_flaring_grunting": "false", "mucosal_bleeding": "false", "gi_bleeding": "false",
+    }
+    outcome = screening.apply_verdicts(
+        protocol, "E", (group,),
+        {"groups": {"GE-CRIT": {"verdict": "positive", "evidence": "có"}}},
+        answers, evidence_ok=lambda _: True,
+    )
+    assert outcome.positives == {"stridor_or_drooling": "true"}
+
+    answers.update(outcome.positives)
+    assert rule_engine.evaluate(protocol, answers).triage_level == "EMERGENCY"
+
+
+def test_positive_verdict_never_guesses_when_several_signs_are_still_open() -> None:
+    """≥2 ứng viên thì "có" thật sự mơ hồ - chọn bừa một cái là dựng dấu hiệu đỏ không ai khai."""
+    from src.services.symptom_protocol import screening
+    from src.services.symptom_protocol.registry import PROTOCOL_REGISTRY
+
+    protocol = PROTOCOL_REGISTRY["fever"]
+    group = next(g for g in protocol.screening_groups if g.id == "GE-CRIT")
+    outcome = screening.apply_verdicts(
+        protocol, "E", (group,),
+        {"groups": {"GE-CRIT": {"verdict": "positive", "evidence": "có"}}},
+        {}, evidence_ok=lambda _: True,
+    )
+    assert outcome.positives == {}
+    assert outcome.positive_group_ids == ("GE-CRIT",)
+
+
+# --- Câu mở đầu phải khác nhau giữa các phiên (2026-08-26) ----------------------------------------
+
+
+def test_opening_question_varies_across_sessions_but_is_stable_within_one() -> None:
+    """Một hằng số duy nhất khiến mọi phiên của mọi người dùng mở đầu bằng đúng một chuỗi ký tự."""
+    from src.services.symptom_protocol import registry
+
+    picks = {registry.opening_question(f"session-{i}") for i in range(40)}
+    assert len(picks) > 1, "câu mở phải đổi giữa các phiên"
+    assert picks <= set(registry.OPENING_QUESTIONS)
+    # Tất định theo seed: cùng phiên đọc lại log phải ra đúng câu đã phát.
+    assert registry.opening_question("session-7") == registry.opening_question("session-7")
+
+
+def test_opening_question_never_repeats_the_sentence_just_sent() -> None:
+    """Lượt chào thuần phát lại câu mở; lặp NGUYÊN VĂN câu người bệnh vừa đọc là thứ nghe như máy."""
+    from src.services.symptom_protocol import registry
+
+    for previous in registry.OPENING_QUESTIONS:
+        assert registry.opening_question("bất kỳ", avoid=previous) != previous

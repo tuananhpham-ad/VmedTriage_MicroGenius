@@ -12,6 +12,7 @@ hết bộ câu hỏi về sốt.
 from __future__ import annotations
 
 from dataclasses import replace
+from hashlib import sha256
 
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.engines.generic_protocol import GENERIC_PROTOCOL
@@ -72,11 +73,48 @@ def _fever_ruled_out(answers: dict[str, object]) -> bool:
 
 # --- Lượt mở --------------------------------------------------------------------------------------
 
-OPENING_QUESTION = (
-    "Bạn hoặc người nhà đang thấy khó chịu thế nào? Bạn cứ kể theo cách dễ nhất với mình nhé."
+OPENING_QUESTIONS: tuple[str, ...] = (
+    "Bạn hoặc người nhà đang thấy khó chịu thế nào? Bạn cứ kể theo cách dễ nhất với mình nhé.",
+    "Mình nghe đây ạ. Bạn hoặc người nhà đang gặp chuyện gì trong người thế?",
+    "Bạn kể cho mình nghe đang thấy trong người thế nào nhé - cứ nói theo cách của bạn thôi ạ.",
+    "Chào bạn. Hôm nay bạn hoặc người nhà đang thấy khó chịu ở đâu ạ?",
+    "Bạn đang thấy trong người có gì không ổn ạ? Bạn cứ kể thoải mái, mình nghe.",
+    "Mình có thể giúp gì cho bạn hôm nay? Bạn kể mình nghe đang khó chịu thế nào nhé.",
 )
-"""Câu mở TĨNH, không qua LLM. Một yêu cầu, một lượt - bản dài hơn (liệt kê sẵn các thứ cần khai) làm
-người bệnh trả lời theo mẫu thay vì kể tự nhiên, mà kể tự nhiên mới là thứ lượt mở cần."""
+"""Các bản của câu mở. TĨNH, không qua LLM - nhưng KHÔNG chỉ một bản.
+
+Cả sáu bản nói đúng một việc: mời người bệnh kể tự do, một yêu cầu, một lượt. Bản dài hơn (liệt kê
+sẵn các thứ cần khai) làm người bệnh trả lời theo mẫu thay vì kể tự nhiên, mà kể tự nhiên mới là thứ
+lượt mở cần - nên các bản chỉ khác NHỊP và cách xưng hô, không khác nội dung.
+
+**Vì sao phải có nhiều bản.** Trước đây đây là một hằng số duy nhất, nên mọi phiên của mọi người dùng
+mở đầu bằng đúng một chuỗi ký tự - và người dùng quay lại lần thứ hai nhận ra ngay mình đang nói
+chuyện với một cái máy trả lời tự động. Đắt hơn thế: lượt chào-thuần (`session.py`) cũng phát lại
+đúng câu ấy, nên người bệnh chào xong đọc lại y nguyên câu vừa đọc.
+
+Vẫn TĨNH chứ không nhờ LLM viết: đây là câu đầu tiên người bệnh đọc, nó phải đọc được cả khi provider
+chết, và nó không được phép trôi ra ngoài phạm vi "mời kể" qua một lần diễn đạt lại."""
+
+OPENING_QUESTION = OPENING_QUESTIONS[0]
+"""Bản mặc định - dùng cho `OPENING_CLUSTER.script_hint` (nội dung cụm phải tất định) và làm đường
+lui khi không có seed nào."""
+
+
+def opening_question(seed: object = "", *, avoid: str = "") -> str:
+    """Một bản câu mở, chọn TẤT ĐỊNH theo `seed`.
+
+    Tất định theo seed chứ không `random`: cùng một `session_id` luôn cho cùng một câu, nên log đọc
+    lại được và test không phải mock bộ sinh ngẫu nhiên. Người dùng vẫn thấy khác nhau vì seed thật
+    là `session_id`, mỗi phiên một khác.
+
+    `avoid` là câu VỪA phát ra ở lượt trước - truyền vào thì hàm không bao giờ trả lại đúng nó. Đây
+    là chỗ dùng ở lượt chào-thuần: người bệnh chào, và câu đáp không được là bản sao của câu họ vừa
+    đọc."""
+    pool = tuple(q for q in OPENING_QUESTIONS if q != avoid.strip()) or OPENING_QUESTIONS
+    key = str(seed)
+    if not key:
+        return pool[0]
+    return pool[sha256(key.encode("utf-8")).digest()[0] % len(pool)]
 
 OPENING_HARVEST_FIELDS: tuple[str, ...] = (
     # nhận diện đối tượng
@@ -90,6 +128,9 @@ OPENING_HARVEST_FIELDS: tuple[str, ...] = (
     "cold_clammy_skin", "capillary_refill_ge_3s", "non_blanching_rash", "mucosal_bleeding",
     "gi_bleeding", "urine_output", "feeding_intake", "vomiting_severity",
     "abdominal_pain_severity", "chest_pain",
+    # triệu chứng hay được kể thành danh sách ngay lượt mở; thiếu chúng khỏi schema sẽ làm rơi dữ kiện
+    "severe_headache", "nausea_present", "rash_present", "rash_type",
+    "myalgia_retroorbital_pain",
     # bối cảnh nguy cơ hay được kể ngay ("tôi đang mang thai", "tôi bị tiểu đường")
     "chronic_conditions", "immunocompromised", "is_pregnant", "recent_surgery_30d",
 )

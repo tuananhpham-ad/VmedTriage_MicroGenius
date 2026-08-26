@@ -28,8 +28,14 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-vmedtriage-rg}"
 # revision 0000005 (2026-08-24). Bon vung con lai (japaneast, koreacentral, malaysiawest,
 # indiasouthcentral) deu duoc ca hai nha cung cap phuc vu.
 LOCATION="${LOCATION:-japaneast}"
-ENVIRONMENT="${ENVIRONMENT:-vmedtriage-env}"
-APP_NAME="${APP_NAME:-vmedtriage}"
+# Ten CO HAU TO VUNG, va mac dinh phai khop dung tai nguyen DANG chay. Bo mac dinh cu
+# (vmedtriage-env / vmedtriage) tro toi environment da bi xoa luc chuyen vung 2026-08-24: chay
+# `./scripts/deploy_azure.sh` tran khi do lam script tuong chua co environment nao va di TAO MOI,
+# roi chet voi MaxNumberOfRegionalEnvironmentsInSubExceeded - Azure for Students chi cho 1
+# environment moi vung. Trieu chung do khong noi gi ve nguyen nhan that (ten mac dinh da cu), nen
+# de mac dinh khop tai nguyen that la cach re nhat de no khong tai dien.
+ENVIRONMENT="${ENVIRONMENT:-vmedtriage-japaneast-env}"
+APP_NAME="${APP_NAME:-vmedtriage-japaneast}"
 IMAGE_TAG="${IMAGE_TAG:-v1}"
 
 # Azure CLI in ky tu ✓ ra stdout; console cp1252 tren Windows tieng Viet lam no crash
@@ -173,8 +179,19 @@ else
 fi
 
 echo "[kiem tra 2/2] /health (min-replicas=0 nen lan goi dau phai cho cold start, co the vai phut)"
-curl -fsS -m 300 -o /dev/null -w "      HTTP %{http_code} sau %{time_total}s\n" "$URL/health" \
-  || echo "      !! /health khong tra loi. Xem log: az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --follow" >&2
+# Doc ket qua vao BIEN roi moi in, thay vi de curl tu in bang `-w` ra console: tren Git Bash/MSYS
+# curl hay chet voi "(23) client returned ERROR on write" khi ghi chuoi -w ra terminal, du request
+# da thanh cong. Bam vao exit code cua curl trong tinh huong do cho ra BAO DONG GIA - da xay ra
+# that 2026-08-25: script in "HTTP 200 sau 50.44s" roi ngay dong sau bao "/health khong tra loi".
+# Xet MA HTTP moi la thu dung: no noi ve server, con exit code con lan ca loi phia client.
+HEALTH="$(curl -fsS -m 300 -o /dev/null -w '%{http_code} %{time_total}' "$URL/health" 2>/dev/null || true)"
+HEALTH_CODE="${HEALTH%% *}"
+if [[ "$HEALTH_CODE" == "200" ]]; then
+  echo "      OK - HTTP 200 sau ${HEALTH##* }s"
+else
+  echo "      !! /health tra ve '${HEALTH_CODE:-khong co phan hoi}'." >&2
+  echo "         Xem log: az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --follow" >&2
+fi
 
 echo
 echo "Xong: $URL"

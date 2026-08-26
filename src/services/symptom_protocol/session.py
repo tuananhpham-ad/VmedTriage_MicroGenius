@@ -497,7 +497,10 @@ class ProtocolSessionStore:
         session.phase = SessionPhase.OPENING
         session.stage = ""
         session.current_cluster = None
-        session.last_question = self._with_recall(user_id, registry.OPENING_QUESTION)
+        # Seed là `session_id`: mỗi phiên một bản câu mở, nhưng cùng phiên thì luôn tái hiện được.
+        session.last_question = self._with_recall(
+            user_id, registry.opening_question(session.session_id),
+        )
         session.conversation.append({"role": "assistant", "content": session.last_question})
         stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
 
@@ -1057,8 +1060,11 @@ class ProtocolSessionStore:
 
         cluster = session.current_cluster
         if cluster is None:
-            # Lượt mở: chưa có cụm nào, hỏi lại đúng câu mở tĩnh.
-            session.last_question = registry.OPENING_QUESTION
+            # Lượt mở: chưa có cụm nào, mời kể lại - nhưng bằng một bản KHÁC câu vừa phát ra. Lặp
+            # nguyên văn câu người bệnh vừa đọc là thứ khiến lượt chào nghe như máy trả lời tự động.
+            session.last_question = registry.opening_question(
+                f"{session.session_id}:{session.turn_count}", avoid=session.last_question,
+            )
             session.conversation.append({"role": "assistant", "content": session.last_question})
             console_log.agent_question(session.session_id, session.last_question, llm_used=False)
             return session

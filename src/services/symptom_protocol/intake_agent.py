@@ -341,8 +341,17 @@ QUY TẮC BẮT BUỘC:
   "negative". Im lặng không bao giờ là phủ định.
 - KHÔNG chẩn đoán bệnh, KHÔNG đề xuất mức độ khẩn cấp, KHÔNG đưa hướng xử trí.
 
-NHIỆM VỤ 2 - nếu người bệnh nói RÕ một chi tiết cụ thể, điền thêm trường tương ứng dưới đây. Mỗi
-trường điền được PHẢI kèm "evidence_span" trích nguyên văn; không trích được thì để "unknown".
+NHIỆM VỤ 2 - điền các trường cụ thể dưới đây.
+
+- Nhóm nào bạn kết luận "positive" thì BẮT BUỘC phải chỉ ra dấu hiệu nào: đặt "true" cho ĐÚNG những
+  trường ứng với dấu hiệu người bệnh xác nhận. Trả "positive" mà không đặt "true" cho trường nào là
+  câu trả lời THIẾU - hệ thống sẽ không biết người bệnh vừa xác nhận điều gì.
+- Người bệnh trả lời gọn ("có", "đúng rồi", "vâng") cho một câu chỉ đọc lên MỘT dấu hiệu thì đó là
+  xác nhận ĐÚNG dấu hiệu ấy - đặt "true" cho nó. Câu đọc lên NHIỀU dấu hiệu mà họ chỉ nói "có" thì
+  KHÔNG đoán là dấu hiệu nào: để cả nhóm "positive" và để các trường "unknown".
+- Trường đặt "true" KHÔNG cần "evidence_span" - người bệnh đang trả lời đúng câu vừa được hỏi.
+- Trường đặt "false", hoặc trường enum/số/ngày, thì PHẢI kèm "evidence_span" trích nguyên văn;
+  không trích được thì để "unknown".
 
 CÁC TRƯỜNG CÓ THỂ ĐIỀN THÊM:
 {field_specs}
@@ -659,16 +668,58 @@ def _coerce_enum(spec, raw: object) -> object | None:
     return None
 
 
+_VOMITING_FREQUENT_MARKERS = (
+    "non nhieu", "oi nhieu", "non lien tuc", "oi lien tuc", "non lap lai", "oi lap lai",
+    "non lien tiep", "oi lien tiep", "non rat nhieu", "oi rat nhieu",
+)
+_VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS = (
+    "khong giu duoc nuoc", "khong giu duoc do an", "uong vao non", "uong vao oi",
+    "an vao non", "an vao oi", "non tat ca", "oi tat ca", "non het", "oi het",
+)
+_VOMITING_NONE_MARKERS = (
+    "khong non", "khong oi", "chua non", "chua oi", "khong bi non", "khong bi oi",
+)
+def _vomiting_value_supported(value: object, evidence_span: object, message: str) -> bool:
+    """Chặn nâng ``buồn nôn`` thành một mức độ NÔN mà lời khai không hề có.
+
+    ``evidence_span`` khớp nguyên văn mới chỉ chứng minh model đã chép một đoạn có thật; nó chưa chứng minh
+    đoạn ấy *hàm ý đúng enum*. Lỗi thực tế là evidence ``buồn nôn`` có thật nhưng model vẫn trả
+    ``vomiting_severity=frequent``. Guard hẹp này kiểm tra entailment tối thiểu cho đúng field có ảnh hưởng
+    tới RF-15/RF-40, không cố thay LLM bằng một bộ NLP tổng quát.
+    """
+    if value == "unknown":
+        return True
+    if not _evidence_in_message(evidence_span, message):
+        return False
+    folded = _fold_bare_reply(str(evidence_span))
+    # "buồn nôn" là nausea. Bỏ cụm này trước khi tìm động từ nôn để chữ "nôn" bên trong không bị tính
+    # nhầm là một lần nôn thực sự.
+    actual_vomiting = folded.replace("buon non", "").replace("cam giac non", "")
+    has_vomiting_verb = bool(re.search(r"\b(non|oi)\b", actual_vomiting))
+    if value == "none":
+        return any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "occasional":
+        return has_vomiting_verb and not any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "frequent":
+        stated_frequency = bool(re.search(r"\b(non|oi)\s+(?:\w+\s+){0,2}\d+\s*(?:lan|lần)\b", actual_vomiting))
+        return any(marker in folded for marker in _VOMITING_FREQUENT_MARKERS) or stated_frequency
+    if value == "unable_to_keep_fluids":
+        return any(marker in folded for marker in _VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS)
+    return False
+
+
 def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     """Giá trị này có bắt buộc phải kèm `evidence_span` khớp tin nhắn không?
 
-    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh, và chỉ ở chiều rủi ro:
+    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh:
 
-    - `"false"` -> phải có bằng chứng (đúng chiều lỗi C1).
+    - Cả `"true"` lẫn `"false"` đều phải có bằng chứng. Positive thiếu căn cứ vẫn là dữ kiện bịa,
+      dù nó thường đẩy mức triage theo hướng thận trọng hơn.
     - enum/số/ngày -> phải có bằng chứng (đúng chiều lỗi C2: model tự sinh
       `fever_onset_at="2023-10-05"` trong lúc đang hỏi chuyện khác).
-    - `"true"` -> KHÔNG BAO GIỜ phải chứng minh. Bịa `"true"` chỉ đẩy ca lên mức thận trọng hơn (P0-6
-      chấp nhận), còn LOẠI NHẦM một `"true"` thật là bỏ sót cấp cứu (P0-5) - hướng hỏng tệ hơn hẳn.
+
+    Lưới keyword red-flag chạy độc lập và lấy căn cứ từ chính cụm từ khớp, nên việc siết output LLM
+    tại đây không loại bỏ lớp bắt khẩn cấp tất định.
 
     Field của cụm ĐANG hỏi (`"asked"`) không phải chứng minh gì: cả tin nhắn chính là câu trả lời cho
     đúng câu vừa hỏi, nên `"không"` ở đó là dữ kiện thật chứ không phải suy diễn. Cả 3 lần tái hiện C1
@@ -676,7 +727,10 @@ def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     hai đường đó đã có guard riêng (`_negation_evidence_ok` + `batch_negation=False` cho safety keys)."""
     if policy != "unasked":
         return False
-    return not spec.tri_state or value == "false"
+    # Lượt kể tự do/field ngoài câu đang hỏi: mọi dữ kiện xác định đều phải trỏ về lời người dùng.
+    # Positive không có evidence dù làm triage thận trọng hơn vẫn là dữ kiện bịa và không được phép
+    # lọt vào summary. Lưới keyword red-flag chạy độc lập nên các cụm khẩn cấp tất định vẫn được bắt.
+    return value != "unknown"
 
 
 def _collect_fields(
@@ -744,6 +798,8 @@ def _collect_fields(
                 supported = not _needs_evidence(evidence, spec, coerced) or _evidence_in_message(
                     evidence_span, message,
                 )
+                if key == "vomiting_severity" and coerced is not None:
+                    supported = supported and _vomiting_value_supported(coerced, evidence_span, message)
                 if coerced is not None and supported:
                     collected[key] = coerced
                     _emit(events, key, coerced, evidence_span, source)
@@ -1246,6 +1302,7 @@ def run_turn(
     # Giá trị âm tính của lượt sàng lọc đứng TRƯỚC field trích được: người bệnh nói rõ một chi tiết
     # ("có, bé không tiểu từ sáng") phải thắng phủ định gộp của chính nhóm đó.
     screened_negatives = outcome.negatives if outcome is not None else {}
+    screened_positives = outcome.positives if outcome is not None else {}
     recent_fields = _recent_fields(opportunistic, extraction.safety_fields, extraction.cluster_fields)
 
     # L3 REDUCER - nguồn sự thật DUY NHẤT của hồ sơ (§5). Đính chính + mâu thuẫn nằm TRONG nó và vì
@@ -1270,6 +1327,10 @@ def run_turn(
             *reducer.events_from_values(batch_defaults, source=reducer.SOURCE_BATCH_DEFAULT),
             *reducer.events_from_values(opportunistic, source=reducer.SOURCE_KEYWORD),
             *reducer.events_from_values(screened_negatives, source=reducer.SOURCE_SCREENING),
+            # Dương tính suy từ verdict đứng SAU âm tính: khi một nhóm vừa bị phủ định gộp vừa có một
+            # dấu hiệu được xác nhận, lời khẳng định thắng. Vẫn đứng TRƯỚC `extraction.events` để
+            # field model trích được nguyên văn ghi đè lên phần suy luận.
+            *reducer.events_from_values(screened_positives, source=reducer.SOURCE_SCREENING),
             *extraction.events,
         ),
         confirmed_retractions=confirmed_retractions,
