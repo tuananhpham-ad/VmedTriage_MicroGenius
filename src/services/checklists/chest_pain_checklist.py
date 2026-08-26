@@ -68,8 +68,9 @@ CHEST_PAIN_FIELDS: tuple[FieldSpec, ...] = (
         "chest_pain_worsening", "Cơn đau đang nặng lên / dày hơn", "M1",
         "Đau từng cơn nhưng tăng dần mức độ hoặc tần suất - tiêu chí 'Cần khám sớm' của protocol gốc",
     ),
-    FieldSpec("diaphoresis", "Vã mồ hôi lạnh", "M0", "Diaphoresis kèm đau ngực - dấu hiệu hội chứng vành cấp"),
-    FieldSpec("palpitations", "Tim đập nhanh / không đều", "M0", "Rối loạn nhịp kèm đau ngực - tiêu chí Cấp cứu"),
+    # `diaphoresis` / `palpitations` đã chuyển sang `common_safety.CHEST_DYSPNEA_FIELDS`: chúng là
+    # field của cụm DÙNG CHUNG `chest_dyspnea_cluster`, nên không được nằm trong checklist riêng
+    # của một nhóm - `breathing` mượn cụm đó và vỡ (sự cố 2026-08-26).
     FieldSpec(
         "immobility_or_long_travel", "Nằm bất động lâu / đi máy bay chặng dài gần đây", "M1",
         "Yếu tố nguy cơ thuyên tắc huyết khối tĩnh mạch (VTE), đi cùng recent_surgery_30d",
@@ -88,6 +89,7 @@ CHEST_PAIN_ALL_FIELDS: tuple[FieldSpec, ...] = (
     + common_fields.FEVER_SIGNAL_FIELDS
     + common_fields.GENERAL_FIELDS
     + common_fields.RESPIRATORY_FIELDS
+    + common_fields.CHEST_DYSPNEA_FIELDS
     + common_fields.CIRCULATION_FIELDS
     + common_fields.NEUROLOGICAL_FIELDS
     + common_fields.SKIN_BLEEDING_FIELDS
