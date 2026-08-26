@@ -141,9 +141,13 @@ def test_a_correction_is_acknowledged_with_the_corrected_fact() -> None:
     assert "false" in plan.acknowledge
 
 
-def test_routine_answer_does_not_force_an_acknowledgement() -> None:
-    """Trộn hướng dẫn ngôi thứ ba vào cùng chuỗi với dữ kiện thì model chép thẳng ra tin nhắn, và
-    người bệnh đọc được một câu nói VỀ mình - lỗi đo được trên transcript thật với deepseek-chat."""
+def test_routine_answer_acknowledges_the_fact_just_received() -> None:
+    """Lượt trả lời THƯỜNG cũng phải công nhận - đây là lượt phổ biến nhất của mọi phiên.
+
+    Trước 2026-08-26 hàng `ANSWER` là hàng duy nhất có `acknowledge_instruction` rỗng, nên người bệnh
+    trả lời đúng thì hệ thống im lặng rồi hỏi câu kế. Test cũ khoá đúng hành vi đó lại
+    (`plan.acknowledge == ""`) trong khi docstring của nó nói về một bất biến khác hẳn - bất biến ấy
+    được giữ nguyên và kiểm ở test dưới."""
     plan = dialogue.build_response_plan(
         FEVER_PROTOCOL, _CLUSTER,
         act=dialogue.DialogueAct.ANSWER,
@@ -151,7 +155,24 @@ def test_routine_answer_does_not_force_an_acknowledgement() -> None:
         recent_fields=frozenset({"fever_reported"}),
     )
     assert plan is not None
-    assert plan.acknowledge == ""
+    assert FEVER_PROTOCOL.fields_by_key["fever_reported"].label in plan.acknowledge
+
+
+def test_acknowledge_carries_facts_only_never_the_instruction_text() -> None:
+    """Trộn hướng dẫn ngôi thứ ba vào cùng chuỗi với dữ kiện thì model chép thẳng ra tin nhắn, và
+    người bệnh đọc được một câu nói VỀ mình - lỗi đo được trên transcript thật với deepseek-chat.
+
+    Đây là bất biến mà test trên nó vốn định canh: hai thứ đi ra bằng HAI trường, không phải một."""
+    plan = dialogue.build_response_plan(
+        FEVER_PROTOCOL, _CLUSTER,
+        act=dialogue.DialogueAct.ANSWER,
+        answers={"fever_reported": "true"},
+        recent_fields=frozenset({"fever_reported"}),
+    )
+    assert plan is not None
+    assert plan.acknowledge_instruction, "hàng ANSWER phải có hướng dẫn công nhận"
+    assert plan.acknowledge_instruction not in plan.acknowledge
+    assert "Người bệnh" not in plan.acknowledge
 
 
 def test_the_correction_acknowledgement_stays_short_and_only_mentions_new_facts() -> None:

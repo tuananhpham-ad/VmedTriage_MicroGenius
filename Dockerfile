@@ -59,7 +59,15 @@ ENV GRAPH_TRIAGE_ARTIFACT_ROOT=/app/runs \
 #
 # Artifact KHÔNG dùng "|| true" - thiếu nó là graph triage vô dụng, phải biết ngay lúc build.
 # Corpus thì có: một URL guideline chết chỉ làm corpus thiếu vài tài liệu.
-RUN python -m scripts.download_graph_artifacts
+#
+# CHỈ TẢI FUSION. Image này chạy GRAPH_TRIAGE_MODE=c6, và c6 chỉ đọc fusion_full/ (qua
+# `_fusion_label_for`). logreg_full/ + bert_full/ chỉ được nạp bởi `service.py::_get_agent`, hàm mà
+# duy nhất nhánh `ensemble` gọi tới. Tải cả 3 = thêm ~500 MB vào image và ~3 phút vào mỗi lần build
+# cho hai thư mục không ai mở.
+#
+# Build cho ensemble: `docker build --build-arg GRAPH_ARTIFACTS= ...` (để trống = tải cả 3).
+ARG GRAPH_ARTIFACTS=fusion_full
+RUN python -m scripts.download_graph_artifacts ${GRAPH_ARTIFACTS:+--only "$GRAPH_ARTIFACTS"}
 RUN python -m scripts.build_source_corpus || echo "[build] build_source_corpus: FAILED (bo qua)"
 
 # ---------- Stage 2: runtime ----------
@@ -82,6 +90,14 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder --chown=appuser:appuser /app /app
+
+# `COPY --chown` doi chu NOI DUNG ben trong /app, KHONG doi chu chinh /app - thu muc do do `WORKDIR`
+# tao ra o tren voi chu la root. Cong them .dockerignore loai bo `logs/` nen image khong co san thu
+# muc do. Ket qua: appuser chay `mkdir /app/logs` trong mot thu muc cua root -> PermissionError, va
+# fever_stage_log nuot loi thanh WARNING nen app van chay trong khi TOAN BO log giai doan bi mat.
+# Da xay ra that tren revision japaneast (2026-08-24): hang tram dong
+# `fever_stage_log.write_failed ... reason=PermissionError`.
+RUN mkdir -p /app/logs && chown appuser:appuser /app /app/logs
 
 USER appuser
 EXPOSE 8080

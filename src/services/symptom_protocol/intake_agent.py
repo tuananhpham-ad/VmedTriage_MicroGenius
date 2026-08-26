@@ -40,6 +40,7 @@ from src.services.symptom_protocol import (
     screening,
     stage_machine,
 )
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -341,8 +342,17 @@ QUY TẮC BẮT BUỘC:
   "negative". Im lặng không bao giờ là phủ định.
 - KHÔNG chẩn đoán bệnh, KHÔNG đề xuất mức độ khẩn cấp, KHÔNG đưa hướng xử trí.
 
-NHIỆM VỤ 2 - nếu người bệnh nói RÕ một chi tiết cụ thể, điền thêm trường tương ứng dưới đây. Mỗi
-trường điền được PHẢI kèm "evidence_span" trích nguyên văn; không trích được thì để "unknown".
+NHIỆM VỤ 2 - điền các trường cụ thể dưới đây.
+
+- Nhóm nào bạn kết luận "positive" thì BẮT BUỘC phải chỉ ra dấu hiệu nào: đặt "true" cho ĐÚNG những
+  trường ứng với dấu hiệu người bệnh xác nhận. Trả "positive" mà không đặt "true" cho trường nào là
+  câu trả lời THIẾU - hệ thống sẽ không biết người bệnh vừa xác nhận điều gì.
+- Người bệnh trả lời gọn ("có", "đúng rồi", "vâng") cho một câu chỉ đọc lên MỘT dấu hiệu thì đó là
+  xác nhận ĐÚNG dấu hiệu ấy - đặt "true" cho nó. Câu đọc lên NHIỀU dấu hiệu mà họ chỉ nói "có" thì
+  KHÔNG đoán là dấu hiệu nào: để cả nhóm "positive" và để các trường "unknown".
+- Trường đặt "true" KHÔNG cần "evidence_span" - người bệnh đang trả lời đúng câu vừa được hỏi.
+- Trường đặt "false", hoặc trường enum/số/ngày, thì PHẢI kèm "evidence_span" trích nguyên văn;
+  không trích được thì để "unknown".
 
 CÁC TRƯỜNG CÓ THỂ ĐIỀN THÊM:
 {field_specs}
@@ -659,16 +669,58 @@ def _coerce_enum(spec, raw: object) -> object | None:
     return None
 
 
+_VOMITING_FREQUENT_MARKERS = (
+    "non nhieu", "oi nhieu", "non lien tuc", "oi lien tuc", "non lap lai", "oi lap lai",
+    "non lien tiep", "oi lien tiep", "non rat nhieu", "oi rat nhieu",
+)
+_VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS = (
+    "khong giu duoc nuoc", "khong giu duoc do an", "uong vao non", "uong vao oi",
+    "an vao non", "an vao oi", "non tat ca", "oi tat ca", "non het", "oi het",
+)
+_VOMITING_NONE_MARKERS = (
+    "khong non", "khong oi", "chua non", "chua oi", "khong bi non", "khong bi oi",
+)
+def _vomiting_value_supported(value: object, evidence_span: object, message: str) -> bool:
+    """Chặn nâng ``buồn nôn`` thành một mức độ NÔN mà lời khai không hề có.
+
+    ``evidence_span`` khớp nguyên văn mới chỉ chứng minh model đã chép một đoạn có thật; nó chưa chứng minh
+    đoạn ấy *hàm ý đúng enum*. Lỗi thực tế là evidence ``buồn nôn`` có thật nhưng model vẫn trả
+    ``vomiting_severity=frequent``. Guard hẹp này kiểm tra entailment tối thiểu cho đúng field có ảnh hưởng
+    tới RF-15/RF-40, không cố thay LLM bằng một bộ NLP tổng quát.
+    """
+    if value == "unknown":
+        return True
+    if not _evidence_in_message(evidence_span, message):
+        return False
+    folded = _fold_bare_reply(str(evidence_span))
+    # "buồn nôn" là nausea. Bỏ cụm này trước khi tìm động từ nôn để chữ "nôn" bên trong không bị tính
+    # nhầm là một lần nôn thực sự.
+    actual_vomiting = folded.replace("buon non", "").replace("cam giac non", "")
+    has_vomiting_verb = bool(re.search(r"\b(non|oi)\b", actual_vomiting))
+    if value == "none":
+        return any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "occasional":
+        return has_vomiting_verb and not any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "frequent":
+        stated_frequency = bool(re.search(r"\b(non|oi)\s+(?:\w+\s+){0,2}\d+\s*(?:lan|lần)\b", actual_vomiting))
+        return any(marker in folded for marker in _VOMITING_FREQUENT_MARKERS) or stated_frequency
+    if value == "unable_to_keep_fluids":
+        return any(marker in folded for marker in _VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS)
+    return False
+
+
 def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     """Giá trị này có bắt buộc phải kèm `evidence_span` khớp tin nhắn không?
 
-    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh, và chỉ ở chiều rủi ro:
+    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh:
 
-    - `"false"` -> phải có bằng chứng (đúng chiều lỗi C1).
+    - Cả `"true"` lẫn `"false"` đều phải có bằng chứng. Positive thiếu căn cứ vẫn là dữ kiện bịa,
+      dù nó thường đẩy mức triage theo hướng thận trọng hơn.
     - enum/số/ngày -> phải có bằng chứng (đúng chiều lỗi C2: model tự sinh
       `fever_onset_at="2023-10-05"` trong lúc đang hỏi chuyện khác).
-    - `"true"` -> KHÔNG BAO GIỜ phải chứng minh. Bịa `"true"` chỉ đẩy ca lên mức thận trọng hơn (P0-6
-      chấp nhận), còn LOẠI NHẦM một `"true"` thật là bỏ sót cấp cứu (P0-5) - hướng hỏng tệ hơn hẳn.
+
+    Lưới keyword red-flag chạy độc lập và lấy căn cứ từ chính cụm từ khớp, nên việc siết output LLM
+    tại đây không loại bỏ lớp bắt khẩn cấp tất định.
 
     Field của cụm ĐANG hỏi (`"asked"`) không phải chứng minh gì: cả tin nhắn chính là câu trả lời cho
     đúng câu vừa hỏi, nên `"không"` ở đó là dữ kiện thật chứ không phải suy diễn. Cả 3 lần tái hiện C1
@@ -676,7 +728,10 @@ def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     hai đường đó đã có guard riêng (`_negation_evidence_ok` + `batch_negation=False` cho safety keys)."""
     if policy != "unasked":
         return False
-    return not spec.tri_state or value == "false"
+    # Lượt kể tự do/field ngoài câu đang hỏi: mọi dữ kiện xác định đều phải trỏ về lời người dùng.
+    # Positive không có evidence dù làm triage thận trọng hơn vẫn là dữ kiện bịa và không được phép
+    # lọt vào summary. Lưới keyword red-flag chạy độc lập nên các cụm khẩn cấp tất định vẫn được bắt.
+    return value != "unknown"
 
 
 def _collect_fields(
@@ -744,6 +799,8 @@ def _collect_fields(
                 supported = not _needs_evidence(evidence, spec, coerced) or _evidence_in_message(
                     evidence_span, message,
                 )
+                if key == "vomiting_severity" and coerced is not None:
+                    supported = supported and _vomiting_value_supported(coerced, evidence_span, message)
                 if coerced is not None and supported:
                     collected[key] = coerced
                     _emit(events, key, coerced, evidence_span, source)
@@ -1155,7 +1212,7 @@ def _recent_fields(*sources: dict[str, TriState]) -> frozenset[str]:
 
 
 def _ranking_context(
-    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None,
+    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None, recent_text: str = "",
 ) -> ranking.RankingContext | None:
     if not flags.ranking_enabled():
         # `None` là đúng đường quay lui của §8.3, không phải một nhánh mới: `select_cluster` không có
@@ -1163,9 +1220,10 @@ def _ranking_context(
         # first-fit cũ. Cả hai hành vi dùng chung một đoạn code.
         return None
     if ledger is None:
-        return ranking.RankingContext(recent_fields=recent_fields)
+        return ranking.RankingContext(recent_fields=recent_fields, recent_text=recent_text)
     return ranking.RankingContext(
-        recent_fields=recent_fields, deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
+        recent_fields=recent_fields, recent_text=recent_text,
+        deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
     )
 
 
@@ -1197,6 +1255,7 @@ def run_turn(
     credential: provider_router.LLMCredential | None = None,
     select_protocol=None,
     protocol_for=None,
+    protocol_candidates=None,
     probe: tuple[ScreeningGroup, ...] = (),
     screened_ids: frozenset[str] = frozenset(),
     screening_history: dict[str, tuple[frozenset[str], ...]] | None = None,
@@ -1246,6 +1305,7 @@ def run_turn(
     # Giá trị âm tính của lượt sàng lọc đứng TRƯỚC field trích được: người bệnh nói rõ một chi tiết
     # ("có, bé không tiểu từ sáng") phải thắng phủ định gộp của chính nhóm đó.
     screened_negatives = outcome.negatives if outcome is not None else {}
+    screened_positives = outcome.positives if outcome is not None else {}
     recent_fields = _recent_fields(opportunistic, extraction.safety_fields, extraction.cluster_fields)
 
     # L3 REDUCER - nguồn sự thật DUY NHẤT của hồ sơ (§5). Đính chính + mâu thuẫn nằm TRONG nó và vì
@@ -1270,6 +1330,10 @@ def run_turn(
             *reducer.events_from_values(batch_defaults, source=reducer.SOURCE_BATCH_DEFAULT),
             *reducer.events_from_values(opportunistic, source=reducer.SOURCE_KEYWORD),
             *reducer.events_from_values(screened_negatives, source=reducer.SOURCE_SCREENING),
+            # Dương tính suy từ verdict đứng SAU âm tính: khi một nhóm vừa bị phủ định gộp vừa có một
+            # dấu hiệu được xác nhận, lời khẳng định thắng. Vẫn đứng TRƯỚC `extraction.events` để
+            # field model trích được nguyên văn ghi đè lên phần suy luận.
+            *reducer.events_from_values(screened_positives, source=reducer.SOURCE_SCREENING),
             *extraction.events,
         ),
         confirmed_retractions=confirmed_retractions,
@@ -1364,7 +1428,7 @@ def run_turn(
         and retry_count < MAX_RETRIES_PER_CLUSTER
         and _worth_retrying(active, cluster, merged)
     )
-    if probe or batching.is_batch(cluster):
+    if probe or batching.is_batch(cluster) or common_screening.is_routing_disambiguation(cluster):
         # Lượt sàng lọc và lượt hỏi gộp KHÔNG BAO GIỜ hỏi lại nguyên gói. Người bệnh vừa nghe nhiều ý
         # một lúc mà không trả lời được thì đọc lại đúng loạt ý đó lần nữa chỉ làm họ bỏ cuộc. Đường
         # lùi đúng là quay về hỏi từng cụm một theo script chuẩn - `advance` tự làm điều đó khi cụm
@@ -1392,9 +1456,25 @@ def run_turn(
         # cái thiếu là thứ tự chưa đi theo nó. Đổi protocol thì bỏ ledger cũ: mã cụm dùng chung giữa
         # các protocol nên nợ của protocol cũ sẽ gán nhầm cụm của protocol mới.
         ranking_context = _ranking_context(
-            recent_fields, None if protocol_switched else ledger,
+            recent_fields, None if protocol_switched else ledger, message,
         )
-        if protocol_switched:
+        route_candidates = protocol_candidates(merged) if protocol_candidates is not None else ()
+        disjoint_candidates = tuple(
+            name for name in route_candidates if name not in {"chest_pain", "breathing"}
+        )
+        needs_disambiguation = (
+            bool(probe)
+            and stage == active.critical_scan_stage
+            and len(route_candidates) >= 2
+            and not (set(route_candidates) <= {"chest_pain", "breathing"})
+            and merged.get("primary_symptom_group") in (None, "", "unknown")
+            and len(disjoint_candidates) >= 1
+        )
+        if needs_disambiguation:
+            step = stage_machine.Advance(
+                common_screening.routing_disambiguation_cluster(route_candidates), stage, None,
+            )
+        elif protocol_switched:
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
                 context=ranking_context, stop_signals=stop_signals,
@@ -1434,7 +1514,12 @@ def run_turn(
     # qua LLM). Không gộp khi đang hỏi lại một cụm - lúc đó việc cần làm là diễn đạt lại cho rõ, thêm
     # ý mới chỉ làm người bệnh khó trả lời hơn.
     batched: tuple[QuestionCluster, ...] = ()
-    if following is not None and not next_probe and not retry_this_cluster:
+    if (
+        following is not None
+        and not next_probe
+        and not retry_this_cluster
+        and not common_screening.is_routing_disambiguation(following)
+    ):
         batched = batching.next_batch(
             active, step.stage, merged, following,
             asked_ids=frozenset() if protocol_switched else closed_now,
@@ -1621,7 +1706,7 @@ def run_open_turn(
     # mạch cần đi theo. Chưa có ledger nào ở đây - phiên vừa bắt đầu, chưa cụm nào bị hoãn.
     recent_fields = _recent_fields(opportunistic, extraction.cluster_fields)
     step = stage_machine.advance(
-        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None),
+        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None, message),
     )
     following = step.cluster
     # Lời kể mở đầu có thể đã trả lời xong cả Stage 0/1/2 ("bé 4 tuổi, sốt 38.5 từ hôm qua, đã uống

@@ -32,6 +32,11 @@ Hệ thống đang **an toàn nhưng kém nhạy** — liên quan trực tiếp 
 
 ## 3. Track PC — 4 protocol lâm sàng còn thiếu
 
+> ✅ **ĐÃ CHUYỂN SANG [`F09_symptom_protocols.md`](F09_symptom_protocols.md)** (2026-08-26). Tài liệu
+> grounding đã chốt (Schmitt-Thompson, NHS 111, SNNOOP10) nên mục này không còn ngoài phạm vi. Phần
+> dưới giữ lại làm bối cảnh; **ước lượng "bốn lần 696 dòng" đã được đính chính ở F09 §1.4** — khuôn
+> đúng để so là `generic_protocol.py` (211 dòng), không phải fever.
+
 **Hạng mục lớn nhất còn lại, và vẫn chưa có người chủ trì.**
 
 4/5 nhóm MVP (Đau bụng, Đau ngực, Khó thở, Đau đầu) chưa tồn tại — tất cả đang rơi vào

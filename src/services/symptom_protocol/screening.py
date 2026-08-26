@@ -71,6 +71,10 @@ class ScreeningOutcome:
     """Giá trị âm tính ghi thêm vào `answers`. CHỈ gồm field đang `unknown` - một nhóm bị phủ định
     KHÔNG được ghi đè điều người bệnh đã khẳng định trước đó."""
 
+    positives: dict[str, object]
+    """Giá trị `"true"` suy ra từ verdict `positive` khi nhóm chỉ còn ĐÚNG MỘT ứng viên - xem
+    `_single_open_field`. Rỗng trong mọi trường hợp khác."""
+
     closed_cluster_ids: frozenset[str]
     negative_group_ids: tuple[str, ...]
     positive_group_ids: tuple[str, ...]
@@ -80,7 +84,9 @@ class ScreeningOutcome:
 
     @property
     def changed(self) -> bool:
-        return bool(self.negatives or self.closed_cluster_ids or self.positive_group_ids)
+        return bool(
+            self.negatives or self.positives or self.closed_cluster_ids or self.positive_group_ids
+        )
 
 
 def groups_for_stage(protocol: SymptomProtocol, stage: str) -> tuple[ScreeningGroup, ...]:
@@ -267,6 +273,33 @@ def parse_verdicts(parsed: dict) -> dict[str, tuple[Verdict, object]]:
     return {str(key): _verdict_and_evidence(value) for key, value in groups.items()}
 
 
+def _single_open_field(
+    protocol: SymptomProtocol,
+    stage: str,
+    group: ScreeningGroup,
+    answers: dict[str, object],
+) -> str | None:
+    """Field tri-state DUY NHẤT còn bỏ ngỏ trong nhóm, hoặc `None` nếu có 0 hay ≥2 ứng viên.
+
+    Đây là toàn bộ điều kiện để một verdict `positive` được phép ghi giá trị. Nó hẹp có chủ đích:
+    khi nhóm chỉ còn đúng một dấu hiệu chưa biết, câu "có" của người bệnh **không thể** trỏ vào thứ
+    gì khác - nên ghi `"true"` ở đây là ĐỌC lời khai, không phải suy diễn. Còn ≥2 ứng viên thì "có"
+    thật sự mơ hồ, và bịa ra một trong hai là dựng dấu hiệu đỏ không ai khai (đúng lỗi C2).
+
+    Field enum/số KHÔNG bao giờ được suy: "có" xác nhận sự TỒN TẠI của một dấu hiệu, nó không mang
+    giá trị nào cho `temp_c` hay `urine_output`."""
+    candidates = [
+        key
+        for cluster in clusters_of(protocol, group)
+        if not stage_machine.cluster_is_skipped(protocol, stage, cluster, answers)
+        for key in cluster.fields
+        if (spec := protocol.fields_by_key.get(key)) is not None
+        and spec.tri_state
+        and not stage_machine.is_filled(answers.get(key))
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def apply_verdicts(
     protocol: SymptomProtocol,
     stage: str,
@@ -282,15 +315,27 @@ def apply_verdicts(
     |---|---|
     | `negative` + trích dẫn verify được | Ghi giá trị âm tính + đóng mọi cụm trong nhóm |
     | `negative` + trích dẫn hỏng/thiếu | BỎ verdict - nhóm vẫn phải hỏi (`rejected_group_ids`) |
-    | `positive` | Không ghi gì. Các cụm giữ `unknown` ⇒ `next_cluster` hỏi từng cụm đúng script chuẩn |
+    | `positive` | Ghi `"true"` CHỈ KHI nhóm còn đúng một ứng viên; còn lại giữ `unknown` và hỏi tiếp |
     | `unknown` | Không ghi gì. Vòng sàng lọc sau gộp lại hỏi phần còn dư |
 
-    `positive` cố ý KHÔNG ghi `"true"` cho field nào: người bệnh mới xác nhận "nhóm này có vấn đề",
-    chưa nói dấu hiệu cụ thể nào trong nhóm. Ghi bừa `"true"` là dựng một dấu hiệu đỏ không ai khai -
-    và vì `true` là chiều LÀM NẶNG ca, nó sẽ chốt cấp cứu trên dữ liệu bịa."""
+    **Vì sao `positive` chỉ ghi được trong trường hợp một-ứng-viên.** Verdict `positive` nói "nhóm này
+    có vấn đề", không nói dấu hiệu nào. Với ≥2 dấu hiệu chưa biết, ghi `"true"` cho một cái là dựng
+    một dấu hiệu đỏ không ai khai. Nhưng khi nhóm chỉ còn ĐÚNG MỘT dấu hiệu bỏ ngỏ thì câu "có" không
+    thể trỏ vào đâu khác - lúc đó KHÔNG ghi mới là bỏ mất lời khai.
+
+    Bản trước không ghi gì trong mọi trường hợp, và đó là một lỗi an toàn thật: người bệnh trả lời
+    "có" cho câu sàng lọc đọc lên `thở rít / chảy dãi / khó nuốt` thì `stridor_or_drooling` vẫn ở
+    `unknown`, `rule_engine` không có gì để khớp, và `R-E-06` (tắc nghẽn đường thở) không bao giờ nổ
+    - hội thoại đi tiếp như một ca thường. Đường `_collect_fields` chạy song song CÓ thể cứu ca này,
+    nhưng chỉ khi model tự nguyện điền field; nó không phải một bảo đảm, còn đây thì là.
+
+    Chiều rủi ro của việc suy sai ở đây là chiều AN TOÀN, đúng cân nhắc `_needs_evidence` đã ghi:
+    thừa một `"true"` chỉ đẩy ca lên mức thận trọng hơn (P0-6 chấp nhận), thiếu một `"true"` thật là
+    bỏ sót cấp cứu (P0-5)."""
     verdicts = parse_verdicts(parsed)
 
     negatives: dict[str, object] = {}
+    positives: dict[str, object] = {}
     closed: set[str] = set()
     negative_ids: list[str] = []
     positive_ids: list[str] = []
@@ -300,6 +345,10 @@ def apply_verdicts(
         verdict, evidence = verdicts.get(group.id, (_DEFAULT_VERDICT, None))
         if verdict == "positive":
             positive_ids.append(group.id)
+            # Nhóm KHÔNG bị đóng dù có ghi được field: các cụm còn lại vẫn phải hỏi đúng script.
+            only = _single_open_field(protocol, stage, group, answers)
+            if only is not None:
+                positives[only] = "true"
             continue
         if verdict != "negative":
             continue
@@ -325,6 +374,7 @@ def apply_verdicts(
 
     return ScreeningOutcome(
         negatives=negatives,
+        positives=positives,
         closed_cluster_ids=frozenset(closed),
         negative_group_ids=tuple(negative_ids),
         positive_group_ids=tuple(positive_ids),

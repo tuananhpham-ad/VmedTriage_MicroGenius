@@ -63,7 +63,7 @@ CIRCULATION_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("dizziness_on_standing", "Choáng khi đứng dậy", "M1", "Giảm thể tích tuần hoàn - tiền sốc"),
     FieldSpec("urine_output", "Lượng nước tiểu", "M0", "normal/reduced/none_gt_6h - tưới máu thận (RF-14)", tri_state=False, allowed_values=("normal", "reduced", "none_gt_6h", "unknown",)),
     FieldSpec("dehydration_signs", "Dấu mất nước", "O", "Đa dấu hiệu: khô môi, mắt trũng, thóp lõm...", tri_state=False),
-    FieldSpec("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40)", tri_state=False, allowed_values=("none", "occasional", "frequent", "unable_to_keep_fluids", "unknown",)),
+    FieldSpec("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40). Buồn nôn KHÔNG phải là nôn; không được suy từ 'buồn nôn' thành bất kỳ mức độ nôn nào. Chỉ frequent khi lời khai nói rõ nôn nhiều/lặp lại hoặc có số lần; chỉ unable_to_keep_fluids khi nói rõ uống vào nôn/không giữ được nước", tri_state=False, allowed_values=("none", "occasional", "frequent", "unable_to_keep_fluids", "unknown",)),
 )
 
 # --- Thần kinh (KM §3.7) ------------------------------------------------------------------------
@@ -91,6 +91,7 @@ SKIN_BLEEDING_FIELDS: tuple[FieldSpec, ...] = (
 
 # --- Triệu chứng đi kèm hay gặp ở mọi than phiền (KM §3.9) ---------------------------------------
 ASSOCIATED_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("nausea_present", "Buồn nôn", "O", "Cảm giác buồn nôn/nao nao muốn ói. KHÔNG đồng nghĩa với đã nôn và KHÔNG mô tả tần suất nôn"),
     FieldSpec("abdominal_pain_severity", "Mức độ đau bụng", "M0", "none/mild/moderate/severe - cảnh báo SXHD (RF-39)", tri_state=False, allowed_values=("none", "mild", "moderate", "severe", "unknown",)),
     FieldSpec("abdominal_pain_location", "Vị trí đau bụng", "C", "Định hướng cho người duyệt", tri_state=False, allowed_values=("diffuse", "ruq", "rlq", "epigastric", "other", "unknown",)),
     FieldSpec("abdominal_guarding", "Bụng cứng/ấn rất đau", "C", "Nghi bụng ngoại khoa (RF-39)"),
@@ -146,3 +147,45 @@ COMMON_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 COMMON_FIELDS_BY_KEY: dict[str, FieldSpec] = {field.key: field for field in COMMON_FIELDS}
+
+
+# --- Tín hiệu sốt DÙNG CHUNG (F09 §3.8) -----------------------------------------------------------
+FEVER_SIGNAL_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("fever_reported", "Người dùng khai có sốt", "M0", "Cổng vào toàn bộ protocol sốt"),
+    FieldSpec("fever_status", "Loại sốt", "M0", "objective/subjective/none - điều hướng nhánh dữ liệu thiếu", tri_state=False, allowed_values=("objective", "subjective", "none",)),
+    FieldSpec("temp_c", "Nhiệt độ đo được (°C)", "M0", "Đầu vào rule ngưỡng theo tuổi; M0 khi fever_status=objective", tri_state=False),
+)
+"""Ba field này **chuyển từ `fever_checklist.py` sang** ngày 2026-08-26, không sửa một ký tự nào.
+
+Vì sao chúng phải ở đây dù mang chữ "sốt": chúng không còn là tài sản riêng của protocol sốt nữa.
+
+1. **Cả 4 bảng mapping mới đều dùng ngưỡng sốt.** Đau ngực chốt "khám sớm" khi `>38.1°C` kèm đau
+   ngực; đau bụng có bậc `>39.4 / >38.3 nếu >60 tuổi / >38.1 nếu suy giảm miễn dịch`; khó thở dùng
+   sốt để nghi viêm phổi. Không có `temp_c` thì bốn protocol đó không chốt được.
+2. **Chúng là `SWITCH_DETECTION_FIELDS`** - tập field để `select_protocol` NHẬN RA phiên nên đổi
+   nhóm. Field chỉ nằm trong registry của một protocol thì phiên đang chạy protocol khác không có
+   chỗ ghi, và router không bao giờ thấy bằng chứng (xem docstring của hằng số đó).
+
+Để lại trong `fever_checklist` thì protocol thứ hai hoặc phải import từ fever (sai chiều phụ thuộc),
+hoặc phải chép lại - và bản sao thứ hai sẽ phá vỡ điều `registry._merged_fields` đang dựa vào:
+*"các key trùng đều đến từ `common_safety` nên là CÙNG một object"*.
+
+Phần còn lại của nhóm FEVER (`temp_site`, `antipyretic_*`, `fever_pattern`, `rigors`...) **ở lại**
+`fever_checklist`: chúng thật sự chỉ có nghĩa trong một ca đang sốt."""
+
+
+# --- Câu chốt cuối pipeline (F09 §3.5) ------------------------------------------------------------
+CLOSING_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("other_symptoms", "Triệu chứng khác người bệnh tự nêu", "O", "Điều người bệnh kể thêm sau khi đã đi hết bộ câu hỏi - giữ NGUYÊN VĂN lời họ, không quy về tên bệnh", tri_state=False),
+)
+"""Tier `O`, KHÔNG phải `M1`. Hai lý do, và lý do thứ hai mới là lý do bắt buộc:
+
+1. Câu "còn gì nữa không" là lời mời, không phải một dữ kiện bắt buộc phải có. Người bệnh trả lời
+   "không còn gì" là kết thúc hợp lệ.
+2. Tier M0/M1 đi vào `mandatory_unasked`. Một field mà **mọi** phiên đều để trống (vì phần lớn ca
+   không có triệu chứng nào khác) sẽ kéo chỉ số đó khác 0 vĩnh viễn ở mọi protocol - đúng lỗi mà
+   `test_protocol_field_coverage.py` được viết ra để bắt, chỉ khác chiều.
+
+KHÔNG gộp vào `COMMON_FIELDS`: `fever` và `general` không có cụm nào hỏi nó, nên gộp vào sẽ thêm một
+field vĩnh viễn `unknown` cho hai protocol đang chạy tốt. Protocol nào muốn dùng thì cộng vào tuple
+field của mình - tường minh, không lan."""

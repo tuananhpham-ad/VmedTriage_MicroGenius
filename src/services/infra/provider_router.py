@@ -246,6 +246,18 @@ _ROLE_ORDER_ATTRS: dict[str, str] = {
     ROLE_FOLLOWUP_QUESTION: "role_order_followup_question",
 }
 
+_ROLE_TEMPERATURE_ATTRS: dict[str, str] = {
+    ROLE_FACT_EXTRACTOR: "role_temperature_fact_extractor",
+    ROLE_SYNTHESIS: "role_temperature_synthesis",
+    ROLE_SYMPTOM_GROUP_ROUTER: "role_temperature_symptom_group_router",
+    ROLE_CLAIM_SPLITTER: "role_temperature_claim_splitter",
+    ROLE_SOURCE_VERDICT: "role_temperature_source_verdict",
+    ROLE_SOURCE_EXPLAIN: "role_temperature_source_explain",
+    ROLE_CHITCHAT: "role_temperature_chitchat",
+    ROLE_CONTEXT_SUMMARY: "role_temperature_context_summary",
+    ROLE_FOLLOWUP_QUESTION: "role_temperature_followup_question",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RoleProfile:
@@ -261,6 +273,8 @@ class RoleProfile:
 
     role: str
     provider_order: str = ""
+    temperature: float | None = None
+    """Nhiệt độ RIÊNG của vai trò. `None` = vai trò không khai báo ⇒ rơi về `llm_temperature`."""
 
     @property
     def inherits_global_order(self) -> bool:
@@ -274,7 +288,30 @@ def role_profile(role: str | None) -> RoleProfile | None:
     attr = _ROLE_ORDER_ATTRS.get(role)
     if attr is None:
         raise UnknownProviderError(f"Vai trò không hợp lệ: {role!r}. Hợp lệ: {', '.join(ROLES)}")
-    return RoleProfile(role=role, provider_order=getattr(get_settings(), attr, "") or "")
+    settings = get_settings()
+    return RoleProfile(
+        role=role,
+        provider_order=getattr(settings, attr, "") or "",
+        temperature=getattr(settings, _ROLE_TEMPERATURE_ATTRS[role], None),
+    )
+
+
+def _resolve_temperature(temperature: float | None, role: str | None) -> float:
+    """Ba tầng, ưu tiên từ cụ thể tới chung: tham số tường minh > số của vai trò > toàn cục.
+
+    Tham số tường minh đứng đầu vì nó là lời gọi biết rõ nó đang làm gì (vd `direct_decision` ép 0).
+    `llm_temperature` toàn cục xuống hạng cuối: nó là MỘT số cho MỌI vai trò, nên dùng nó làm mặc
+    định cho một vai trò cụ thể chỉ đúng khi vai trò đó chưa ai nghĩ tới.
+    """
+    if temperature is not None:
+        return temperature
+    if role is not None:
+        attr = _ROLE_TEMPERATURE_ATTRS.get(role)
+        if attr is not None:
+            role_temperature = getattr(get_settings(), attr, None)
+            if role_temperature is not None:
+                return float(role_temperature)
+    return get_settings().llm_temperature
 
 
 @dataclass(slots=True)
@@ -530,7 +567,7 @@ def complete(
     khi hết ngân sách - người gọi tự quyết định fallback (intake_agent dùng nhánh deterministic).
     """
     settings = get_settings()
-    resolved_temperature = settings.llm_temperature if temperature is None else temperature
+    resolved_temperature = _resolve_temperature(temperature, role)
 
     budget = _AttemptBudget.from_settings(settings)
 
@@ -630,7 +667,7 @@ def complete_stream(
     phát trọn văn bản trong đúng một mẩu, nên phía gọi không cần biết provider nào đang chạy.
     """
     settings = get_settings()
-    resolved_temperature = settings.llm_temperature if temperature is None else temperature
+    resolved_temperature = _resolve_temperature(temperature, role)
     budget = _AttemptBudget.from_settings(settings)
 
     if credential is not None:
