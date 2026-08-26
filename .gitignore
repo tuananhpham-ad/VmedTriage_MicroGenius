@@ -90,3 +90,4 @@ deploy/azure/env*
 !deploy/azure/env.example
 
 render.yaml
+.firecrawl/

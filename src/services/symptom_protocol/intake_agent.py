@@ -40,6 +40,7 @@ from src.services.symptom_protocol import (
     screening,
     stage_machine,
 )
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
@@ -1211,7 +1212,7 @@ def _recent_fields(*sources: dict[str, TriState]) -> frozenset[str]:
 
 
 def _ranking_context(
-    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None,
+    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None, recent_text: str = "",
 ) -> ranking.RankingContext | None:
     if not flags.ranking_enabled():
         # `None` là đúng đường quay lui của §8.3, không phải một nhánh mới: `select_cluster` không có
@@ -1219,9 +1220,10 @@ def _ranking_context(
         # first-fit cũ. Cả hai hành vi dùng chung một đoạn code.
         return None
     if ledger is None:
-        return ranking.RankingContext(recent_fields=recent_fields)
+        return ranking.RankingContext(recent_fields=recent_fields, recent_text=recent_text)
     return ranking.RankingContext(
-        recent_fields=recent_fields, deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
+        recent_fields=recent_fields, recent_text=recent_text,
+        deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
     )
 
 
@@ -1253,6 +1255,7 @@ def run_turn(
     credential: provider_router.LLMCredential | None = None,
     select_protocol=None,
     protocol_for=None,
+    protocol_candidates=None,
     probe: tuple[ScreeningGroup, ...] = (),
     screened_ids: frozenset[str] = frozenset(),
     screening_history: dict[str, tuple[frozenset[str], ...]] | None = None,
@@ -1425,7 +1428,7 @@ def run_turn(
         and retry_count < MAX_RETRIES_PER_CLUSTER
         and _worth_retrying(active, cluster, merged)
     )
-    if probe or batching.is_batch(cluster):
+    if probe or batching.is_batch(cluster) or common_screening.is_routing_disambiguation(cluster):
         # Lượt sàng lọc và lượt hỏi gộp KHÔNG BAO GIỜ hỏi lại nguyên gói. Người bệnh vừa nghe nhiều ý
         # một lúc mà không trả lời được thì đọc lại đúng loạt ý đó lần nữa chỉ làm họ bỏ cuộc. Đường
         # lùi đúng là quay về hỏi từng cụm một theo script chuẩn - `advance` tự làm điều đó khi cụm
@@ -1453,9 +1456,25 @@ def run_turn(
         # cái thiếu là thứ tự chưa đi theo nó. Đổi protocol thì bỏ ledger cũ: mã cụm dùng chung giữa
         # các protocol nên nợ của protocol cũ sẽ gán nhầm cụm của protocol mới.
         ranking_context = _ranking_context(
-            recent_fields, None if protocol_switched else ledger,
+            recent_fields, None if protocol_switched else ledger, message,
         )
-        if protocol_switched:
+        route_candidates = protocol_candidates(merged) if protocol_candidates is not None else ()
+        disjoint_candidates = tuple(
+            name for name in route_candidates if name not in {"chest_pain", "breathing"}
+        )
+        needs_disambiguation = (
+            bool(probe)
+            and stage == active.critical_scan_stage
+            and len(route_candidates) >= 2
+            and not (set(route_candidates) <= {"chest_pain", "breathing"})
+            and merged.get("primary_symptom_group") in (None, "", "unknown")
+            and len(disjoint_candidates) >= 1
+        )
+        if needs_disambiguation:
+            step = stage_machine.Advance(
+                common_screening.routing_disambiguation_cluster(route_candidates), stage, None,
+            )
+        elif protocol_switched:
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
                 context=ranking_context, stop_signals=stop_signals,
@@ -1495,7 +1514,12 @@ def run_turn(
     # qua LLM). Không gộp khi đang hỏi lại một cụm - lúc đó việc cần làm là diễn đạt lại cho rõ, thêm
     # ý mới chỉ làm người bệnh khó trả lời hơn.
     batched: tuple[QuestionCluster, ...] = ()
-    if following is not None and not next_probe and not retry_this_cluster:
+    if (
+        following is not None
+        and not next_probe
+        and not retry_this_cluster
+        and not common_screening.is_routing_disambiguation(following)
+    ):
         batched = batching.next_batch(
             active, step.stage, merged, following,
             asked_ids=frozenset() if protocol_switched else closed_now,
@@ -1682,7 +1706,7 @@ def run_open_turn(
     # mạch cần đi theo. Chưa có ledger nào ở đây - phiên vừa bắt đầu, chưa cụm nào bị hoãn.
     recent_fields = _recent_fields(opportunistic, extraction.cluster_fields)
     step = stage_machine.advance(
-        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None),
+        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None, message),
     )
     following = step.cluster
     # Lời kể mở đầu có thể đã trả lời xong cả Stage 0/1/2 ("bé 4 tuổi, sốt 38.5 từ hôm qua, đã uống

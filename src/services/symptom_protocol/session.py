@@ -678,6 +678,7 @@ class ProtocolSessionStore:
             # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
             select_protocol=None if session.protocol_pinned else registry.select_protocol,
             protocol_for=None if session.protocol_pinned else registry.protocol_for,
+            protocol_candidates=None if session.protocol_pinned else registry.protocol_candidates,
             probe=session.pending_probe,
             screened_ids=session.screened_ids_for_current_protocol(),
             screening_history=session.screening_history,

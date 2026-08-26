@@ -11,16 +11,25 @@ hết bộ câu hỏi về sốt.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import replace
 from hashlib import sha256
 
+from src.services.engines.abdominal_protocol import ABDOMINAL_PROTOCOL
+from src.services.engines.breathing_protocol import BREATHING_PROTOCOL
+from src.services.engines.chest_pain_protocol import CHEST_PAIN_PROTOCOL
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.engines.generic_protocol import GENERIC_PROTOCOL
+from src.services.engines.headache_protocol import HEADACHE_PROTOCOL
 from src.services.symptom_protocol.common_safety.predicates import as_float, is_true
 from src.services.symptom_protocol.models import FieldSpec, QuestionCluster
 from src.services.symptom_protocol.protocol import SymptomProtocol
 
 PROTOCOL_REGISTRY: dict[str, SymptomProtocol] = {
+    CHEST_PAIN_PROTOCOL.name: CHEST_PAIN_PROTOCOL,
+    BREATHING_PROTOCOL.name: BREATHING_PROTOCOL,
+    HEADACHE_PROTOCOL.name: HEADACHE_PROTOCOL,
+    ABDOMINAL_PROTOCOL.name: ABDOMINAL_PROTOCOL,
     FEVER_PROTOCOL.name: FEVER_PROTOCOL,
     GENERIC_PROTOCOL.name: GENERIC_PROTOCOL,
 }
@@ -37,6 +46,12 @@ def protocol_for(name: str | None) -> SymptomProtocol:
 
 # Ngưỡng "có sốt" theo KM §2 - dùng để NHẬN DIỆN protocol, không phải để kết luận lâm sàng.
 _FEVER_TEMP_THRESHOLD_C = 38.0
+PRIMARY_SYMPTOM_FIELD = FieldSpec(
+    "primary_symptom_group", "Nhóm triệu chứng khó chịu nhất", "O",
+    "Chỉ ghi khi người bệnh chọn rõ một nhóm sau câu hỏi phân định",
+    tri_state=False,
+    allowed_values=("chest_pain", "breathing", "headache", "abdominal", "fever", "unknown"),
+)
 
 
 def select_protocol(answers: dict[str, object], current: str | None = None) -> str:
@@ -45,17 +60,101 @@ def select_protocol(answers: dict[str, object], current: str | None = None) -> s
     Chỉ chuyển khi có căn cứ DƯƠNG TÍNH rõ ràng. Không có căn cứ thì GIỮ NGUYÊN protocol đang chạy -
     một hồ sơ chưa nhắc tới sốt không phải là bằng chứng "không sốt", và đổi protocol giữa chừng vì
     im lặng sẽ vứt bỏ cả nhánh câu hỏi đang dở."""
-    if _has_fever_evidence(answers):
-        return FEVER_PROTOCOL.name
-    if current == FEVER_PROTOCOL.name and _fever_ruled_out(answers):
-        # Người bệnh RÚT LẠI lời khai sốt ("à tôi nhầm, tôi không sốt"). Ở lại protocol sốt lúc này
-        # nghĩa là tiếp tục hỏi nhiệt độ, thuốc hạ sốt, ngày khởi phát sốt cho một người vừa nói rõ
-        # là không sốt. Đây là chiều đổi DUY NHẤT dựa trên phủ định, và nó cần một phủ định TƯỜNG
-        # MINH ("false"/"none") chứ không phải im lặng.
-        return DEFAULT_PROTOCOL_NAME
-    if current in PROTOCOL_REGISTRY:
+    candidates = protocol_candidates(answers)
+    if candidates:
+        preferred = answers.get(PRIMARY_SYMPTOM_FIELD.key)
+        if isinstance(preferred, str) and preferred in candidates:
+            return preferred
+        return candidates[0]
+    if current in PROTOCOL_REGISTRY and not _protocol_ruled_out(current, answers):
         return current
     return DEFAULT_PROTOCOL_NAME
+
+
+PROTOCOL_PRIORITY: tuple[str, ...] = (
+    CHEST_PAIN_PROTOCOL.name,
+    BREATHING_PROTOCOL.name,
+    HEADACHE_PROTOCOL.name,
+    ABDOMINAL_PROTOCOL.name,
+    FEVER_PROTOCOL.name,
+)
+
+
+def protocol_candidates(answers: dict[str, object]) -> tuple[str, ...]:
+    """Mọi nhóm có căn cứ dương tính, xếp theo ưu tiên lâm sàng F09 §3.8."""
+    evidence = {
+        CHEST_PAIN_PROTOCOL.name: _has_chest_pain_evidence(answers),
+        BREATHING_PROTOCOL.name: _has_breathing_evidence(answers),
+        HEADACHE_PROTOCOL.name: _has_headache_evidence(answers),
+        ABDOMINAL_PROTOCOL.name: _has_abdominal_evidence(answers),
+        FEVER_PROTOCOL.name: _has_fever_evidence(answers),
+    }
+    return tuple(name for name in PROTOCOL_PRIORITY if evidence[name])
+
+
+def _fold_text(value: object) -> str:
+    text = str(value or "").casefold().replace("đ", "d")
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+
+
+def _complaint_text(answers: dict[str, object]) -> str:
+    return " ".join(_fold_text(answers.get(key)) for key in ("chief_complaint", "complaint_site"))
+
+
+def _has_chest_pain_evidence(answers: dict[str, object]) -> bool:
+    if is_true(answers.get("chest_pain")):
+        return True
+    if any(answers.get(key) not in (None, "", "unknown", "none", "false") for key in (
+        "chest_pain_character", "chest_pain_radiation", "chest_pain_duration_min",
+    )):
+        return True
+    text = _complaint_text(answers)
+    return "dau nguc" in text or "tuc nguc" in text or "nang nguc" in text
+
+
+def _has_breathing_evidence(answers: dict[str, object]) -> bool:
+    if answers.get("breathing_difficulty") in {"mild", "severe"}:
+        return True
+    if is_true(answers.get("dyspnea_at_rest")) or answers.get("dyspnea_onset_mode") in {"sudden", "gradual"}:
+        return True
+    text = _complaint_text(answers)
+    return any(marker in text for marker in ("kho tho", "hut hoi", "nghet tho"))
+
+
+def _has_headache_evidence(answers: dict[str, object]) -> bool:
+    if is_true(answers.get("severe_headache")) or is_true(answers.get("thunderclap_onset")):
+        return True
+    if any(answers.get(key) not in (None, "", "unknown", "false") for key in (
+        "headache_severity", "headache_progressive", "headache_different_from_usual",
+    )):
+        return True
+    return "dau dau" in _complaint_text(answers)
+
+
+def _has_abdominal_evidence(answers: dict[str, object]) -> bool:
+    if answers.get("abdominal_pain_severity") in {"mild", "moderate", "severe"}:
+        return True
+    if any(answers.get(key) not in (None, "", "unknown", "none", "false") for key in (
+        "abdominal_pain_location", "abdominal_pain_onset_mode", "abdominal_pain_duration_hours",
+    )):
+        return True
+    text = _complaint_text(answers)
+    return "dau bung" in text or "dau da day" in text
+
+
+def _protocol_ruled_out(name: str, answers: dict[str, object]) -> bool:
+    if name == FEVER_PROTOCOL.name:
+        return _fever_ruled_out(answers)
+    if name == CHEST_PAIN_PROTOCOL.name:
+        return answers.get("chest_pain") == "false"
+    if name == BREATHING_PROTOCOL.name:
+        return answers.get("breathing_difficulty") == "none"
+    if name == HEADACHE_PROTOCOL.name:
+        return answers.get("severe_headache") == "false" and answers.get("headache_severity") in (None, "unknown")
+    if name == ABDOMINAL_PROTOCOL.name:
+        return answers.get("abdominal_pain_severity") == "none"
+    return False
 
 
 def _has_fever_evidence(answers: dict[str, object]) -> bool:
@@ -128,6 +227,9 @@ OPENING_HARVEST_FIELDS: tuple[str, ...] = (
     "cold_clammy_skin", "capillary_refill_ge_3s", "non_blanching_rash", "mucosal_bleeding",
     "gi_bleeding", "urine_output", "feeding_intake", "vomiting_severity",
     "abdominal_pain_severity", "chest_pain",
+    "thunderclap_onset", "headache_severity", "headache_different_from_usual",
+    "headache_progressive", "abdominal_pain_onset_mode", "abdominal_pain_duration_hours",
+    "dyspnea_onset_mode", "dyspnea_at_rest", "functional_impact", "leg_swelling",
     # triệu chứng hay được kể thành danh sách ngay lượt mở; thiếu chúng khỏi schema sẽ làm rơi dữ kiện
     "severe_headache", "nausea_present", "rash_present", "rash_type",
     "myalgia_retroorbital_pain",
@@ -138,7 +240,13 @@ OPENING_HARVEST_FIELDS: tuple[str, ...] = (
 và đó chính là cơ chế của lỗi C1 (bịa "không" cho hàng loạt dấu hiệu chưa ai hỏi tới)."""
 
 
-SWITCH_DETECTION_FIELDS: tuple[str, ...] = ("fever_reported", "fever_status", "temp_c")
+SWITCH_DETECTION_FIELDS: tuple[str, ...] = (
+    "chest_pain", "chest_pain_character", "chest_pain_radiation", "chest_pain_duration_min",
+    "breathing_difficulty", "dyspnea_onset_mode", "dyspnea_at_rest", "functional_impact", "leg_swelling",
+    "severe_headache", "thunderclap_onset", "headache_severity", "headache_different_from_usual",
+    "headache_progressive", "abdominal_pain_severity", "abdominal_pain_location",
+    "abdominal_pain_onset_mode", "abdominal_pain_duration_hours", "fever_reported", "fever_status", "temp_c",
+)
 """Field đủ để NHẬN RA phiên nên đổi sang protocol khác (xem `select_protocol`).
 
 Vì sao cần khai riêng: field của protocol nào chỉ nằm trong registry của protocol đó. Một phiên đang
@@ -157,6 +265,7 @@ def with_switch_detection(protocol: SymptomProtocol) -> SymptomProtocol:
     giao: `symptom_case_bridge` resolve protocol từ registry nên JSON gửi bên triage vẫn đúng bộ field
     của protocol thật."""
     extra = {key: spec for key, spec in _merged_fields().items() if key in SWITCH_DETECTION_FIELDS}
+    extra[PRIMARY_SYMPTOM_FIELD.key] = PRIMARY_SYMPTOM_FIELD
     missing = {key: spec for key, spec in extra.items() if key not in protocol.fields_by_key}
     if not missing:
         return protocol
@@ -187,7 +296,7 @@ nào để một câu phủ định gộp áp vào. Cho phép ở đây tức l�
 OPENING_PROTOCOL: SymptomProtocol = replace(
     GENERIC_PROTOCOL,
     name="opening",
-    fields_by_key=_merged_fields(),
+    fields_by_key={**_merged_fields(), PRIMARY_SYMPTOM_FIELD.key: PRIMARY_SYMPTOM_FIELD},
     clusters=(OPENING_CLUSTER,),
 )
 """Protocol GIẢ chỉ dùng cho một lượt duy nhất: nó cho `intake_agent` đủ thứ cần để trích xuất

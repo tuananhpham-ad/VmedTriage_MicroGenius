@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy import select
 
 from src.api import routes
+from src.config import get_settings
 from src.database import session_scope
 from src.models.case_record import ConversationRow
-from src.config import get_settings
 from src.models.schemas import CaseStatus, TriageCase, TriagePriority, TriageProposal
 from src.services.infra import provider_router
 from src.services.stores.approval_store import approval_store
@@ -246,9 +246,10 @@ async def test_chat_non_fever_case_is_not_labelled_as_fever(client, patient_head
 
     assert case.status_code == 200
     structured = case.json()["structured_data"]
-    assert structured["symptom_group"] == "general"
-    assert "temp_c" not in structured["fields"]  # field của protocol sốt không được lẫn vào
-    assert structured["fields"]["chief_complaint"] == "đau bụng"
+    assert structured["symptom_group"] == "abdominal"
+    # F09 dùng nhiệt độ trong mapping đau bụng, nhưng các field điều trị sốt vẫn không được lẫn vào.
+    assert "temp_c" in structured["fields"]
+    assert "antipyretic_taken" not in structured["fields"]
 
 
 @pytest.mark.asyncio

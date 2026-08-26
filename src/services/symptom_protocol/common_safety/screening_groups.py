@@ -20,7 +20,29 @@ nên viết như lời nói, không phải như tên field.
 
 from __future__ import annotations
 
-from src.services.symptom_protocol.models import ScreeningGroup
+from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
+
+ROUTING_DISAMBIGUATION_ID = "ROUTE-DISAMBIG"
+
+
+def routing_disambiguation_cluster(candidates: tuple[str, ...]) -> QuestionCluster:
+    """Một lượt tĩnh chọn than phiền chính khi ≥2 protocol rời nhau cùng có bằng chứng."""
+    labels = {
+        "chest_pain": "tức hoặc nặng ngực",
+        "breathing": "khó thở",
+        "headache": "đau đầu",
+        "abdominal": "đau bụng",
+        "fever": "sốt hoặc nóng người",
+    }
+    choices = ", ".join(labels[name] for name in candidates if name in labels)
+    return QuestionCluster(
+        ROUTING_DISAMBIGUATION_ID, "E", ("primary_symptom_group",),
+        script_hint=f"Trong những điều vừa kể, điều làm bạn khó chịu nhất là gì: {choices}?",
+    )
+
+
+def is_routing_disambiguation(cluster: QuestionCluster | None) -> bool:
+    return cluster is not None and cluster.id == ROUTING_DISAMBIGUATION_ID
 
 
 def critical_scan_groups(stage: str) -> tuple[ScreeningGroup, ...]:

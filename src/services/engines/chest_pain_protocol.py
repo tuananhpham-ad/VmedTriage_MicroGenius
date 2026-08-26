@@ -348,7 +348,7 @@ RULE_CATALOG: tuple = (
     r_cp_02,
     r_cp_07,
     common_rules.r_e_21,
-    *common_rules.EARLY_VISIT_RULES,
+    *(rule for rule in common_rules.EARLY_VISIT_RULES if rule is not common_rules.r_v_19),
     r_cp_03,
     r_cp_04,
     r_cp_05,

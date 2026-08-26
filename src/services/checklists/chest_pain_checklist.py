@@ -91,7 +91,7 @@ CHEST_PAIN_ALL_FIELDS: tuple[FieldSpec, ...] = (
     + common_fields.CIRCULATION_FIELDS
     + common_fields.NEUROLOGICAL_FIELDS
     + common_fields.SKIN_BLEEDING_FIELDS
-    + common_fields.ASSOCIATED_FIELDS
+    + tuple(field for field in common_fields.ASSOCIATED_FIELDS if field.key != "diarrhea")
     + common_fields.RISK_CONTEXT_FIELDS
     + common_fields.MEDICATION_FIELDS
     + common_fields.CLOSING_FIELDS
@@ -136,8 +136,9 @@ QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
         script_hint="Gần đây có phẫu thuật, nằm bất động lâu ngày, hoặc đi máy bay chặng dài không",
     ),
     QuestionCluster(
-        "CP-05", "4", ("cardiac_risk_factors", "chronic_conditions"),
-        script_hint="Có cao huyết áp, tiểu đường, mỡ máu cao, hút thuốc, hay tiền sử bệnh tim không",
+        "CP-05", "4",
+        ("cardiac_risk_factors", "chronic_conditions", "fever_reported", "fever_status", "temp_c"),
+        script_hint="Có cao huyết áp, tiểu đường, mỡ máu cao, hút thuốc, tiền sử bệnh tim hoặc sốt không; nếu có sốt thì bao nhiêu độ",
     ),
     *common_clusters.risk_context_clusters("4"),
     *common_clusters.medication_clusters("4"),
