@@ -250,7 +250,7 @@ class SqliteConversationStore:
 
     def save_nurse_summary(
         self, conversation_id: str, *, user_id: int, summary: dict | None,
-    ) -> None:
+    ) -> bool:
         """Ghi phiếu bàn giao của phiên ĐÃ ĐÓNG vào cột `nurse_summary_json` (M3).
 
         Tách khỏi `save` chứ không nhét thêm một tham số: `save` chạy sau MỌI lượt, còn phiếu chỉ tồn
@@ -258,17 +258,24 @@ class SqliteConversationStore:
         lượt không có gì để điền.
 
         Không tạo hàng mới: phiếu luôn thuộc về một phiên `save` đã ghi trước đó. Không tìm thấy hàng
-        thì đó là dấu hiệu `user_id` bị truyền sai, và tạo hàng mới sẽ giấu đúng lỗi ấy đi."""
+        thì đó là dấu hiệu `user_id` bị truyền sai, và tạo hàng mới sẽ giấu đúng lỗi ấy đi.
+
+        Trả `True` khi đây là lần GHI ĐẦU của phiên đó. Tầng gọi dùng đúng giá trị này để chắt lọc lại
+        câu hỏi thăm một lần duy nhất: mọi lượt sau khi phiên đã đóng đều dựng lại cùng một phiếu, và
+        chắt lọc lại theo chúng vừa tốn một lời gọi model vừa xoá `asked_at` của câu đang chờ hỏi."""
         try:
             with session_scope() as db:
                 row = db.get(ConversationRow, (conversation_id, user_id))
                 if row is None:
                     logger.warning("nurse summary skipped: no row id=%s user=%s", conversation_id, user_id)
-                    return
+                    return False
+                first_write = row.nurse_summary_json is None
                 row.nurse_summary_json = summary
                 row.updated_at = datetime.now(timezone.utc)
+                return first_write
         except Exception as error:
             logger.warning("nurse summary persist failed id=%s: %s", conversation_id, error)
+            return False
 
     def recent_summaries_for_user(self, user_id: int, *, limit: int = 3) -> list[PastConversation]:
         """`limit` phiếu gần nhất ĐÃ ĐÓNG của chính người dùng đó - đường đọc của M3.

@@ -19,6 +19,7 @@ from src import paths
 from src.services.engines.fever_protocol import FEVER_PROTOCOL
 from src.services.engines.generic_protocol import GENERIC_PROTOCOL
 from src.services.infra import provider_router
+from src.services.sessions import summary_render
 from src.services.symptom_protocol import batching, registry, rule_engine, stage_machine
 from src.services.symptom_protocol.session import ProtocolSessionStore, SessionPhase, SessionState
 
@@ -150,7 +151,7 @@ def test_select_protocol_picks_fever_on_positive_evidence(answers):
 def test_select_protocol_keeps_current_when_there_is_no_evidence():
     """Im lặng KHÔNG phải bằng chứng đổi hướng - đổi protocol vì hồ sơ chưa nhắc tới gì sẽ vứt bỏ cả
     nhánh câu hỏi đang dở."""
-    assert registry.select_protocol({"chest_pain": "true"}, FEVER_PROTOCOL.name) == FEVER_PROTOCOL.name
+    assert registry.select_protocol({}, FEVER_PROTOCOL.name) == FEVER_PROTOCOL.name
     assert registry.select_protocol({}, GENERIC_PROTOCOL.name) == GENERIC_PROTOCOL.name
 
 
@@ -177,11 +178,16 @@ def _open_store() -> ProtocolSessionStore:
     return ProtocolSessionStore(default_protocol=None)
 
 
-def test_new_session_starts_in_opening_phase_with_the_static_question():
+def test_new_session_starts_in_opening_phase_with_a_static_question():
+    """Câu mở vẫn TĨNH (không qua LLM), nhưng từ 2026-08-26 không còn là MỘT chuỗi duy nhất.
+
+    Trước đó bài này khoá `== registry.OPENING_QUESTION`, tức mọi phiên của mọi người dùng mở đầu
+    bằng đúng một câu - người quay lại lần thứ hai nhận ra ngay đây là máy trả lời tự động. Phần
+    KHÔNG đổi và là phần bài này bảo vệ: câu mở phải đến từ danh sách đã duyệt, không do model viết."""
     session = _open_store().start_session()
     assert session.phase is SessionPhase.OPENING
     assert session.protocol_name == ""
-    assert session.last_question == registry.OPENING_QUESTION
+    assert session.last_question in registry.OPENING_QUESTIONS
 
 
 def test_a_greeting_is_answered_and_still_picks_no_protocol(monkeypatch):
@@ -220,15 +226,73 @@ def test_opening_message_about_fever_selects_the_fever_protocol(monkeypatch):
     assert session.last_question  # KHÔNG được trả tin nhắn rỗng
 
 
-def test_opening_message_about_another_complaint_selects_the_generic_protocol(monkeypatch):
+def test_opening_schema_keeps_the_full_fever_symptom_list_for_triage_summary(monkeypatch):
+    message = "Tôi sốt cao, đau đầu dữ dội, đau nhức xương khớp, buồn nôn, phát ban, nổi mẩn đỏ."
+    _fake_llm(monkeypatch, {
+        "fever_reported": ("true", "sốt cao"),
+        "severe_headache": ("true", "đau đầu dữ dội"),
+        "myalgia_retroorbital_pain": ("true", "đau nhức xương khớp"),
+        "nausea_present": ("true", "buồn nôn"),
+        "rash_present": ("true", "phát ban, nổi mẩn đỏ"),
+        # Mô phỏng đúng lỗi model từng gây ra: guard phải loại dù evidence là substring có thật.
+        "vomiting_severity": ("frequent", "buồn nôn"),
+    })
+    store = _open_store()
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, message)
+
+    assert session.protocol_name == "headache"
+    assert session.answers["fever_reported"] == "true"
+    assert session.answers["severe_headache"] == "true"
+    assert session.answers["myalgia_retroorbital_pain"] == "true"
+    assert session.answers["nausea_present"] == "true"
+    assert session.answers["rash_present"] == "true"
+    assert session.answers.get("vomiting_severity") in (None, "unknown")
+    reported = set(summary_render.field_summary(FEVER_PROTOCOL, session.answers).reported)
+    assert {
+        "Người dùng khai có sốt",
+        "Đau đầu dữ dội/khác thường",
+        "Đau nhức cơ/xương khớp hoặc đau hốc mắt",
+        "Buồn nôn",
+        "Có ban",
+    } <= reported
+    assert "Mức độ nôn" not in reported
+
+
+def test_opening_message_about_abdominal_pain_selects_the_specialized_protocol(monkeypatch):
     _fake_llm(monkeypatch, {"chief_complaint": ("đau bụng", "đau bụng")})
     store = _open_store()
     session = store.start_session()
 
     session = store.submit_message(session.session_id, "Tôi đau bụng hai hôm nay")
 
-    assert session.protocol_name == GENERIC_PROTOCOL.name
+    assert session.protocol_name == "abdominal"
     assert session.answers["chief_complaint"] == "đau bụng"
+
+
+def test_disjoint_multi_group_case_gets_exactly_one_disambiguation_turn(monkeypatch):
+    _fake_llm(monkeypatch, {
+        "severe_headache": ("true", "đau đầu"),
+        "abdominal_pain_severity": ("moderate", "đau bụng"),
+    })
+    store = _open_store()
+    session = store.start_session()
+
+    session = store.submit_message(session.session_id, "Tôi vừa đau đầu vừa đau bụng")
+    assert session.protocol_name == "headache"
+    assert session.current_cluster is not None
+    assert session.current_cluster.id.startswith("SCREEN-")
+
+    session = store.submit_message(session.session_id, "Không có dấu hiệu cấp cứu nào")
+    assert session.current_cluster is not None
+    assert session.current_cluster.id == "ROUTE-DISAMBIG"
+
+    _fake_llm(monkeypatch, {"primary_symptom_group": ("abdominal", "đau bụng")})
+    session = store.submit_message(session.session_id, "Đau bụng làm tôi khó chịu nhất")
+    assert session.protocol_name == "abdominal"
+    assert session.current_cluster is not None
+    assert session.current_cluster.id != "ROUTE-DISAMBIG"
 
 
 def test_red_flag_in_the_opening_message_escalates_immediately(monkeypatch):

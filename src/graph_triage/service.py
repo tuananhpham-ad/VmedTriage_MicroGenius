@@ -27,6 +27,7 @@ BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -385,17 +386,41 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         logger.info("graph_triage.skipped case_id=%s reason=empty_summary", triage_case.case_id)
         return None
     if settings.graph_triage_mode == "c6":
-        decision = _c6_only_decision(triage_case, summary_text)
-        if decision is None:
-            return None
-        logger.info(
-            "graph_triage.c6_decided case_id=%s label=%s sources=%s",
-            triage_case.case_id,
-            decision["triage_label"],
-            ",".join(decision.get("escalated_by", [])) or "direct_label",
-        )
-        support = _source_support_for(triage_case, decision)
-        return _compact_payload(decision, model=settings.graph_triage_safety_model, support=support)
+        # Root span PHẢI bọc cả nhánh c6, không chỉ `ensemble` như trước. Mọi span bên dưới
+        # (`_timed_c6_arm`, các `traced_span` trong `source_support/pipeline.py`, và span tự sinh cho
+        # từng lời gọi LLM) đều tự tìm cha qua contextvar - không có root nào đang mở thì braintrust
+        # trả NOOP_SPAN và TOÀN BỘ tracing im lặng biến mất. Đó đúng là tình trạng trước 2026-08-25:
+        # production chạy `c6`, còn root span duy nhất lại nằm trong nhánh `ensemble` bên dưới.
+        with traced_root_span(
+            "graph_triage_c6_decide_for_case",
+            case_id=triage_case.case_id,
+            metadata={"track": "2_advisory", "authoritative": False, "mode": "c6"},
+        ) as (root_span, trace_link):
+            if trace_link:
+                logger.info("braintrust.trace_link case_id=%s url=%s", triage_case.case_id, trace_link)
+            decision = _c6_only_decision(triage_case, summary_text)
+            if decision is None:
+                root_span.log(output={"decided": False, "reason": "no_direct_label_and_not_emergency"})
+                return None
+            logger.info(
+                "graph_triage.c6_decided case_id=%s label=%s sources=%s",
+                triage_case.case_id,
+                decision["triage_label"],
+                ",".join(decision.get("escalated_by", [])) or "direct_label",
+            )
+            support = _source_support_for(triage_case, decision)
+            root_span.log(
+                output={
+                    "decided": True,
+                    "triage_label": decision["triage_label"],
+                    "escalated_by": decision.get("escalated_by", []),
+                    "safety_gate": decision.get("safety_gate"),
+                    "has_source_support": support is not None,
+                }
+            )
+            return _compact_payload(
+                decision, model=settings.graph_triage_safety_model, support=support
+            )
 
     # `ensemble` is the only remaining enabled mode here.  It intentionally keeps the existing
     # heavy three-model behaviour for research/second-opinion comparisons.

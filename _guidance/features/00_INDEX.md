@@ -22,6 +22,8 @@ Mọi file khác trỏ về đó thay vì chép lại.
 | — | [`F05_handoff_card_ui.md`](F05_handoff_card_ui.md) | Phiếu: trường có lên đầu, trường thiếu gập lại | Fullstack |
 | — | [`F06_narrative_summary.md`](F06_narrative_summary.md) | Văn xuôi: giảm fallback, sửa bug, căn lề hai đầu | Agent Lead + Fullstack |
 | — | [`F07_streaming_and_logging.md`](F07_streaming_and_logging.md) | Streaming cảm nhận được, logging tool/agent | Fullstack |
+| `**` | [`F08_c6_latency_cost.md`](F08_c6_latency_cost.md) | C6 chặn đường request, ba nhánh chạy tuần tự — đo trước, cắt sau | Agent Lead + Fullstack |
+| `***` | [`F09_symptom_protocols.md`](F09_symptom_protocols.md) | 4 nhóm còn thiếu (ngực/bụng/hô hấp/đầu), pipeline 5 bước, router đa nhóm | Agent Lead + Data Lead |
 | ⛔ | [`B01_backlog_clinical.md`](B01_backlog_clinical.md) | **Ngoài phạm vi** — chủ trì lâm sàng | Data Lead |
 | ⛔ | [`B02_backlog_architecture.md`](B02_backlog_architecture.md) | **Ngoài phạm vi** — kiến trúc/eval | Agent Lead |
 

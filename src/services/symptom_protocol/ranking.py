@@ -31,6 +31,8 @@ thuần làm giàu (tier O/H).
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from src.services.symptom_protocol import protocol as protocol_mod
@@ -41,6 +43,7 @@ from src.services.symptom_protocol.stage_machine import MANDATORY_TIERS, field_i
 WEIGHT_SAFETY = 10_000
 WEIGHT_OVERDUE = 5_000
 WEIGHT_RELEVANCE = 1_000
+WEIGHT_KEYWORD_RELEVANCE = 500
 WEIGHT_MANDATORY_YIELD = 100
 WEIGHT_DEBT_PER_TURN = 10
 """Khoảng cách giữa các bậc đủ lớn để không bậc thấp nào cộng dồn vượt được bậc cao hơn: trần hoãn
@@ -57,11 +60,40 @@ class RankingContext:
     """Field vừa thu được căn cứ ở lượt trước - nguồn của `relevance`. Ở kiến trúc mục tiêu đây là
     `field_events` của lượt vừa rồi (§8.4); hiện lấy từ kết quả trích xuất, cùng ý nghĩa."""
 
+    recent_text: str = ""
+    """Tin nhắn thô vừa nhận, dùng cho relevance từ khoá khi extractor chưa ghi được field."""
+
     deferred: dict[str, int] = field(default_factory=dict)
     """`cluster_id -> số lượt đã bị hoãn`, lấy từ `coverage.CoverageLedger`."""
 
     overdue: frozenset[str] = frozenset()
     """Cụm đã chạm `coverage.DEFERRAL_LIMIT`."""
+
+
+_KEYWORD_STOPWORDS = frozenset({
+    "ban", "khong", "thay", "nao", "muc", "do", "hien", "tai", "dang", "bat", "dau",
+    "kem", "hoac", "moi", "binh", "thuong", "tu", "khi", "co", "cho", "mot", "nhung",
+})
+
+
+def _keyword_tokens(text: str) -> frozenset[str]:
+    normalized = unicodedata.normalize("NFC", text.casefold())
+
+    def is_stopword(token: str) -> bool:
+        folded = unicodedata.normalize("NFD", token.replace("đ", "d"))
+        plain = "".join(char for char in folded if unicodedata.category(char) != "Mn")
+        return plain in _KEYWORD_STOPWORDS
+
+    return frozenset(
+        token for token in re.findall(r"[^\W_]+", normalized, flags=re.UNICODE)
+        if len(token) >= 3 and not is_stopword(token)
+    )
+
+
+def _matches_script_keyword(cluster: QuestionCluster, recent_text: str) -> bool:
+    if not recent_text or not cluster.script_hint:
+        return False
+    return bool(_keyword_tokens(recent_text) & _keyword_tokens(cluster.script_hint))
 
 
 def safety_field_keys(protocol: SymptomProtocol) -> frozenset[str]:
@@ -108,6 +140,8 @@ def score_cluster(
         score += WEIGHT_OVERDUE
     if context.recent_fields & set(cluster.fields):
         score += WEIGHT_RELEVANCE
+    if _matches_script_keyword(cluster, context.recent_text):
+        score += WEIGHT_KEYWORD_RELEVANCE
     if _fills_mandatory_field(protocol, cluster, answers):
         score += WEIGHT_MANDATORY_YIELD
     score += WEIGHT_DEBT_PER_TURN * context.deferred.get(cluster.id, 0)

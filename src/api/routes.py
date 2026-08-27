@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ from src.models.schemas import (
     TriageCase,
     TriagePriority,
 )
+from src.observability.braintrust_tracing import traced_root_span
 from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY, PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
 from src.services.infra.auth import (
@@ -265,13 +267,38 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     session_id, previous = _prepare_chat_turn(payload, patient_id)
     if previous is not None and previous.status is CaseStatus.NEEDS_MORE_INFO:
         return _direct_patient_message(previous, payload.message)
-    try:
-        session = symptom_session.session_store.submit_message(session_id, payload.message)
-    except EmptyMessageError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except SessionNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    return await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+    with _chat_turn_span(session_id, patient_id=patient_id, streaming=False):
+        try:
+            session = symptom_session.session_store.submit_message(session_id, payload.message)
+        except EmptyMessageError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except SessionNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+
+
+@contextlib.contextmanager
+def _chat_turn_span(session_id: str, *, patient_id: int, streaming: bool):
+    """Root span Braintrust cho TRỌN một lượt `/chat`, mở ở đây vì đây là biên duy nhất biết một
+    lượt bắt đầu và kết thúc ở đâu.
+
+    Mọi span bên dưới tự tìm cha qua contextvar của braintrust: các step/tool/llm của
+    `symptom_protocol/` (phản chiếu trong `fever_stage_log`) và cả nhánh graph_triage Part 2
+    (`decide_for_case` - `traced_root_span` tự lồng làm con khi thấy đã có span đang mở). Thiếu root
+    này thì braintrust trả `NOOP_SPAN` cho tất cả và toàn bộ phần hội thoại im lặng biến mất - đúng
+    tình trạng trước 2026-08-25, khi Braintrust chỉ nhìn thấy quãng SAU lúc phiếu đã chốt.
+
+    KHÔNG log nội dung tin nhắn ở span này: nguyên văn hội thoại (PHI) đã nằm ở các span con và chịu
+    `FEVER_LOG_REDACT`; nhân đôi ở đây là thêm một chỗ nữa phải nhớ che.
+    """
+    with traced_root_span(
+        "chat_turn",
+        session_id=session_id,
+        metadata={"track": "1_conversation", "streaming": streaming, "patient_id": patient_id},
+    ) as (span, trace_link):
+        if trace_link:
+            logger.info("braintrust.trace_link session_id=%s url=%s", session_id, trace_link)
+        yield span
 
 
 def _direct_patient_message(triage_case: TriageCase, message: str) -> ChatResponse:
@@ -302,7 +329,12 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
         # nên nhánh này giờ chỉ còn là case MỚI thật sự - phiên đang dở sống được qua restart.
         # `user_id` truyền NGAY từ lượt mở: khoá persist là `(conversation_id, user_id)` (M1) và câu
         # hỏi thăm phiên trước (M3) chỉ có đúng một chỗ để xuất hiện, là câu mở.
-        session_id = symptom_session.session_store.start_session(user_id=patient_id).session_id
+        # Root span RIÊNG cho lượt mở, không gộp vào `chat_turn`: `/chat/stream` bắt buộc gọi
+        # `_prepare_chat_turn` NGOÀI generator để giữ được HTTP status thật (403/400/404), nên ở đó
+        # không có `chat_turn` nào để lồng vào. Thà một trace riêng tên rõ ràng, còn hơn để nguyên
+        # lượt mở - nơi protocol được chọn và câu hỏi đầu tiên được sinh - rơi vào NOOP_SPAN.
+        with traced_root_span("session_open", metadata={"track": "1_conversation", "patient_id": patient_id}):
+            session_id = symptom_session.session_store.start_session(user_id=patient_id).session_id
         previous = None
     # Nửa còn lại của khoá composite `user_id + conversation_id`. Gán ở đây vì store không biết gì về
     # xác thực, còn route thì không biết gì về vòng đời phiên - chỗ hai thứ gặp nhau là đây.
@@ -314,6 +346,7 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
 
 async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+    _remember_nurse_summary(session, triage_case, patient_id=patient_id)
     if _should_background_safety_gate(triage_case, previous):
         # Rule-engine priority is saved before scheduling network-dependent C6 work. The patient
         # gets the fixed red-flag response and the nurse queue sees the case immediately.
@@ -348,9 +381,11 @@ def _remember_nurse_summary(session, triage_case: TriageCase, *, patient_id: int
     nguyên như vậy - đây là chỗ duy nhất biết cả `patient_id` lẫn phiếu vừa dựng."""
     if session.state is SessionState.COLLECTING:
         return
-    conversation_store.save_nurse_summary(
+    first_write = conversation_store.save_nurse_summary(
         session.session_id, user_id=patient_id, summary=triage_case.summary.model_dump(mode="json"),
     )
+    if not first_write:
+        return
     # Phiếu vừa lưu là phiếu MỚI NHẤT trong ba phiếu sẽ được chắt lọc, nên chắt lọc lại ngay tại đây
     # chứ không đợi lượt mở lần sau. Đây là chỗ RẢNH duy nhất biết chắc cả hai điều kiện: phiên đã
     # đóng, và phiếu của nó đã nằm trong DB (chắt lọc TRƯỚC `save_nurse_summary` sẽ đọc trúng bộ ba
@@ -429,12 +464,17 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
             loop.call_soon_threadsafe(queue.put_nowait, ("token", piece))
 
         async def run_turn() -> None:
+            # Root span mở BÊN TRONG `run_turn`, không phải trong `events()`: span sống theo
+            # contextvar, mà `events()` là async generator - context của nó bị tháo/lắp lại mỗi lần
+            # generator nhả rồi được gọi tiếp, nên span mở ở đó không chắc còn là span hiện hành khi
+            # lượt thật sự chạy. `run_turn` là một task riêng, chạy liền một mạch từ đầu đến cuối.
             try:
-                session = await run_in_threadpool(
-                    symptom_session.session_store.submit_message,
-                    session_id, payload.message, on_token=on_token,
-                )
-                body = await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+                with _chat_turn_span(session_id, patient_id=patient_id, streaming=True):
+                    session = await run_in_threadpool(
+                        symptom_session.session_store.submit_message,
+                        session_id, payload.message, on_token=on_token,
+                    )
+                    body = await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
                 await queue.put(("done", body.model_dump(mode="json")))
             except EmptyMessageError as error:
                 await queue.put(("error", {"detail": str(error), "status": 400}))
@@ -479,16 +519,25 @@ async def force_complete_case(case_id: str, request: Request) -> ChatResponse:
     previous = case_store.get(case_id)
     if previous is not None and previous.patient_id not in (None, patient_id):
         raise HTTPException(status_code=403, detail="Bạn không có quyền tiếp tục case này")
-    try:
-        session = symptom_session.session_store.confirm_summary(case_id, True, force=True)
-    except SessionNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
-    await _save_with_graph_decision(triage_case)
-    _retry_graph_decision_if_stranded(triage_case)
-    return _patient_chat_response(triage_case)
+    # Cần root span y như `/chat`: endpoint này chốt phiếu rồi chạy `decide_for_case` - đúng phần
+    # đắt nhất của luồng. Thiếu root ở đây thì mọi ca người bệnh tự bấm "không khai thêm" biến mất
+    # khỏi Braintrust, và đó lại chính là nhóm ca checklist còn dở - nhóm đáng soi nhất.
+    with traced_root_span(
+        "force_complete",
+        session_id=case_id,
+        metadata={"track": "1_conversation", "patient_id": patient_id},
+    ):
+        try:
+            session = symptom_session.session_store.confirm_summary(case_id, True, force=True)
+        except SessionNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
+        _remember_nurse_summary(session, triage_case, patient_id=patient_id)
+        await _save_with_graph_decision(triage_case)
+        _retry_graph_decision_if_stranded(triage_case)
+        return _patient_chat_response(triage_case)
 
 
 async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:

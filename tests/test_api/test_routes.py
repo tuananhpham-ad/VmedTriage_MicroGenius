@@ -2,9 +2,12 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import select
 
 from src.api import routes
 from src.config import get_settings
+from src.database import session_scope
+from src.models.case_record import ConversationRow
 from src.models.schemas import CaseStatus, TriageCase, TriagePriority, TriageProposal
 from src.services.infra import provider_router
 from src.services.stores.approval_store import approval_store
@@ -243,9 +246,10 @@ async def test_chat_non_fever_case_is_not_labelled_as_fever(client, patient_head
 
     assert case.status_code == 200
     structured = case.json()["structured_data"]
-    assert structured["symptom_group"] == "general"
-    assert "temp_c" not in structured["fields"]  # field của protocol sốt không được lẫn vào
-    assert structured["fields"]["chief_complaint"] == "đau bụng"
+    assert structured["symptom_group"] == "abdominal"
+    # F09 dùng nhiệt độ trong mapping đau bụng, nhưng các field điều trị sốt vẫn không được lẫn vào.
+    assert "temp_c" in structured["fields"]
+    assert "antipyretic_taken" not in structured["fields"]
 
 
 @pytest.mark.asyncio
@@ -384,3 +388,28 @@ async def test_chat_stream_rejects_another_patients_case_before_streaming(
 
     assert response.status_code == 403
     assert not response.headers["content-type"].startswith("text/event-stream")
+
+
+@pytest.mark.asyncio
+async def test_a_closed_chat_turn_writes_the_nurse_summary_to_the_conversation_row(
+    client, patient_headers,
+):
+    """LỖ HỔNG ĐÃ TỪNG CÓ THẬT: `_remember_nurse_summary` tồn tại nhưng KHÔNG ai gọi.
+
+    Mọi test M3 cũ gọi thẳng `conversation_store.save_nurse_summary`, nên chúng vẫn xanh trong khi
+    đường thật không bao giờ ghi được một phiếu nào - `recent_summaries_for_user` chỉ lấy hàng CÓ
+    `nurse_summary_json`, cột rỗng nghĩa là không bao giờ có 3 phiếu để chắt lọc. Test này đi qua
+    route, không đi qua store."""
+    response = await client.post(
+        "/api/v1/chat",
+        json={"message": "Con em đang sốt cao, giờ tay chân đang co giật."},
+        headers=patient_headers,
+    )
+    assert response.status_code == 200
+    case_id = response.json()["case_id"]
+
+    with session_scope() as db:
+        row = db.scalars(
+            select(ConversationRow).where(ConversationRow.conversation_id == case_id)
+        ).one()
+        assert row.nurse_summary_json is not None

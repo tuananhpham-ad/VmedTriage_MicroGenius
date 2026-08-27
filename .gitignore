@@ -66,7 +66,7 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-_guidance/*
+# _guidance/*
 /notebooks/
 /runs/
 .eval_run/
@@ -85,6 +85,9 @@ tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
-deploy/azure/env
+# Moi bien the cua file env that (ke ca "env copy", "env.bak", "env.prod") - CHI env.example duoc commit.
+deploy/azure/env*
+!deploy/azure/env.example
 
 render.yaml
+.firecrawl/

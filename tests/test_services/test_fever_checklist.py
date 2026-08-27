@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from src.services.checklists import fever_checklist as fc
 
-EXPECTED_FIELD_COUNT = 101
+EXPECTED_FIELD_COUNT = 102
 
 # Chép nguyên văn mã cụm CS Part 3. Thứ tự khác tài liệu ở HAI điểm, cả hai có chủ đích (2026-08-22):
 #  1. Stage `E` đứng ĐẦU: ba cụm nguy kịch phổ quát (Q3-06/07/12) chuyển khỏi 3A lên trước nhân
@@ -46,7 +46,7 @@ EXPECTED_TRI_STATE_KEYS: frozenset[str] = frozenset(
         "non_blanching_rash", "rash_present", "mucosal_bleeding", "gi_bleeding", "jaundice_new",
         "localized_infection_signs",
         "abdominal_guarding", "diarrhea", "bloody_stool", "urinary_symptoms", "sore_throat", "ear_pain",
-        "cough", "joint_limb_swelling", "non_weight_bearing", "myalgia_retroorbital_pain",
+        "cough", "nausea_present", "joint_limb_swelling", "non_weight_bearing", "myalgia_retroorbital_pain",
         "immunocompromised", "known_neutropenia", "is_pregnant", "postpartum_6w", "recent_surgery_30d",
         "surgical_site_signs", "recent_wound_or_bite", "malaria_risk_area", "mosquito_exposure",
         "sick_contact", "recent_vaccination_48h",
