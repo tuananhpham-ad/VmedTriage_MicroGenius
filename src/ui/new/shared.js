@@ -51,34 +51,52 @@ export function escapeHtml(value = "") {
  *
  * Escape nằm BÊN TRONG hàm này - gọi `paragraphs(escapeHtml(text))` là sai (dấu `&` sẽ bị escape
  * hai lần), luôn truyền chuỗi thô vào.
+ *
+ * tanh - sửa format output agent (2026-08-27): thêm `pending`.
+ *
+ * `pending` = chuỗi này đang được stream về và dòng cuối chưa viết xong. Xem `renderTextBlock`: nó
+ * hoãn hai luật cần trọn dòng, và gắn `is-typing` cho phần tử chữ cuối để con trỏ nhấp nháy bám
+ * đúng cuối dòng. Gọi `paragraphs()` không kèm cờ này cho văn bản đã hoàn chỉnh.
  */
-export function paragraphs(text = "", { groupSize = 2, minLengthToSplit = 200 } = {}) {
+export function paragraphs(text = "", { groupSize = 2, minLengthToSplit = 200, pending = false } = {}) {
   const source = String(text).replace(/\r\n/g, "\n").trim();
   if (!source) return "";
-  return source
-    .split(/\n{2,}/)
-    .map((block) => renderTextBlock(block, groupSize, minLengthToSplit))
+  const blocks = source.split(/\n{2,}/);
+  return blocks
+    .map((block, index) => renderTextBlock(block, groupSize, minLengthToSplit, pending && index === blocks.length - 1))
     .join("");
 }
 
-function renderTextBlock(block, groupSize, minLengthToSplit) {
+function renderTextBlock(block, groupSize, minLengthToSplit, pendingLast = false) {
   const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
   const parts = [];
   let bullets = [];
   const flushBullets = () => {
     if (!bullets.length) return;
-    parts.push(`<ul class="prose-list">${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+    parts.push(`<ul class="prose-list">${bullets.map((item) => `<li${item.typing ? ' class="is-typing"' : ""}>${escapeHtml(item.text)}</li>`).join("")}</ul>`);
     bullets = [];
   };
-  for (const line of lines) {
+  lines.forEach((line, index) => {
+    // `typing` = dòng này CHƯA viết xong: bong bóng đang stream, và đây là dòng cuối của khối cuối.
+    // Hai luật ngay dưới chỉ đúng khi đã có TRỌN dòng, nên với dòng dở dang phải hoãn cả hai lại: một
+    // câu đang gõ tới dấu ":" sẽ nhảy thành tiêu đề rồi nhảy ngược về khi chữ tiếp theo tới, còn
+    // ngưỡng 200 ký tự của `splitIntoParagraphs` thì cắt đôi đoạn ngay giữa luồng chữ đang chảy. Gạch
+    // đầu dòng KHÔNG hoãn: nhận ra được ngay từ hai ký tự đầu dòng nên nó không bao giờ nhảy ngược.
+    const typing = pendingLast && index === lines.length - 1;
     const bullet = /^[-*•+]\s+(.+)$/.exec(line);
-    if (bullet) { bullets.push(bullet[1]); continue; }
+    if (bullet) { bullets.push({ text: bullet[1], typing }); return; }
     flushBullets();
     // "Triệu chứng ghi nhận:" là NHÃN của danh sách bên dưới, không phải một câu - để nó lẫn vào
     // đoạn văn thì mất luôn ranh giới giữa "người bệnh có" và "người bệnh phủ nhận".
-    if (line.endsWith(":")) parts.push(`<p class="prose-heading">${escapeHtml(line)}</p>`);
-    else parts.push(...splitIntoParagraphs(line, groupSize, minLengthToSplit).map((item) => `<p>${escapeHtml(item)}</p>`));
-  }
+    if (!typing && line.endsWith(":")) { parts.push(`<p class="prose-heading">${escapeHtml(line)}</p>`); return; }
+    // `is-typing` mang con trỏ nhấp nháy. Nó phải nằm trên chính phần tử chữ CUỐI CÙNG chứ không
+    // trên `.bubble`: đặt ở bong bóng thì `::after` rơi xuống dòng riêng bên dưới đoạn văn.
+    const chunks = typing ? [line] : splitIntoParagraphs(line, groupSize, minLengthToSplit);
+    chunks.forEach((item, at) => {
+      const caret = typing && at === chunks.length - 1 ? ' class="is-typing"' : "";
+      parts.push(`<p${caret}>${escapeHtml(item)}</p>`);
+    });
+  });
   flushBullets();
   return parts.join("");
 }

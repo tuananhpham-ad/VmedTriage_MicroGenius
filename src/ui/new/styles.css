@@ -568,9 +568,12 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .bubble.is-nurse { align-self:flex-start; border:1px solid var(--green-line); border-radius:14px 14px 14px 4px; color:var(--green-deep); background:var(--green-soft); }
 .bubble.is-pending { align-self:flex-start; display:flex; align-items:center; gap:9px; border:1px solid var(--line); border-radius:14px 14px 14px 4px; color:var(--muted); background:var(--surface-soft); font-size:14px; }
 .bubble.is-error { align-self:center; max-width:90%; border:1px solid var(--red-line); color:var(--red-deep); background:var(--red-soft); font-size:13.5px; text-align:center; }
-/* Con trỏ nhấp nháy phân biệt "đang viết tiếp" với "đã viết xong": thiếu nó, một câu bị cắt giữa
-   chừng trông y hệt một câu hoàn chỉnh. */
-.bubble.is-streaming::after { content:""; display:inline-block; width:2px; height:1em; margin-left:2px; background:var(--blue); vertical-align:text-bottom; animation:vmt-caret 1s step-end infinite; }
+/* tanh - sửa format output agent (2026-08-27): con trỏ chuyển từ `.bubble` sang `.is-typing`.
+   Con trỏ nhấp nháy phân biệt "đang viết tiếp" với "đã viết xong": thiếu nó, một câu bị cắt giữa
+   chừng trông y hệt một câu hoàn chỉnh. Nó bám vào `.is-typing` - đoạn/gạch đầu dòng CUỐI mà
+   `paragraphs(..., { pending: true })` đánh dấu - chứ không vào `.bubble`: bong bóng đang stream nay
+   cũng chứa `<p>`, mà `::after` của một khối chứa toàn khối con thì rơi xuống một dòng trống riêng. */
+.bubble.is-streaming .is-typing::after { content:""; display:inline-block; width:2px; height:1em; margin-left:2px; background:var(--blue); vertical-align:text-bottom; animation:vmt-caret 1s step-end infinite; }
 .typing-dots { display:inline-flex; gap:4px; }
 .typing-dots i { width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.35; animation:vmt-bounce 1.25s infinite ease-in-out; }
 .typing-dots i:nth-child(2) { animation-delay:.18s; }
