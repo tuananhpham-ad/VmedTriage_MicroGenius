@@ -38,14 +38,45 @@ export function openAccountInfo(kind) {
     return;
   }
   const content = {
-    privacy: { title: "Chính sách quyền riêng tư", text: "VMedTriage sử dụng thông tin tài khoản và nội dung khai báo để vận hành dịch vụ, bảo mật tài khoản và hỗ trợ phân luồng ban đầu. Quyền truy cập dữ liệu được giới hạn theo vai trò." },
-    help: { title: "Trợ giúp & liên hệ", text: "Cần hỗ trợ? Liên hệ vitriage@gmail.com hoặc 0356 276 505. Chúng tôi hoạt động tại Hà Nội, Việt Nam." },
+    privacy: {
+      title: "Chính sách quyền riêng tư",
+      body: "<p>VMedTriage sử dụng thông tin tài khoản và nội dung khai báo để vận hành dịch vụ, bảo mật tài khoản và hỗ trợ phân luồng ban đầu. Quyền truy cập dữ liệu được giới hạn theo vai trò.</p>",
+    },
+    help: {
+      title: "Trợ giúp & liên hệ",
+      body: helpAndContactContent(),
+    },
   }[kind];
   const dialog = document.createElement("div");
   dialog.className = "account-info-dialog";
-  dialog.innerHTML = `<button class="profile-backdrop" type="button" aria-label="Đóng" data-close-info></button><section class="account-info-card" role="dialog" aria-modal="true" aria-labelledby="account-info-title"><button class="profile-close" type="button" aria-label="Đóng" data-close-info>×</button><p class="eyebrow">VMedTriage</p><h2 id="account-info-title">${content.title}</h2><p>${content.text}</p><button class="primary-button" type="button" data-close-info>Đã hiểu</button></section>`;
+  dialog.innerHTML = `<button class="profile-backdrop" type="button" aria-label="Đóng" data-close-info></button><section class="account-info-card" role="dialog" aria-modal="true" aria-labelledby="account-info-title"><button class="profile-close" type="button" aria-label="Đóng" data-close-info>×</button><p class="eyebrow">VMedTriage</p><h2 id="account-info-title">${content.title}</h2><div class="account-info-content">${content.body}</div><button class="primary-button" type="button" data-close-info>Đã hiểu</button></section>`;
   document.body.append(dialog);
   dialog.querySelectorAll("[data-close-info]").forEach((button) => button.addEventListener("click", () => dialog.remove()));
+}
+
+function helpAndContactContent() {
+  const isNurse = state.user?.role === "nurse";
+  const roleGuidance = isNurse
+    ? "Nếu gặp lỗi phân ca, quyền truy cập hoặc duyệt kết quả, hãy liên hệ bộ phận hỗ trợ kỹ thuật."
+    : "Bạn có thể khai báo triệu chứng, bổ sung thông tin khi cần và theo dõi trạng thái trong mục “Kết quả của tôi”. Hướng dẫn chỉ hiển thị sau khi nhân viên y tế duyệt.";
+
+  return `<p class="account-info-intro">${roleGuidance}</p>
+    <section class="help-emergency-notice" aria-label="Hướng dẫn tình huống khẩn cấp">
+      <strong>Trường hợp khẩn cấp</strong>
+      <span>Đau ngực dữ dội, khó thở cấp, ngất xỉu hoặc chấn thương nặng: không chờ phản hồi trên ứng dụng.</span>
+      <a href="tel:115">Gọi 115 ngay</a>
+    </section>
+    <section class="help-contact-section" aria-labelledby="technical-support-title">
+      <h3 id="technical-support-title">Liên hệ hỗ trợ kỹ thuật</h3>
+      <p>Hỗ trợ đăng nhập, sử dụng hệ thống, góp ý hoặc báo lỗi.</p>
+      <a href="mailto:vitriage@gmail.com">vitriage@gmail.com</a>
+      <a href="tel:+84356276505">0356 276 505</a>
+    </section>
+    <section class="help-contact-section" aria-labelledby="privacy-help-title">
+      <h3 id="privacy-help-title">Bảo mật thông tin</h3>
+      <p>Thông tin triệu chứng là dữ liệu nhạy cảm và chỉ nhân viên y tế được gán ca mới có thể truy cập.</p>
+    </section>
+    <p class="help-disclaimer">VMedTriage hỗ trợ phân loại ưu tiên ban đầu, không chẩn đoán bệnh hoặc thay thế khám chữa bệnh trực tiếp.</p>`;
 }
 
 export function openSettings() {

@@ -579,8 +579,16 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .chat-composer textarea { flex:1; min-width:180px; min-height:46px; max-height:120px; border-color:var(--line); padding:11px 14px; border-radius:12px; background:var(--surface-soft); }
 .chat-composer textarea:focus { border-color:var(--blue); background:var(--surface); box-shadow:0 0 0 3px rgb(26 94 168 / .12); }
 .chat-composer .primary-button { min-height:46px; border-radius:12px; padding-inline:15px; }
-.chat-composer .form-error { flex-basis:100%; order:3; }
+.voice-input-button { display:grid; width:46px; height:46px; flex:none; place-items:center; border:1px solid var(--line); border-radius:12px; padding:0; color:var(--blue); background:var(--surface-soft); }
+.voice-input-button:hover:not(:disabled) { border-color:var(--blue); background:var(--blue-soft); }
+.voice-input-button:focus-visible { outline:0; box-shadow:0 0 0 3px rgb(26 94 168 / .18); }
+.voice-input-button:disabled { cursor:not-allowed; color:var(--muted); opacity:.55; }
+.voice-input-button.is-listening { border-color:var(--red-line); color:var(--red-deep); background:var(--red-soft); animation:vmt-mic-pulse 1.2s ease-in-out infinite; }
+.voice-input-hint { flex-basis:100%; order:3; color:var(--muted); font-size:12px; line-height:1.4; }
+.chat-composer .form-error { flex-basis:100%; order:4; }
 .chat-composer:has(textarea:disabled) { opacity:.5; }
+
+@keyframes vmt-mic-pulse { 50% { box-shadow:0 0 0 5px rgb(191 51 51 / .12); } }
 .chat-history-note { display:flex; align-items:center; gap:9px; padding:14px 18px; border-top:1px solid var(--line); color:var(--muted); background:var(--surface-soft); font-size:13px; line-height:1.5; }
 .chat-history-note > .ico { flex:none; color:var(--blue); }
 .chat-history-note .link-button { margin-left:auto; flex:none; font-size:12.5px; }
@@ -1293,6 +1301,18 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .settings-header .settings-intro { margin:0; color:var(--muted); font-size:13.5px; line-height:1.5; }
 .settings-body { min-height:0; padding:18px 24px 22px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-gutter:stable; flex:1; display:flex; flex-direction:column; gap:18px; }
 .account-info-card { width:min(450px, 100%); }
+.account-info-content { display:grid; gap:16px; color:var(--muted); font-size:14px; line-height:1.55; }
+.account-info-content p { margin:0; }
+.account-info-intro { color:var(--muted); }
+.help-emergency-notice { display:grid; gap:5px; border:1px solid var(--red-line); border-radius:12px; padding:13px; color:var(--muted-2); background:var(--red-soft); }
+.help-emergency-notice strong { color:var(--red-deep); font-size:14px; }
+.help-emergency-notice span { font-size:13px; line-height:1.45; }
+.help-emergency-notice a { width:max-content; margin-top:3px; color:var(--red-deep); font-size:13px; font-weight:700; text-decoration:underline; }
+.help-contact-section { display:grid; gap:5px; }
+.help-contact-section h3 { margin:0; color:var(--ink); font-size:14px; }
+.help-contact-section p { font-size:13px; }
+.help-contact-section a { width:max-content; color:var(--blue); font-size:13px; font-weight:600; }
+.help-disclaimer { border-top:1px solid var(--line); padding-top:14px; color:var(--muted); font-size:12.5px; }
 .legal-modal { width:min(570px, 100%); }
 .help-modal { width:min(560px, 100%); }
 .patient-guide-modal { width:min(760px, 100%); }
