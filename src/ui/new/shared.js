@@ -1,5 +1,42 @@
 import { state } from "./state.js";
 
+const APP_THEME_KEY = "vmed_theme";
+const LEGACY_PATIENT_THEME_KEY = "vmed_patient_theme";
+
+/** Chủ đề là tuỳ chọn chung của cùng một người dùng, dù họ đang ở khu vực bệnh nhân hay nhân viên
+ * y tế. Đọc key cũ một lần để các phiên trước khi đổi tên key không bị trả về giao diện sáng. */
+export function readAppTheme() {
+  try {
+    const saved = localStorage.getItem(APP_THEME_KEY) ?? localStorage.getItem(LEGACY_PATIENT_THEME_KEY);
+    return saved === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+export function applyAppTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+}
+
+export function saveAppTheme(theme) {
+  try {
+    localStorage.setItem(APP_THEME_KEY, theme);
+  } catch {
+    // Vẫn đổi trong phiên hiện tại nếu trình duyệt chặn localStorage.
+  }
+  applyAppTheme(theme);
+}
+
+export function resetAppTheme() {
+  try {
+    localStorage.removeItem(APP_THEME_KEY);
+    localStorage.removeItem(LEGACY_PATIENT_THEME_KEY);
+  } catch {
+    // Vẫn trả về sáng nếu trình duyệt chặn localStorage.
+  }
+  applyAppTheme("light");
+}
+
 export const priorityLabels = {
   Emergency: "Cấp cứu",
   Urgent: "Khám sớm",
@@ -142,6 +179,29 @@ export function formatDate(value) {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+export function formatChatTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return "";
+  const now = new Date();
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear();
+
+  const timePart = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (isToday) return timePart;
+  if (isYesterday) return `Hôm qua ${timePart}`;
+  if (date.getFullYear() === now.getFullYear()) return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${timePart}`;
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${timePart}`;
+}
+
 export function waitingLabel(value) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "chưa xác định";
@@ -195,6 +255,8 @@ const icons = {
   chevronDown: `<path d="m6 9.5 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`,
   chevronLeft: `<path d="M14 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
   chevronRight: `<path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
+  sidebarCollapse: `<rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.55"/><path d="M9 4.8v14.4M15.2 9.1 12.1 12l3.1 2.9" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/>`,
+  sidebarExpand: `<rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.55"/><path d="M9 4.8v14.4m3.8 1.1 3.1-2.9-3.1-2.9" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/>`,
   eye: `<path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"/>`,
   eyeOff: `<path d="M3 12s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5"/><path d="M4 20 20 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`,
   sun: `<circle cx="12" cy="12" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
@@ -205,6 +267,9 @@ const icons = {
   settings: `<circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="1.6"/><path d="M19.1 13.8a1.7 1.7 0 0 0 .34 1.88l.06.06-2.25 2.25-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.1h-3.18v-.1a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.25-2.25.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.56-1.03h-.1V9.67h.1a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.25-2.25.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.1h3.18v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.25 2.25-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.1v3.18h-.1a1.7 1.7 0 0 0-1.56 1.03Z" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>`,
   flag: `<path d="M6 3.5v17M6 4.6h9.5l-1.4 3.4 1.4 3.4H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`,
   mapPin: `<path d="M12 21s7-7.6 7-12.4A7 7 0 1 0 5 8.6C5 13.4 12 21 12 21Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="8.6" r="2.4" stroke="currentColor" stroke-width="1.6"/>`,
+  mic: `<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+  paperclip: `<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.88-7.87" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+  volume: `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
 };
 
 /** Icon nét theo bộ của bản thiết kế. Màu luôn thừa kế qua `currentColor` - đừng truyền stroke cứng

@@ -39,13 +39,14 @@ from src.models.schemas import (
     ChatRequest,
     ChatResponse,
     ConversationMessage,
+    NurseCaseView,
     NurseReviewRequest,
     NurseReviewResponse,
     PipelineTraceStage,
     TriageCase,
     TriagePriority,
 )
-from src.models.user import UserRole
+from src.models.user import UserRecord, UserRole
 from src.observability.braintrust_tracing import traced_root_span
 from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY, PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
@@ -851,8 +852,8 @@ def _is_ready_for_nurse_queue(triage_case: TriageCase) -> bool:
     return triage_case.graph_decision is not None
 
 
-@router.get("/nurse/queue", response_model=list[TriageCase])
-async def nurse_queue() -> list[TriageCase]:
+@router.get("/nurse/queue", response_model=list[NurseCaseView])
+async def nurse_queue(db: Session = Depends(get_db_session)) -> list[NurseCaseView]:
     """Hàng đợi điều dưỡng: case đã sẵn sàng để duyệt, sắp theo mức ưu tiên rồi tới thời gian chờ.
 
     KHÔNG lọc theo trạng thái duyệt: màn hình điều dưỡng có hai tab ("Hàng đợi" và "Ca đã duyệt")
@@ -878,7 +879,17 @@ async def nurse_queue() -> list[TriageCase]:
         return (PRIORITY_RANK.get(priority, 9), -waiting_minutes)
 
     ready = [item for item in case_store.list_cases() if _is_ready_for_nurse_queue(item)]
-    return sorted(ready, key=rank)
+    patients = {
+        patient_id: user.full_name
+        for patient_id in {item.patient_id for item in ready if item.patient_id is not None}
+        if (user := db.get(UserRecord, patient_id)) is not None
+    }
+    views: list[NurseCaseView] = []
+    for item in sorted(ready, key=rank):
+        payload = item.model_dump()
+        payload["patient_display_name"] = patients.get(item.patient_id)
+        views.append(NurseCaseView.model_validate(payload))
+    return views
 
 
 @router.get("/patient/history", response_model=list[TriageCase])

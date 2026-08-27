@@ -2,8 +2,8 @@ import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
 import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260824g";
 import { destroyHospitalMap, renderDisclaimer, renderHospitalSuggestion, renderPatientCases, renderPatientChat, renderPatientHealth, renderPatientHome, renderPatientResult, renderRedFlag, resetPatientTheme, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260827o";
-import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260824g";
-import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260824g";
+import { renderNurseCase, renderNurseDone, renderNurseMessages, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260827zh";
+import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260827zh";
 
 const app = document.querySelector("#app");
 
@@ -59,6 +59,7 @@ function render(view, options = {}) {
   if (view === "nurse-done") renderNurseDone(app, { navigate, logout });
   if (view === "nurse-dashboard") renderNurseDashboard(app, { navigate, logout });
   if (view === "nurse-shift") renderNurseShift(app, { navigate, logout });
+  if (view === "nurse-messages") renderNurseMessages(app, { navigate, logout });
   if (view === "nurse-case") renderNurseCase(app, { navigate, logout });
   app.focus();
 }
