@@ -20,6 +20,7 @@ nó được ĐO: thang chấm có nấc `contradicts`, và ca bị nguồn nói
 
 from __future__ import annotations
 
+from src.source_support.progress import Progress, ProgressEvent
 from src.source_support.schemas import (
     Citation,
     Claim,
@@ -38,6 +39,8 @@ __all__ = [
     "ClaimResult",
     "CostReport",
     "Method",
+    "Progress",
+    "ProgressEvent",
     "SourceHit",
     "SourceSupport",
     "SupportSummary",

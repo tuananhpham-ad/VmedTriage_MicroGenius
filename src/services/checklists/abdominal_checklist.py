@@ -34,6 +34,7 @@ ABDOMINAL_FIELDS: tuple[FieldSpec, ...] = (
 ABDOMINAL_ALL_FIELDS: tuple[FieldSpec, ...] = (
     common_fields.DEMOGRAPHIC_FIELDS
     + common_fields.SAFETY_NETTING_FIELDS
+    + common_fields.COMPLAINT_ONSET_FIELDS
     + ABDOMINAL_FIELDS
     + common_fields.FEVER_SIGNAL_FIELDS
     + common_fields.GENERAL_FIELDS

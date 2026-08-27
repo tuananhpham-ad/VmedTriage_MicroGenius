@@ -19,8 +19,10 @@ BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
 
 4. MODE TƯỜNG MINH. `graph_triage_mode="ensemble"` chạy ba model cũ để điều dưỡng tham khảo;
    `"c6"` dùng đúng combiner đã benchmark: GPT direct OR Fusion OR documented-rule emergency.
-   C6 có thể nâng (không bao giờ hạ) priority sau khi case đã vào hàng đợi. Rule engine của symptom
-   protocol vẫn tạo priority tức thời và HITL vẫn bắt buộc.
+   Rule engine của symptom protocol vẫn tạo priority tức thời và là SÀN CHO CẤP CỨU - C6 không được
+   phép hạ một ca rule engine đã chốt đỏ. Ngoài phạm vi cấp cứu, khám sớm/tự theo dõi hoàn toàn do
+   C6 quyết định, kể cả khi điều đó hạ mức so với đề xuất tạm thời của rule engine (ADR-011, xem
+   `_effective_c6_label`). HITL vẫn bắt buộc trong mọi trường hợp.
 """
 
 from __future__ import annotations
@@ -28,21 +30,20 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from src.config import get_settings
 from src.graph_triage.summary_text import build_summary_text
-from src.models.schemas import TriageCase
+from src.models.schemas import TriageCase, TriagePriority
 from src.observability.braintrust_tracing import traced_root_span, traced_span
 from src.paths import RUNS_DIR
-from src.services.engines.priority_labels import (
-    C6_TRIAGE_LABEL_TO_PRIORITY,
-    PRIORITY_RANK,
-    c6_label_for_priority,
-)
+from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY
 from src.source_support import pipeline as source_support
+from src.source_support.progress import Progress
 from src.source_support.schemas import SourceSupport
 
 logger = logging.getLogger("vmedtriage.graph_triage")
@@ -320,19 +321,29 @@ def _c6_only_decision(triage_case: TriageCase, summary_text: str) -> dict[str, A
 
 
 def _effective_c6_label(triage_case: TriageCase, c6_label: str) -> str:
-    """Return the non-lowered final label that Part 3 and the nurse UI must see.
+    """Return the final label that Part 3 and the nurse UI must see.
 
-    The C6 label is advisory until compared with the priority synchronously set by the deterministic
-    rule engine.  If C6 is lower, preserve the rule-engine label before source support runs, rather
-    than citing an urgency that is no longer the one in the nurse queue.
-    """
+    RULE ENGINE IS A FLOOR FOR EMERGENCY ONLY - NOT FOR khám sớm/tự theo dõi (changed 2026-08-27,
+    see ADR-011; supersedes the `max(rule-engine, C6)` rule of ADR-009 for the non-emergency range).
+    The deterministic rule engine (`symptom_protocol.rule_engine`, runs synchronously the moment the
+    handoff summary is confirmed) is still the one thing that can never be overridden downward: if it
+    already flagged EMERGENCY, C6 is not allowed to quietly settle on anything less urgent. But once
+    the rule engine has NOT flagged emergency, the choice between "khám sớm" and "tự theo dõi" is
+    C6's alone - including cases where that means going lower than the rule engine's own provisional
+    label.
+
+    MEASURED 2026-08-27 (`eval/scripts/eval_rule_plus_c6.py`, 45 Semigran cases, `documented_rule`
+    standing in for an independent rule engine): the old `max(rule, C6)` formula made accuracy WORSE,
+    not better - C6-only 65.0% > rule-only 57.5% > combined-max 50.0%. Every one of the 6 cases the
+    combine broke was the rule branch pulling a correct C6 "tự theo dõi" up to "khám sớm"; the rule
+    branch never once rescued a case C6 got wrong (0/40). Outside the emergency range, treating the
+    rule engine as equally trustworthy as C6 only stacks both sides' over-triage bias."""
     proposal = triage_case.triage_proposal
-    c6_priority = C6_TRIAGE_LABEL_TO_PRIORITY.get(c6_label)
-    if proposal is None or c6_priority is None:
+    if proposal is None:
         return c6_label
-    if PRIORITY_RANK[c6_priority] < PRIORITY_RANK[proposal.priority]:
-        return c6_label
-    return c6_label_for_priority(proposal.priority) or c6_label
+    if proposal.priority is TriagePriority.EMERGENCY and c6_label != "cap_cuu":
+        return "cap_cuu"
+    return c6_label
 
 
 def _compact_payload(
@@ -365,11 +376,23 @@ def _compact_payload(
     return payload
 
 
-def decide_for_case(triage_case: TriageCase) -> dict | None:
+def decide_for_case(
+    triage_case: TriageCase,
+    *,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> dict | None:
     """Chạy agent quyết định cho một case đã chốt phiếu. `None` = không có gì để lưu.
 
     Không bao giờ raise: người gọi nằm trên đường phản hồi của bệnh nhân.
-    """
+
+    `on_progress`/`on_token` chỉ đi tới PART 3 và không đi đâu khác. Part 2 (agent quyết định) không
+    báo tiến trình: nó là chỗ chốt nhãn, và một dòng "đang nghiêng về cấp cứu" hiện ra rồi biến mất
+    khi ensemble đổi ý là thứ người đọc sẽ nhớ lâu hơn nhãn thật. Part 3 thì ngược lại - nó đã chốt
+    xong mọi thứ có thể đổi, nên báo ra bao nhiêu cũng không làm ai hiểu sai.
+
+    Cả hai callback chạy trên LUỒNG của lời gọi này (`run_in_threadpool` ở tầng API), không phải trên
+    event loop - người gọi bất đồng bộ phải tự bắc cầu về, xem `routes.chat_stream`."""
     settings = get_settings()
     if settings.graph_triage_mode == "off":
         return None
@@ -400,7 +423,9 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
                 decision["triage_label"],
                 ",".join(decision.get("escalated_by", [])) or "direct_label",
             )
-            support = _source_support_for(triage_case, decision)
+            support = _source_support_for(
+                triage_case, decision, on_progress=on_progress, on_token=on_token,
+            )
             root_span.log(
                 output={
                     "decided": True,
@@ -518,7 +543,9 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         # lại được nữa. Best-effort đúng ràng buộc 3: phần trích nguồn hỏng thì ca vẫn vào hàng đợi điều
         # dưỡng như thường. Gọi bên trong root span để Unit D/E (mở span trong
         # `src/source_support/pipeline.py`) parent đúng vào cùng trace này.
-        support = _source_support_for(triage_case, decision)
+        support = _source_support_for(
+            triage_case, decision, on_progress=on_progress, on_token=on_token,
+        )
 
         # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
         # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
@@ -545,7 +572,13 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         return payload
 
 
-def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSupport | None:
+def _source_support_for(
+    triage_case: TriageCase,
+    decision: dict,
+    *,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> SourceSupport | None:
     """Trích nguồn y văn cho nhãn vừa chốt. `None` = tắt, hoặc hỏng (và đã ghi log).
 
     KHÔNG BAO GIỜ raise và KHÔNG BAO GIỜ đổi `triage_label`: người gọi nằm trên đường phản hồi của
@@ -562,7 +595,12 @@ def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSuppor
         # tín hiệu này, KHÔNG để cả Part 3 fail vì thiếu mỗi một trường không bắt buộc.
         chief_complaint = triage_case.summary.chief_complaint if triage_case.summary else ""
         payload = {**decision, "chief_complaint": chief_complaint}
-        return source_support_pipeline.run(payload, triage_label=decision["triage_label"])
+        return source_support_pipeline.run(
+            payload,
+            triage_label=decision["triage_label"],
+            on_progress=on_progress,
+            on_token=on_token,
+        )
     except Exception as error:
         logger.warning(
             "graph_triage.source_support_failed case_id=%s error=%s: %s",

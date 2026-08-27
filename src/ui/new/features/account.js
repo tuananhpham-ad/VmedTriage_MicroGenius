@@ -5,9 +5,7 @@ import { escapeHtml, showToast } from "../shared.js";
 export function accountMenu() {
   applyDisplaySettings(readSettings());
   const name = state.user?.full_name || "Tài khoản";
-  const role = state.user?.role === "nurse" ? "Nhân viên y tế" : "Bệnh nhân";
-  const roleBadge = state.user?.role === "nurse" ? `<span class="role-badge">${role}</span>` : "";
-  return `<div class="account-menu"><button class="account-avatar" type="button" data-account-toggle aria-expanded="false" aria-label="Mở menu tài khoản">${initials(name)}</button><div class="account-dropdown" data-account-dropdown hidden><div class="account-summary"><span class="account-summary-avatar" aria-hidden="true">${initials(name)}</span><div><div class="account-summary-name"><strong>${escapeHtml(name)}</strong>${roleBadge}</div><span>${escapeHtml(state.user?.email || "")}</span></div></div><div class="account-links"><button type="button" data-open-profile><span class="account-item-icon account-icon-profile" aria-hidden="true"></span>Hồ sơ</button><button type="button" data-account-info="settings"><span class="account-item-icon account-icon-settings" aria-hidden="true"></span>Cài đặt</button><button type="button" data-account-info="privacy"><span class="account-item-icon account-icon-privacy" aria-hidden="true"></span>Chính sách quyền riêng tư</button><button type="button" data-account-info="help"><span class="account-item-icon account-icon-help" aria-hidden="true"></span>Trợ giúp &amp; liên hệ</button></div><div class="account-logout"><button type="button" data-account-logout><span class="account-item-icon account-icon-logout" aria-hidden="true"></span>Đăng xuất</button></div></div></div>`;
+  return `<div class="account-menu"><button class="account-avatar" type="button" data-account-toggle aria-expanded="false" aria-label="Mở menu tài khoản">${initials(name)}</button><div class="account-dropdown" data-account-dropdown hidden><div class="account-summary"><span class="account-summary-avatar" aria-hidden="true">${initials(name)}</span><div><div class="account-summary-name"><strong>${escapeHtml(name)}</strong></div><span>${escapeHtml(state.user?.email || "")}</span></div></div><div class="account-links"><button type="button" data-open-profile><span class="account-item-icon account-icon-profile" aria-hidden="true"></span>Hồ sơ</button><button type="button" data-account-info="settings"><span class="account-item-icon account-icon-settings" aria-hidden="true"></span>Cài đặt</button><button type="button" data-account-info="privacy"><span class="account-item-icon account-icon-privacy" aria-hidden="true"></span>Chính sách quyền riêng tư</button><button type="button" data-account-info="help"><span class="account-item-icon account-icon-help" aria-hidden="true"></span>Trợ giúp &amp; liên hệ</button></div><div class="account-logout"><button type="button" data-account-logout><span class="account-item-icon account-icon-logout" aria-hidden="true"></span>Đăng xuất</button></div></div></div>`;
 }
 
 export function bindAccountMenu(root, { logout, onProfileSaved }) {
@@ -56,11 +54,9 @@ export function openAccountInfo(kind) {
 
 function helpAndContactContent() {
   const isNurse = state.user?.role === "nurse";
-  const roleGuidance = isNurse
-    ? "Nếu gặp lỗi phân ca, quyền truy cập hoặc duyệt kết quả, hãy liên hệ bộ phận hỗ trợ kỹ thuật."
-    : "Bạn có thể khai báo triệu chứng, bổ sung thông tin khi cần và theo dõi trạng thái trong mục “Kết quả của tôi”. Hướng dẫn chỉ hiển thị sau khi nhân viên y tế duyệt.";
+  if (isNurse) return nurseHelpAndContactContent();
 
-  return `<p class="account-info-intro">${roleGuidance}</p>
+  return `<p class="account-info-intro">Bạn có thể khai báo triệu chứng, bổ sung thông tin khi cần và theo dõi trạng thái trong mục “Kết quả của tôi”. Hướng dẫn chỉ hiển thị sau khi nhân viên y tế duyệt.</p>
     <section class="help-emergency-notice" aria-label="Hướng dẫn tình huống khẩn cấp">
       <strong>Trường hợp khẩn cấp</strong>
       <span>Đau ngực dữ dội, khó thở cấp, ngất xỉu hoặc chấn thương nặng: không chờ phản hồi trên ứng dụng.</span>
@@ -79,8 +75,36 @@ function helpAndContactContent() {
     <p class="help-disclaimer">VMedTriage hỗ trợ phân loại ưu tiên ban đầu, không chẩn đoán bệnh hoặc thay thế khám chữa bệnh trực tiếp.</p>`;
 }
 
+function nurseHelpAndContactContent() {
+  return `<p class="account-info-intro">Hướng dẫn này dành cho nhân viên y tế xử lý ca trong VMedTriage.</p>
+    <section class="help-staff-urgent-notice" aria-label="Ưu tiên xử lý ca khẩn cấp">
+      <strong>Ưu tiên ca có Red flag</strong>
+      <span>Ca Cấp cứu và Red flag luôn cần được mở, đánh giá và xử lý theo quy trình trực của đơn vị. Đừng trì hoãn xử lý ca chỉ vì lỗi giao diện.</span>
+    </section>
+    <section class="help-contact-section" aria-labelledby="staff-workflow-help-title">
+      <h3 id="staff-workflow-help-title">Hàng đợi và duyệt ca</h3>
+      <p>Kiểm tra thông tin đã khai báo, đánh giá đề xuất AI và chỉ duyệt khi phản hồi phù hợp. Nội dung xử trí chỉ được gửi tới bệnh nhân sau quyết định của nhân viên y tế.</p>
+    </section>
+    <section class="help-contact-section" aria-labelledby="staff-access-help-title">
+      <h3 id="staff-access-help-title">Tài khoản và quyền truy cập</h3>
+      <p>Nếu không thấy ca cần xử lý, gặp lỗi phân ca, quyền truy cập hoặc lưu quyết định, hãy liên hệ hỗ trợ kỹ thuật và không dùng tài khoản của người khác.</p>
+    </section>
+    <section class="help-contact-section" aria-labelledby="staff-contact-help-title">
+      <h3 id="staff-contact-help-title">Liên hệ hỗ trợ kỹ thuật</h3>
+      <p>Hỗ trợ lỗi hệ thống, tài khoản và phản hồi cải tiến.</p>
+      <a href="mailto:vitriage@gmail.com">vitriage@gmail.com</a>
+      <a href="tel:+84356276505">0356 276 505</a>
+    </section>
+    <section class="help-contact-section" aria-labelledby="staff-privacy-help-title">
+      <h3 id="staff-privacy-help-title">Bảo mật dữ liệu</h3>
+      <p>Chỉ truy cập thông tin cần thiết cho công việc, không chia sẻ dữ liệu ca bệnh ra ngoài hệ thống và luôn đăng xuất khi rời thiết bị.</p>
+    </section>
+    <p class="help-disclaimer">AI chỉ đề xuất mức ưu tiên, không thay thế đánh giá chuyên môn. Quyết định cuối cùng thuộc về nhân viên y tế.</p>`;
+}
+
 export function openSettings() {
   const preferences = readSettings();
+  const isNurse = state.user?.role === "nurse";
   const dialog = document.createElement("div");
   dialog.className = "settings-dialog";
   dialog.innerHTML = `
@@ -206,12 +230,26 @@ export function openSettings() {
     </section>`;
   document.body.append(dialog);
 
+  // Cài đặt bệnh nhân (nhận kết quả duyệt, theo dõi tiến trình, tải lịch sử khai báo) không áp dụng
+  // cho nhân viên y tế; đặc biệt không được để nút xuất dữ liệu gọi endpoint lịch sử của bệnh nhân.
+  if (isNurse) {
+    dialog.querySelector(".settings-intro").textContent = "Điều chỉnh bảo mật tài khoản và cách hiển thị trên thiết bị này.";
+    const groups = dialog.querySelectorAll(".settings-group");
+    groups[0]?.remove();
+    groups[2]?.remove();
+    const sessionNote = groups[1]?.querySelectorAll(".setting-copy > small")[2];
+    if (sessionNote) sessionNote.textContent = "Đăng xuất các thiết bị khác để bảo vệ tài khoản chuyên môn.";
+    const displayHeading = groups[3]?.querySelector("h3");
+    if (displayHeading) displayHeading.textContent = "Hiển thị";
+  }
+
   const persist = () => {
+    const checked = (name) => dialog.querySelector(`[name=${name}]`)?.checked ?? preferences[name];
     const next = {
-      email_notifications: dialog.querySelector("[name=email_notifications]").checked,
-      case_reminders: dialog.querySelector("[name=case_reminders]").checked,
-      large_text: dialog.querySelector("[name=large_text]").checked,
-      high_contrast: dialog.querySelector("[name=high_contrast]").checked,
+      email_notifications: checked("email_notifications"),
+      case_reminders: checked("case_reminders"),
+      large_text: checked("large_text"),
+      high_contrast: checked("high_contrast"),
     };
     localStorage.setItem("vmed_settings", JSON.stringify(next));
     applyDisplaySettings(next);
@@ -219,11 +257,11 @@ export function openSettings() {
   dialog.querySelectorAll(".setting-switch").forEach((control) => control.addEventListener("change", persist));
   const close = () => dialog.remove();
   dialog.querySelectorAll("[data-close-settings]").forEach((button) => button.addEventListener("click", close));
-  dialog.querySelector("[data-open-privacy]").addEventListener("click", () => {
+  dialog.querySelector("[data-open-privacy]")?.addEventListener("click", () => {
     close();
     openAccountInfo("privacy");
   });
-  dialog.querySelector("[data-download-data]").addEventListener("click", async (event) => {
+  dialog.querySelector("[data-download-data]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "Đang tạo";

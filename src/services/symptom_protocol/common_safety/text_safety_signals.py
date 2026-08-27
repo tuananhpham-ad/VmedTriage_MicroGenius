@@ -49,6 +49,7 @@ from src.services.engines.red_flag_text_rules import (
     TEXT_RED_FLAG_RULES,
     normalize_red_flag_text,
 )
+from src.services.symptom_protocol import phrasing
 
 
 class SignalStatus(str, Enum):
@@ -283,19 +284,65 @@ def scan_text_safety_signals(*texts: str) -> TextSafetyScan:
     return TextSafetyScan(signals=ordered)
 
 
-def confirmation_question(codes: Sequence[str]) -> str:
+CONFIRMATION_TEMPLATES: tuple[str, ...] = (
+    "Trước khi hỏi tiếp, mình cần xác nhận một ý quan trọng: hiện tại có {labels} không? "
+    "Nếu đang xảy ra ngay lúc này, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Mình dừng một chút để hỏi cho chắc: ngay lúc này có {labels} không ạ? "
+    "Nếu đang có, bạn gọi 115 hoặc tới cơ sở y tế gần nhất ngay giúp mình.",
+
+    "Có một ý mình cần rõ trước đã: hiện giờ có {labels} không? "
+    "Nếu đang xảy ra, bạn đừng chờ ở đây - gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Cho mình hỏi lại một ý quan trọng nhé: lúc này có {labels} không ạ? "
+    "Nếu có, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay.",
+
+    "Mình cần chắc chắn về một điều trước khi đi tiếp: hiện tại có {labels} không? "
+    "Nếu đang xảy ra ngay bây giờ, bạn gọi 115 hoặc đến cơ sở y tế gần nhất nhé.",
+
+    "Xin phép hỏi nhanh một ý mình thấy quan trọng: bây giờ có {labels} không ạ? "
+    "Nếu đang có thì bạn gọi 115 hoặc đến cơ sở y tế gần nhất ngay giúp mình.",
+
+    "Mình muốn kiểm lại một điều trước khi hỏi thêm: hiện tại có {labels} không? "
+    "Nếu điều đó đang diễn ra, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Có một dấu hiệu mình cần xác nhận ngay: lúc này có {labels} không ạ? "
+    "Nếu đang xảy ra, bạn gọi 115 hoặc đến cơ sở y tế gần nhất, đừng chờ.",
+
+    "Trước khi mình hỏi tiếp, bạn xác nhận giúp mình một ý: hiện có {labels} không? "
+    "Nếu đang có, hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay lúc này.",
+
+    "Mình hỏi cho rõ một ý quan trọng đã nhé: ngay bây giờ có {labels} không ạ? "
+    "Nếu đang xảy ra, bạn gọi 115 hoặc đến cơ sở y tế gần nhất giúp mình.",
+)
+"""Mười bản của câu xác nhận tín hiệu mơ hồ. Khác NHỊP và cách xưng hô, KHÔNG khác nội dung.
+
+HAI THỨ MỌI BẢN ĐỀU PHẢI CÓ, và `test_every_confirmation_variant_keeps_its_two_duties` canh đúng
+hai thứ đó:
+
+1. `{labels}` - nhãn dấu hiệu, nêu NGUYÊN VĂN như `rule_label` trả về. Câu này chỉ NHẮC LẠI điều
+   người bệnh vừa nói; một bản tự diễn giải thêm ("có khó thở nhiều không") là suy diễn mức độ mà
+   người bệnh chưa hề khai.
+2. Chỉ dẫn gọi 115 hoặc đến cơ sở y tế. Đây là câu chạy khi tầng model đã hỏng, tức là lúc hệ thống
+   còn ít khả năng nhất để bắt kịp một ca cấp cứu - bỏ sót nó ở một bản trong mười là mở một lỗ hổng
+   chỉ xuất hiện ở 1/10 số ca, đúng loại lỗi không ai tái hiện được.
+
+KHÔNG bản nào được hỏi thêm gì ngoài đúng một câu hỏi có/không: đây là lượt dự phòng, không phải chỗ
+thu thập thêm dữ kiện."""
+
+
+def confirmation_question(codes: Sequence[str], seed: object = "") -> str:
     """Câu hỏi xác nhận TĨNH cho tín hiệu mơ hồ — không đi qua model.
 
     Đây là đường dự phòng khi model không trả về gì: người bệnh vừa nhắc tới một dấu hiệu nguy hiểm
     mà hệ thống không được phép im lặng bỏ qua. Câu hỏi chỉ NHẮC LẠI nhãn dấu hiệu, không suy diễn
-    thêm chi tiết y khoa nào."""
+    thêm chi tiết y khoa nào.
+
+    `seed` chọn một trong mười bản diễn đạt. Vẫn TĨNH và vẫn không gọi model - xem `phrasing.pick`."""
     if not codes:
         return ""
     labels = ", ".join(dict.fromkeys(rule_label(code).lower() for code in codes[:3]))
-    return (
-        f"Trước khi hỏi tiếp, mình cần xác nhận một ý quan trọng: hiện tại có {labels} không? "
-        "Nếu đang xảy ra ngay lúc này, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất."
-    )
+    return phrasing.pick(CONFIRMATION_TEMPLATES, seed).format(labels=labels)
 
 
 def _classify(normalized: str, start: int, end: int) -> tuple[SignalStatus, str]:

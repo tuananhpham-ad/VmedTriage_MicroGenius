@@ -24,6 +24,7 @@ với `grounded_in`, không hề nhắc tới nhãn. Guard 0a/0b bắt được 
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from src.services.infra.provider_router import ROLE_SOURCE_VERDICT
 from src.source_support.index import SearchHit
 from src.source_support.llm import CostMeter, SourceSupportLLMError, call_json
+from src.source_support.progress import Progress, ProgressReporter, reporter_for
 from src.source_support.quotes import trim_to_sentences
 from src.source_support.retrieval import ClaimEvidence
 from src.source_support.schemas import Claim, SourceHit, VerdictResponse
@@ -136,6 +138,7 @@ def grade_all(
     evidences: list[ClaimEvidence],
     *,
     meter: CostMeter | None = None,
+    on_progress: Progress | ProgressReporter | None = None,
 ) -> list[tuple[ClaimEvidence, VerdictResponse]]:
     """Chấm mọi claim SONG SONG.
 
@@ -149,11 +152,37 @@ def grade_all(
     if not evidences:
         return []
 
+    # Reporter chứ không callback trần: `_grade` chạy trên LUỒNG CON và ba luồng cùng báo về một
+    # sink. `ProgressReporter` khoá quanh sink, nên sink của người gọi không cần biết gì về luồng.
+    reporter = reporter_for(on_progress)
+    reporter.emit(
+        "verdict_start",
+        f"Chấm bằng chứng cho {len(evidences)} mệnh đề (chạy song song)",
+        total=len(evidences),
+    )
+    # `count()` chứ không `done += 1`: `+=` trên luồng con là đọc-cộng-ghi, hai luồng xong cùng lúc
+    # sẽ in ra hai lần cùng một số thứ tự. `next()` trên một counter là thao tác nguyên tử của CPython.
+    finished = itertools.count(1)
+
     def _grade(evidence: ClaimEvidence) -> tuple[ClaimEvidence, VerdictResponse]:
         try:
-            return evidence, grade(evidence.claim, evidence.candidates, meter=meter)
+            result = evidence, grade(evidence.claim, evidence.candidates, meter=meter)
+            done = next(finished)
+            reporter.emit(
+                "verdict_done",
+                f"[{done}/{len(evidences)}] {result[1].verdict} - {evidence.claim.claim_vi[:60]}",
+                verdict=result[1].verdict, claim_vi=evidence.claim.claim_vi,
+                index=done, total=len(evidences),
+            )
+            return result
         except SourceSupportLLMError as error:
             logger.warning("source_support.verdict_failed claim=%r reason=%s", evidence.claim.claim_en[:60], error)
+            done = next(finished)
+            reporter.emit(
+                "verdict_failed",
+                f"[{done}/{len(evidences)}] không chấm được - {evidence.claim.claim_vi[:60]}",
+                claim_vi=evidence.claim.claim_vi, index=done, total=len(evidences),
+            )
             return evidence, VerdictResponse(
                 verdict="unsupported",
                 verdict_reason="Không chấm được bằng chứng cho mệnh đề này.",

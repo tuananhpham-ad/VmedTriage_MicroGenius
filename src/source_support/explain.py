@@ -27,12 +27,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.graph_triage.graph_schema import normalise_span
 from src.services.infra.provider_router import ROLE_SOURCE_EXPLAIN
-from src.source_support.llm import CostMeter, call_json
+from src.source_support.llm import CostMeter, call_json, call_json_streaming
+from src.source_support.progress import Progress, ProgressReporter, reporter_for
 from src.source_support.quotes import QuoteIntegrityError
 from src.source_support.schemas import Citation, ClaimResult, SourceHit
 
@@ -155,21 +157,65 @@ def write_explanation(
     patient_label: str,
     patient_spans: list[str],
     meter: CostMeter | None = None,
+    on_progress: Progress | ProgressReporter | None = None,
+    on_token: Callable[[str], None] | None = None,
 ) -> tuple[str, list[Citation]]:
-    """Bước 7 + Guard 5. Trả về (đoạn văn, danh sách trích dẫn)."""
+    """Bước 7 + Guard 5. Trả về (đoạn văn, danh sách trích dẫn).
+
+    `on_token` BẬT CHẾ ĐỘ NHÁP CHẠY CHỮ, và đây là chỗ phải đọc kỹ trước khi dùng nó.
+
+    Guard 5a/5b chỉ chạy được khi đã có TRỌN đoạn văn - nó so URL, so marker, so quote nguyên văn.
+    Nghĩa là chữ đi qua `on_token` là chữ CHƯA QUA GUARD: nó có thể chứa một marker [3] không tồn
+    tại, hoặc thiếu câu cảnh báo `contradicts`. Khi guard chặn, hàm này trả về bản do CODE dựng - khác
+    hẳn thứ vừa chảy qua màn hình - và phát một sự kiện `explanation_replaced` để người gọi XOÁ bản
+    nháp đi. Người gọi nào không xử lý sự kiện đó thì đừng truyền `on_token`: để một đoạn văn trượt
+    guard nằm lại trên màn hình điều dưỡng là đúng thứ cả module này tồn tại để chặn.
+
+    `symptom_protocol/intake_agent.py` chọn hướng ngược lại cho câu hỏi gửi bệnh nhân - gom trọn rồi
+    mới phát, vì ở đó không có bước "vẽ lại". Khác biệt là ở người đọc: bản nháp chạy chữ ở đây dành
+    cho màn hình có chỗ đánh dấu "đang viết" và có lượt vẽ lại cuối cùng."""
+    reporter = reporter_for(on_progress)
     citations, marker_by_claim = build_citations(results)
-    response = call_json(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=_user_prompt(
-            results, marker_by_claim,
-            triage_label=triage_label, patient_label=patient_label, patient_spans=patient_spans,
-        ),
-        schema=ExplanationResponse,
-        role=ROLE_SOURCE_EXPLAIN,
-        meter=meter,
+    reporter.emit(
+        "explain_start",
+        f"Viết đoạn diễn giải với {len(citations)} trích dẫn đã kiểm",
+        citations=len(citations),
     )
+    prompt = _user_prompt(
+        results, marker_by_claim,
+        triage_label=triage_label, patient_label=patient_label, patient_spans=patient_spans,
+    )
+    if on_token is None:
+        response = call_json(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+            schema=ExplanationResponse,
+            role=ROLE_SOURCE_EXPLAIN,
+            meter=meter,
+        )
+    else:
+        response = call_json_streaming(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+            schema=ExplanationResponse,
+            role=ROLE_SOURCE_EXPLAIN,
+            stream_field="explanation_vi",
+            on_token=on_token,
+            meter=meter,
+        )
     assert isinstance(response, ExplanationResponse)
-    text = _apply_contradiction_warning(response.explanation_vi.strip(), results)
+    drafted = response.explanation_vi.strip()
+    text = _apply_contradiction_warning(drafted, results)
+    if text != drafted:
+        # GUARD 5B CŨNG LÀM BẢN NHÁP SAI, và sai đúng ở chỗ nguy hiểm nhất: câu cảnh báo `contradicts`
+        # do code chèn vào SAU khi model viết xong, nên nó không bao giờ có mặt trong dòng chữ vừa
+        # chảy qua màn hình. Guard 5a không chặn ca này - đoạn văn hợp lệ, chỉ là thiếu câu cảnh báo -
+        # nên nếu không báo ở đây thì người đọc giữ lại đúng bản KHÔNG có cảnh báo.
+        reporter.emit(
+            "explanation_replaced",
+            "Đã chèn thêm cảnh báo bắt buộc - hãy bỏ bản nháp vừa hiện và đọc bản cuối.",
+            reason="guard_5b",
+        )
 
     try:
         guard_citations(text, citations, results)
@@ -186,6 +232,12 @@ def write_explanation(
             results, citations, triage_label=triage_label, patient_label=patient_label,
         )
         guard_citations(text, citations, results)
+        reporter.emit(
+            "explanation_replaced",
+            "Guard 5 chặn bản của model - thay bằng bản dựng bằng code, hãy bỏ bản nháp vừa hiện.",
+            reason=type(error).__name__,
+        )
+    reporter.emit("explain_done", "Xong đoạn diễn giải", chars=len(text))
     return text, citations
 
 

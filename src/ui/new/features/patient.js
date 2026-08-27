@@ -1,8 +1,9 @@
 import { api, ApiError, apiStream } from "../api.js";
-import { accountMenu, bindAccountMenu, openAccountInfo, openSettings } from "./account.js?v=design-20260827c";
+import { accountMenu, bindAccountMenu, openAccountInfo, openSettings } from "./account.js?v=design-20260827d";
 import { completedStatuses, setActiveCase, state } from "../state.js";
 import {
   appHeader,
+  applyAppTheme,
   escapeHtml,
   formatDate,
   icon,
@@ -11,6 +12,9 @@ import {
   priorityClass,
   priorityDot,
   priorityLabels,
+  readAppTheme,
+  resetAppTheme,
+  saveAppTheme,
   shortCaseId,
   showToast,
   statusClass,
@@ -30,7 +34,6 @@ const AI_SCOPE_VI =
 // bệnh nhân thì chưa có gì - đó là lý do trước đây phải F5 mới thấy kết quả.
 let casePolling = null;
 let quickChatPolling = null;
-const PATIENT_THEME_KEY = "vmed_patient_theme";
 const PATIENT_SIDEBAR_KEY = "vmed_patient_sidebar_collapsed";
 const QUICK_CHAT_OPEN_KEY = "vmed_quick_chat_open";
 const QUICK_CHAT_SEEN_PREFIX = "vmed_quick_chat_seen_";
@@ -44,38 +47,16 @@ function patientSidebarCollapsed() {
   }
 }
 
-function readPatientTheme() {
-  try {
-    return localStorage.getItem(PATIENT_THEME_KEY) === "dark" ? "dark" : "light";
-  } catch {
-    return "light";
-  }
-}
-
-function applyPatientTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-}
-
-/** Chủ đề là tuỳ chọn trong phiên bệnh nhân. Màn công khai không có bộ dark theme riêng, nên khi
+/** Chủ đề được dùng chung cho cả hai vai trò. Màn công khai không có bộ dark theme riêng, nên khi
  * đăng xuất phải trả token về sáng thay vì để màu chữ tối kế thừa trên các hero nền sáng. */
 export function resetPatientTheme() {
-  try {
-    localStorage.removeItem(PATIENT_THEME_KEY);
-  } catch {
-    // Vẫn trả giao diện về sáng nếu trình duyệt không cho truy cập localStorage.
-  }
-  applyPatientTheme("light");
+  resetAppTheme();
 }
 
 function bindPatientTheme(root) {
   root.querySelector("[data-theme-toggle]")?.addEventListener("click", (event) => {
     const next = event.currentTarget.dataset.theme === "dark" ? "light" : "dark";
-    try {
-      localStorage.setItem(PATIENT_THEME_KEY, next);
-    } catch {
-      // Chế độ vẫn đổi trong phiên hiện tại nếu trình duyệt chặn localStorage.
-    }
-    applyPatientTheme(next);
+    saveAppTheme(next);
     event.currentTarget.dataset.theme = next;
     event.currentTarget.setAttribute("aria-pressed", String(next === "dark"));
     event.currentTarget.querySelector("[data-theme-label]").textContent = `Chủ đề ${next === "dark" ? "sáng" : "tối"}`;
@@ -94,7 +75,7 @@ function bindPatientSidebar(root) {
     event.currentTarget.setAttribute("aria-label", label);
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
     event.currentTarget.dataset.tooltip = label;
-    event.currentTarget.innerHTML = icon(collapsed ? "chevronRight" : "chevronLeft", 16);
+    event.currentTarget.innerHTML = icon(collapsed ? "sidebarExpand" : "sidebarCollapse", 17);
     try {
       localStorage.setItem(PATIENT_SIDEBAR_KEY, collapsed ? "1" : "0");
     } catch {
@@ -103,7 +84,7 @@ function bindPatientSidebar(root) {
   });
 }
 
-applyPatientTheme(readPatientTheme());
+applyAppTheme(readAppTheme());
 
 export function stopCasePolling() {
   if (casePolling) window.clearInterval(casePolling);
@@ -159,7 +140,10 @@ function bindPatientNav(root, { navigate }) {
       if (button.dataset.nav === "start") navigate("disclaimer");
       if (button.dataset.nav === "cases") navigate("patient-cases");
       if (button.dataset.nav === "health") navigate("patient-health");
-      if (button.dataset.nav === "maps") showToast("Bản đồ cơ sở y tế đang được phát triển.");
+      // Đi thẳng vào màn bản đồ bệnh viện (`renderHospitalSuggestion`) - trước đây chỉ hiện toast
+      // "đang phát triển" dù tính năng đã xong (ADR-010). Chưa mở ca nào thì màn đó tự rơi về màn
+      // "hãy mở một ca trước" (`loadHospitalSuggestion`), không cần chặn ở đây.
+      if (button.dataset.nav === "maps") navigate("patient-hospital");
       if (button.dataset.nav === "settings") openSettings();
       if (button.dataset.nav === "help") openAccountInfo("help");
     }),
@@ -187,7 +171,7 @@ function patientHeader(active, { title = "", right = "" } = {}) {
  * bệnh cần quay lại giữa trang chủ và kết quả; luồng khai báo vẫn dùng header gọn để tập trung vào
  * từng bước và không làm gián đoạn cảnh báo an toàn. */
 function patientSideNav(active) {
-  const theme = readPatientTheme();
+  const theme = readAppTheme();
   const collapsed = patientSidebarCollapsed();
   const toggleLabel = collapsed ? "Mở rộng" : "Thu gọn";
   const item = (key, label, glyph) => `<button class="patient-side-nav-item${key === active ? " is-active" : ""}" type="button" data-nav="${key}">
@@ -195,7 +179,7 @@ function patientSideNav(active) {
   </button>`;
 
   return `<aside class="patient-side-nav${collapsed ? " is-collapsed" : ""}" data-patient-sidebar>
-    <button class="patient-side-toggle" type="button" data-patient-sidebar-toggle aria-label="${toggleLabel}" aria-expanded="${!collapsed}" data-tooltip="${toggleLabel}">${icon(collapsed ? "chevronRight" : "chevronLeft", 16)}</button>
+    <button class="patient-side-toggle" type="button" data-patient-sidebar-toggle aria-label="${toggleLabel}" aria-expanded="${!collapsed}" data-tooltip="${toggleLabel}">${icon(collapsed ? "sidebarExpand" : "sidebarCollapse", 17)}</button>
     <a class="patient-side-brand brand" href="/" aria-label="VMedTriage">${icon("logo", 27)}<span class="brand-word">VMed<span>Triage</span></span></a>
     <nav aria-label="Điều hướng bệnh nhân">
       ${item("home", "Trang chủ", "pulse")}
@@ -722,10 +706,11 @@ export function renderPatientCases(root, { navigate, logout }) {
           <button class="primary-button" type="button" data-start>${icon("chat", 17)}<span>Khai báo ca mới</span></button>
         </div>
 
-        <div class="queue-toolbar">
-          <div class="filter-chips" role="group" aria-label="Lọc theo trạng thái xác nhận">
+        <div class="patient-case-toolbar">
+          <span>Trạng thái ca</span>
+          <div class="patient-case-filter-options" role="group" aria-label="Lọc theo trạng thái xác nhận">
             ${Object.entries(caseFilters)
-              .map(([key, filter], index) => `<button class="filter-chip${index === 0 ? " is-active" : ""}" type="button" data-case-filter="${key}"><span>${filter.label}</span><b data-count="${key}">0</b></button>`)
+              .map(([key, filter], index) => `<button class="patient-case-filter-button${index === 0 ? " is-active" : ""}" type="button" data-case-filter="${key}"><span>${filter.label}</span><b data-count="${key}">0</b></button>`)
               .join("")}
           </div>
         </div>
@@ -1304,10 +1289,14 @@ function messageMarkup(message) {
   if (message.role === "system") {
     return `<div class="bubble is-system">${icon("check", 14)}<span>${escapeHtml(message.text)}</span></div>`;
   }
-  // Bong bóng đang stream giữ nguyên văn bản thô: con trỏ nhấp nháy là `::after` của chính div này,
-  // mà chèn `<p>` vào giữa sẽ đẩy nó xuống dòng riêng sau mỗi mẩu chữ mới về.
+  // tanh - sửa format output agent (2026-08-27).
+  // Bong bóng đang stream đi qua ĐÚNG `paragraphs()` như bong bóng đã xong, chỉ thêm cờ `pending`.
+  // Trước đây nó giữ văn bản thô rồi mới được `done` vẽ lại thành đoạn/gạch đầu dòng, nên người dùng
+  // thấy cả câu trả lời nhảy một nhịp ngay lúc vừa đọc xong - format phải chạy CÙNG luồng chữ, không
+  // phải sau nó. Con trỏ nhấp nháy theo `.is-typing` sang phần tử chữ cuối (xem `renderTextBlock`),
+  // nên việc chèn `<p>` không còn đẩy nó xuống dòng riêng nữa.
   if (message.role === "streaming") {
-    return `<div class="chat-message is-agent"><span class="chat-message-sender"><i class="chat-source-avatar">${icon("logo", 15)}</i><span>VMedTriage</span></span><div class="bubble is-streaming">${escapeHtml(message.text)}</div></div>`;
+    return `<div class="chat-message is-agent"><span class="chat-message-sender"><i class="chat-source-avatar">${icon("logo", 15)}</i><span>VMedTriage</span></span><div class="bubble is-streaming">${paragraphs(message.text, { pending: true })}</div></div>`;
   }
   const sender = message.role === "agent"
     ? "VMedTriage"
@@ -1392,7 +1381,16 @@ async function streamChatTurn(message, root, context) {
     // dùng cảm nhận được: chữ hiện dần thay vì màn hình đứng im vài giây.
     state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending" && item.role !== "streaming");
     state.patientMessages.push({ role: "streaming", text });
-    renderPatientChat(root, context);
+    // tanh - sửa format output agent (2026-08-27).
+    // Mẩu chữ thứ hai trở đi chỉ vẽ lại BONG BÓNG, không dựng lại cả trang: `renderPatientChat` thay
+    // `root.innerHTML`, gắn lại toàn bộ handler và mở lại vòng polling ca - làm việc đó vài chục lần
+    // mỗi giây thì chính nó là thứ giật, và mỗi lần thay DOM lại khởi động lại animation con trỏ.
+    // Lần đầu vẫn phải render đủ để bong bóng ra đời; `state` vẫn được cập nhật trước đó nên mọi lần
+    // render đầy đủ sau này (`done`, lỗi, điều hướng) đều dựng lại đúng những gì đang thấy.
+    const bubble = root.querySelector(".bubble.is-streaming");
+    if (!bubble) { renderPatientChat(root, context); return; }
+    bubble.innerHTML = paragraphs(text, { pending: true });
+    scrollChat(root);
   };
 
   try {
@@ -1497,15 +1495,22 @@ export function renderRedFlag(root, { navigate }) {
   root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-chat"));
 }
 
-/** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải. */
+/** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải.
+ *
+ * Dùng `patientDashboardShell` (thanh bên trái) thay vì `patientHeader` cũ - đồng bộ với các màn
+ * còn lại của khu vực bệnh nhân (trang chủ/kết quả/hồ sơ sức khỏe/khai báo đều đã chuyển sang bố
+ * cục này; đây từng là 2 màn cuối còn sót lại kiểu header rời). */
 export function renderPatientResult(root, { navigate, logout }) {
   const current = state.currentPatientCase;
-  const header = patientHeader("cases", {
-    title: current ? `Hướng dẫn xử trí · <b>${shortCaseId(current.case_id)}</b>` : "Hướng dẫn xử trí",
-    // Màn này là nhánh CUỐI của chuỗi Kết quả của tôi -> Chi tiết ca -> Hướng dẫn xử trí, nên nút
-    // quay lại trỏ về chi tiết ca chứ không nhảy thẳng về danh sách.
-    right: `<div class="header-right">${current ? `<button class="back-button" type="button" data-case-back>${icon("chevronLeft", 15)}<span>Chi tiết ca</span></button>` : ""}${accountMenu()}</div>`,
-  });
+  // Màn này là nhánh CUỐI của chuỗi Kết quả của tôi -> Chi tiết ca -> Hướng dẫn xử trí, nên nút
+  // quay lại trỏ về chi tiết ca chứ không nhảy thẳng về danh sách.
+  const backButton = current
+    ? `<button class="back-button" type="button" data-case-back>${icon("chevronLeft", 15)}<span>Chi tiết ca</span></button>`
+    : "";
+  const pageHeading = `<header class="patient-page-heading patient-flow-heading">
+    <div><p class="eyebrow">Kết quả của tôi</p><h1>${current ? `Hướng dẫn xử trí · ${shortCaseId(current.case_id)}` : "Hướng dẫn xử trí"}</h1><p>Mức ưu tiên và hướng dẫn xử trí chỉ hiển thị sau khi nhân viên y tế xác nhận.</p></div>
+    ${backButton}
+  </header>`;
 
   let body;
   if (!current) {
@@ -1540,8 +1545,16 @@ export function renderPatientResult(root, { navigate, logout }) {
     ? `<div class="hospital-suggestion-link"><button class="secondary-button" type="button" data-goto-hospital>${icon("mapPin", 16)}<span>Tìm bệnh viện gần nhất</span></button></div>`
     : "";
 
-  root.innerHTML = `<section class="app-shell">${header}<main class="page">${hospitalLink}${body}</main>${quickChatDockMarkup()}</section>`;
+  root.innerHTML = patientDashboardShell("cases", `
+    <div class="patient-flow-page">
+      ${pageHeading}
+      ${hospitalLink}
+      ${body}
+    </div>
+  `);
   bindPatientNav(root, { navigate });
+  bindPatientSidebar(root);
+  bindPatientTheme(root);
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientResult(root, { navigate, logout }) });
   root.querySelector("[data-retry]")?.addEventListener("click", () => refreshResult(root, { navigate, logout }));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
@@ -1610,15 +1623,25 @@ async function refreshResult(root, context) {
 // GPS trình duyệt ưu tiên; từ chối quyền/không hỗ trợ/timeout đều rơi về form nhập địa chỉ tay - đây
 // là fallback bắt buộc chốt với PM, không phải nhánh phụ.
 
+// Dùng `patientDashboardShell` (thanh bên trái, mục "Bản đồ cơ sở y tế") thay vì `patientHeader`
+// cũ - đồng bộ với các màn còn lại của khu vực bệnh nhân, và làm rõ đây là cùng một điểm đến với
+// mục "Bản đồ cơ sở y tế" ở thanh bên (trước đây mục đó chỉ hiện toast "đang phát triển").
 export function renderHospitalSuggestion(root, { navigate, logout }) {
   const current = state.currentPatientCase;
-  const header = patientHeader("cases", {
-    title: "Bệnh viện gần nhất",
-    right: `<div class="header-right"><button class="back-button" type="button" data-hospital-back>${icon("chevronLeft", 15)}<span>Quay lại</span></button>${accountMenu()}</div>`,
-  });
+  const pageHeading = `<header class="patient-page-heading patient-flow-heading">
+    <div><p class="eyebrow">Bản đồ cơ sở y tế</p><h1>Bệnh viện gần nhất</h1><p>Thông tin logistics (tên/địa chỉ/khoảng cách) - hiển thị ngay, không cần chờ điều dưỡng duyệt.</p></div>
+    <button class="back-button" type="button" data-hospital-back>${icon("chevronLeft", 15)}<span>Quay lại</span></button>
+  </header>`;
 
-  root.innerHTML = `<section class="app-shell">${header}<main class="page"><div id="hospital-body">${hospitalStatePanel("clock", "Đang tải…")}</div></main>${quickChatDockMarkup()}</section>`;
+  root.innerHTML = patientDashboardShell("maps", `
+    <div class="patient-flow-page">
+      ${pageHeading}
+      <div id="hospital-body">${hospitalStatePanel("clock", "Đang tải…")}</div>
+    </div>
+  `);
   bindPatientNav(root, { navigate });
+  bindPatientSidebar(root);
+  bindPatientTheme(root);
   bindAccountMenu(root, { logout, onProfileSaved: () => renderHospitalSuggestion(root, { navigate, logout }) });
   root.querySelector("[data-hospital-back]").addEventListener("click", () => navigate(current ? "patient-result" : "patient-cases"));
   bindQuickChatDock(root, { navigate });

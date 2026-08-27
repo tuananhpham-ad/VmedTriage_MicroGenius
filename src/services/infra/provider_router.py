@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
@@ -652,6 +652,7 @@ def complete_stream(
     max_attempts: int = 3,
     credential: LLMCredential | None = None,
     role: str | None = None,
+    on_provider: Callable[[str, str | None], None] | None = None,
 ) -> Iterator[str]:
     """Như `complete()` nhưng trả text theo từng mẩu. Dùng cho văn bản HIỂN THỊ cho người bệnh.
 
@@ -665,6 +666,12 @@ def complete_stream(
 
     Provider chưa hỗ trợ streaming (gemini/anthropic) không phải nhánh lỗi: rơi về `complete()` rồi
     phát trọn văn bản trong đúng một mẩu, nên phía gọi không cần biết provider nào đang chạy.
+
+    `on_provider` là đường DUY NHẤT để biết provider nào rốt cuộc đã viết đoạn text - iterator chỉ
+    mang chuỗi, không mang `CompletionResult`. Nó được gọi ĐÚNG MỘT LẦN, ngay trước mẩu đầu tiên,
+    tức khi fallback đã chốt. Chỗ gọi cần nó là sổ chi phí của part 3 (`CostMeter.provider_calls`):
+    không có nó thì lượt stream biến mất khỏi sổ, và "đoạn diễn giải này do model nào viết" - câu hỏi
+    duy nhất sổ đó sinh ra để trả lời - thành không trả lời được.
     """
     settings = get_settings()
     resolved_temperature = _resolve_temperature(temperature, role)
@@ -674,6 +681,7 @@ def complete_stream(
         yield from _stream_one(
             make_provider_for_credential(credential), list(messages), credential.model,
             temperature=resolved_temperature, provider_name=credential.provider,
+            on_provider=on_provider,
         )
         return
 
@@ -698,6 +706,7 @@ def complete_stream(
                 yield from _stream_one(
                     _build_provider(spec, model), list(messages), model,
                     temperature=resolved_temperature, provider_name=spec.name,
+                    on_provider=on_provider,
                 )
                 return
             except _StreamAlreadyStartedError:
@@ -737,12 +746,19 @@ def _stream_one(
     *,
     temperature: float,
     provider_name: str,
+    on_provider: Callable[[str, str | None], None] | None = None,
 ) -> Iterator[str]:
     label = model or "(mặc định của adapter)"
     started = time.monotonic()
     stream = getattr(provider, "complete_stream", None)
     emitted = False
     chunks: list[str] = []
+
+    def _announce() -> None:
+        """Báo provider đã chốt, đúng một lần, ngay trước mẩu đầu tiên - xem `complete_stream`."""
+        if on_provider is not None and not emitted:
+            on_provider(provider_name, model)
+
     try:
         if stream is None:
             # Không hỗ trợ streaming -> vẫn giữ đúng hợp đồng iterator, chỉ là đúng một mẩu.
@@ -750,12 +766,14 @@ def _stream_one(
             text = (response.text or "").strip()
             if not text:
                 raise RuntimeError("trả về nội dung rỗng")
+            _announce()
             emitted = True
             chunks.append(text)
             yield text
         else:
             for piece in stream(messages, model=model, temperature=temperature):
                 if piece:
+                    _announce()
                     emitted = True
                     chunks.append(piece)
                     yield piece

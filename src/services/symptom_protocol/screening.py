@@ -220,8 +220,49 @@ def probe_fields(protocol: SymptomProtocol, groups: tuple[ScreeningGroup, ...]) 
     return tuple(ordered)
 
 
-PROBE_INTRO = "Mình hỏi nhanh một loạt dấu hiệu quan trọng để loại trừ, bạn xem có dấu hiệu nào không nhé:"
-PROBE_OUTRO = 'Nếu không có dấu hiệu nào trong số trên, bạn chỉ cần trả lời "không có dấu hiệu nào" là được ạ.'
+PROBE_INTRO = "Trước khi đi tiếp, mình cần loại trừ vài dấu hiệu nặng. Bạn xem có cái nào đang xảy ra không nhé:"
+PROBE_OUTRO = 'Nếu không có cái nào, bạn chỉ cần trả lời "không có dấu hiệu nào" là được ạ.'
+
+_HINT_SEPARATOR = ";"
+"""`probe_hint` gộp nhiều dấu hiệu bằng dấu chấm phẩy. Đây là ranh giới TÁCH DÒNG khi hiển thị."""
+
+_LEADING_CONJUNCTIONS = ("hoặc ", "hay ")
+"""Liên từ nối các vế trong `probe_hint`. Khi một vế được tách thành dòng riêng thì liên từ đứng đầu
+dòng không còn nối gì cả - bỏ nó đi là sửa CÁCH DIỄN ĐẠT, không đụng tới dấu hiệu nào."""
+
+
+def hint_items(group: ScreeningGroup) -> tuple[str, ...]:
+    """Tách `probe_hint` thành các dấu hiệu RỜI để mỗi cái đứng một dòng.
+
+    VÌ SAO KHÔNG ĐỌC NGUYÊN CẢ CHUỖI. `probe_hint` của nhóm quét cấp cứu gộp ba dấu hiệu thuộc ba cụm
+    khác nhau (Q3-06 hô hấp, Q3-07 đường thở, Q3-12 chảy máu) vào một câu dài nối bằng chấm phẩy. Đọc
+    liền một mạch thì người bệnh phải tự tách ba ý trong đầu giữa lúc đang khó chịu - và vì stage đó
+    chỉ có ĐÚNG MỘT nhóm, cả câu còn hiện ra dưới dạng một danh sách đánh số một mục, vô nghĩa.
+
+    KHÔNG MẤT CHỮ NÀO, và đó là ràng buộc cứng: hàm chỉ cắt ở dấu chấm phẩy rồi bỏ liên từ nối ở đầu
+    vế - không rút gọn, không diễn đạt lại, không bỏ vế nào. `test_probe_lines_never_lose_a_signal`
+    giữ đúng chỗ này, vì mất một dấu hiệu ở đây là mất một cơ hội phát hiện ca cấp cứu."""
+    items: list[str] = []
+    for part in group.probe_hint.split(_HINT_SEPARATOR):
+        text = part.strip()
+        for conjunction in _LEADING_CONJUNCTIONS:
+            if text.casefold().startswith(conjunction):
+                text = text[len(conjunction):].lstrip()
+                break
+        if text:
+            items.append(text[0].upper() + text[1:])
+    return tuple(items)
+
+
+def probe_lines(groups: tuple[ScreeningGroup, ...]) -> tuple[str, ...]:
+    """Các dòng dấu hiệu của câu sàng lọc, đã tách rời và đánh số nếu cần.
+
+    ĐÁNH SỐ CÓ ĐIỀU KIỆN: một danh sách đánh số đúng một mục không phải danh sách, nó là một câu bị
+    gắn thừa "1)" ở đầu. Dưới hai mục thì dùng gạch đầu dòng."""
+    items = [item for group in groups for item in hint_items(group)]
+    if len(items) < 2:
+        return tuple(f"- {item}" for item in items)
+    return tuple(f"{index}) {item}" for index, item in enumerate(items, start=1))
 
 
 def probe_question(groups: tuple[ScreeningGroup, ...]) -> str:
@@ -230,9 +271,11 @@ def probe_question(groups: tuple[ScreeningGroup, ...]) -> str:
     Đây là ràng buộc an toàn, không phải tiết kiệm một call: cả cơ chế này dựa trên tiền đề "nhóm chỉ
     được đóng khi người bệnh đã thực sự nhìn thấy danh sách dấu hiệu của nó". LLM diễn đạt lại một
     danh sách 5 nhóm rất dễ gộp/lược vài ý cho gọn, và khi đó một câu "không có gì cả" sẽ đóng cả
-    những dấu hiệu chưa bao giờ được đọc lên - đúng lỗi C1 ở quy mô lớn nhất."""
-    lines = [f"{index}) {group.probe_hint}" for index, group in enumerate(groups, start=1)]
-    return "\n".join([PROBE_INTRO, *lines, PROBE_OUTRO])
+    những dấu hiệu chưa bao giờ được đọc lên - đúng lỗi C1 ở quy mô lớn nhất.
+
+    Việc TÁCH DÒNG (`hint_items`) không phá ràng buộc đó: nó chạy bằng code, tất định, và không bỏ
+    chữ nào - khác hẳn một lần nhờ model viết lại cho gọn."""
+    return "\n".join([PROBE_INTRO, *probe_lines(groups), PROBE_OUTRO])
 
 
 def probe_cluster(protocol: SymptomProtocol, stage: str, groups: tuple[ScreeningGroup, ...]) -> QuestionCluster:
