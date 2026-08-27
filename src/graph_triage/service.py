@@ -29,6 +29,7 @@ import contextlib
 import logging
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from src.services.engines.priority_labels import (
     c6_label_for_priority,
 )
 from src.source_support import pipeline as source_support
+from src.source_support.progress import Progress
 from src.source_support.schemas import SourceSupport
 
 logger = logging.getLogger("vmedtriage.graph_triage")
@@ -387,11 +389,23 @@ def _compact_payload(
     return payload
 
 
-def decide_for_case(triage_case: TriageCase) -> dict | None:
+def decide_for_case(
+    triage_case: TriageCase,
+    *,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> dict | None:
     """Chạy agent quyết định cho một case đã chốt phiếu. `None` = không có gì để lưu.
 
     Không bao giờ raise: người gọi nằm trên đường phản hồi của bệnh nhân.
-    """
+
+    `on_progress`/`on_token` chỉ đi tới PART 3 và không đi đâu khác. Part 2 (agent quyết định) không
+    báo tiến trình: nó là chỗ chốt nhãn, và một dòng "đang nghiêng về cấp cứu" hiện ra rồi biến mất
+    khi ensemble đổi ý là thứ người đọc sẽ nhớ lâu hơn nhãn thật. Part 3 thì ngược lại - nó đã chốt
+    xong mọi thứ có thể đổi, nên báo ra bao nhiêu cũng không làm ai hiểu sai.
+
+    Cả hai callback chạy trên LUỒNG của lời gọi này (`run_in_threadpool` ở tầng API), không phải trên
+    event loop - người gọi bất đồng bộ phải tự bắc cầu về, xem `routes.chat_stream`."""
     settings = get_settings()
     if settings.graph_triage_mode == "off":
         return None
@@ -422,7 +436,9 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
                 decision["triage_label"],
                 ",".join(decision.get("escalated_by", [])) or "direct_label",
             )
-            support = _source_support_for(triage_case, decision)
+            support = _source_support_for(
+                triage_case, decision, on_progress=on_progress, on_token=on_token,
+            )
             root_span.log(
                 output={
                     "decided": True,
@@ -540,7 +556,9 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         # lại được nữa. Best-effort đúng ràng buộc 3: phần trích nguồn hỏng thì ca vẫn vào hàng đợi điều
         # dưỡng như thường. Gọi bên trong root span để Unit D/E (mở span trong
         # `src/source_support/pipeline.py`) parent đúng vào cùng trace này.
-        support = _source_support_for(triage_case, decision)
+        support = _source_support_for(
+            triage_case, decision, on_progress=on_progress, on_token=on_token,
+        )
 
         # Chỉ giữ kết luận cuối của LLM: màn hình điều dưỡng chỉ hiển thị phần này, còn xác suất từng
         # model và evidence graph không được đưa ra UI (quyết định thiết kế, xem kế hoạch mục A5).
@@ -567,7 +585,13 @@ def decide_for_case(triage_case: TriageCase) -> dict | None:
         return payload
 
 
-def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSupport | None:
+def _source_support_for(
+    triage_case: TriageCase,
+    decision: dict,
+    *,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> SourceSupport | None:
     """Trích nguồn y văn cho nhãn vừa chốt. `None` = tắt, hoặc hỏng (và đã ghi log).
 
     KHÔNG BAO GIỜ raise và KHÔNG BAO GIỜ đổi `triage_label`: người gọi nằm trên đường phản hồi của
@@ -577,7 +601,12 @@ def _source_support_for(triage_case: TriageCase, decision: dict) -> SourceSuppor
     try:
         from src.source_support import pipeline as source_support_pipeline
 
-        return source_support_pipeline.run(decision, triage_label=decision["triage_label"])
+        return source_support_pipeline.run(
+            decision,
+            triage_label=decision["triage_label"],
+            on_progress=on_progress,
+            on_token=on_token,
+        )
     except Exception as error:
         logger.warning(
             "graph_triage.source_support_failed case_id=%s error=%s: %s",

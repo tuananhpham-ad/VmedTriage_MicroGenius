@@ -291,6 +291,20 @@ async def test_screening_question_reads_out_every_signal_it_may_close(client):
     assert read_out, "không câu sàng lọc nào đọc lên nhóm 3A - test mất ý nghĩa"
 
 
+def signals_of(hint: str) -> list[str]:
+    """Các TỪ mang dấu hiệu trong một `probe_hint`, bỏ dấu câu và liên từ nối vế.
+
+    Kiểm theo TỪ chứ không theo nguyên văn cả chuỗi. `screening.probe_lines` tách mỗi vế thành một
+    dòng riêng, nên dấu chấm phẩy và chữ "hoặc" đứng đầu vế không còn nguyên trong câu hỏi - hai thứ
+    đó không mang dấu hiệu lâm sàng nào. Điều bất biến thật sự cần giữ là MỌI DẤU HIỆU ĐỀU ĐƯỢC ĐỌC
+    LÊN, và đó là thứ hàm này đo.
+
+    Cố ý KHÔNG gọi `screening.hint_items`: một bài test dùng chính hàm đang được kiểm để dựng kỳ vọng
+    sẽ vẫn xanh ngay cả khi hàm đó nuốt mất một vế."""
+    dropped = {"hoặc", "hay"}
+    return [word for word in re.findall(r"\w+", hint.casefold()) if word not in dropped]
+
+
 @pytest.mark.asyncio
 async def test_emergency_case_is_unaffected_by_screening(client):
     """Ca chốt đỏ từ câu quét E dừng ngay, không hỏi tiếp hồ sơ/triệu chứng/rủi ro."""
@@ -298,7 +312,8 @@ async def test_emergency_case_is_unaffected_by_screening(client):
     assert body["triage_level"] == "EMERGENCY"
     probes = [q for q in body["_questions"] if screening.PROBE_INTRO in q]
     assert len(probes) == 1
-    assert FEVER_PROTOCOL.screening_groups[0].probe_hint in probes[0]
+    asked = signals_of(probes[0])
+    assert all(word in asked for word in signals_of(FEVER_PROTOCOL.screening_groups[0].probe_hint))
 
 
 # --- contract & log --------------------------------------------------------------------------

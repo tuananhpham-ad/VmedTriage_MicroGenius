@@ -216,7 +216,7 @@ def test_c6_passes_its_grounded_decision_to_source_support(safety_gate_on, monke
     support = SourceSupport(summary=SupportSummary(requires_human_review=True))
     captured = {}
 
-    def run(decision, *, triage_label):
+    def run(decision, *, triage_label, **kwargs):
         captured["decision"] = decision
         captured["triage_label"] = triage_label
         return support
@@ -247,7 +247,9 @@ def test_c6_passes_the_effective_rule_or_c6_label_to_source_support(safety_gate_
     monkeypatch.setattr(
         source_support_pipeline,
         "run",
-        lambda decision, *, triage_label: (captured.update({"triage_label": triage_label}) or SourceSupport()),
+        lambda decision, *, triage_label, **kwargs: (
+            captured.update({"triage_label": triage_label}) or SourceSupport()
+        ),
     )
     case = _ready_case()
     case.triage_proposal = TriageProposal(priority=TriagePriority.URGENT, reason="rule baseline")

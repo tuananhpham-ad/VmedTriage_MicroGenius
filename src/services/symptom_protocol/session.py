@@ -625,7 +625,7 @@ class ProtocolSessionStore:
         protocol = self._protocol(session)
         # Cụm sẽ được dùng cho lượt này, tính TRƯỚC khi lập kế hoạch: controller cần biết phiên có
         # thật sự đang hỏi cái gì không thì mới quyết được là fail closed hay chạy tiếp.
-        cluster = session.current_cluster
+        cluster = self._cluster_for_protocol(session, protocol)
         if session.awaiting_catch_all:
             # Trả lời câu quét sót: vẫn là một lượt hỏi-đáp đầy đủ (trích xuất → rule engine → chốt),
             # chỉ khác ở chỗ cụm đang hỏi là cụm TỔNG HỢP dựng tại chỗ chứ không nằm trong protocol.
@@ -1202,6 +1202,45 @@ class ProtocolSessionStore:
         # chọn lại chính nó ở lượt sau và hội thoại quay vòng.
         if not result.retried_same_cluster or retries > agent.MAX_RETRIES_PER_CLUSTER:
             session.unresolved_cluster_ids.add(key)
+
+    def _cluster_for_protocol(self, session: Session, protocol) -> QuestionCluster | None:
+        """Cụm của lượt này, ĐÃ đối chiếu với protocol đang chạy. Lệch thì chọn lại, không dùng bừa.
+
+        LỖI THẬT ĐÃ TÁI HIỆN ĐƯỢC (production, `KeyError: 'complaint_onset_at'`). Lượt phát hiện đổi
+        protocol chọn cụm kế tiếp bằng protocol CŨ - `run_turn` nhận protocol cũ, `result.next_cluster`
+        sinh ra từ đó - rồi mới gán `session.protocol_name` sang tên mới. Lượt SAU ghép cụm cũ với
+        protocol mới, và mọi chỗ tra `protocol.fields_by_key[key]` vỡ ngay lúc dựng prompt: cụm `AB-02`
+        của bụng mang `complaint_onset_at`, mà `fever`/`chest_pain`/`headache` không khai field đó.
+        Người bệnh nhận đúng một dòng "Không xử lý được tin nhắn." giữa lúc đang khai bệnh.
+
+        KIỂM THEO FIELD, KHÔNG THEO MÃ CỤM. Cụm sàng lọc (`SCREEN-*`) và cụm quét sót được dựng tại
+        chỗ nên không nằm trong `protocol.clusters`; lọc theo mã sẽ vứt oan chúng mỗi lượt. Điều thật
+        sự cần đúng là "mọi field của cụm này đều có trong protocol đang chạy" - đúng bằng điều kiện
+        làm vỡ prompt, không rộng hơn.
+
+        CHỌN LẠI CHỨ KHÔNG TRẢ `None`. `None` giữa phiên rơi vào `FAIL_CLOSED_NO_CLUSTER`, tức đẩy
+        người bệnh sang bàn giao điều dưỡng vì một lỗi định tuyến nội bộ - phản ứng nặng hơn hẳn sự
+        cố. `advance` chạy trên `answers` đã có nên nó bỏ qua các cụm đã trả lời xong, không hỏi lại
+        từ đầu."""
+        cluster = session.current_cluster
+        if cluster is None or all(key in protocol.fields_by_key for key in cluster.fields):
+            return cluster
+
+        foreign = [key for key in cluster.fields if key not in protocol.fields_by_key]
+        stage = session.stage if session.stage in protocol.stage_order else protocol.stage_order[0]
+        step = stage_machine.advance(
+            protocol, stage, session.answers,
+            asked_ids=session.closed_ids_for_current_protocol(),
+        )
+        logger.warning(
+            "symptom_session.cluster_protocol_mismatch session=%s protocol=%s cluster=%s "
+            "field_la=%s -> chon_lai=%s",
+            session.session_id, protocol.name, cluster.id, ",".join(foreign),
+            step.cluster.id if step.cluster is not None else None,
+        )
+        session.stage = step.stage
+        session.current_cluster = step.cluster
+        return step.cluster
 
     def _progress(self, session: Session, result) -> None:
         """Cập nhật `session.stage`/`session.current_cluster` cho lượt kế tiếp, hoặc kết thúc phiên.

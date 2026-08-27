@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from src.config import get_settings
@@ -32,6 +33,7 @@ from src.source_support.claims import extract_claims
 from src.source_support.explain import NO_SOURCE_NOTE, write_explanation
 from src.source_support.index import SourceIndex
 from src.source_support.llm import CostMeter
+from src.source_support.progress import Progress, ProgressReporter, reporter_for
 from src.source_support.retrieval import retrieve
 from src.source_support.schemas import (
     ClaimResult,
@@ -47,14 +49,34 @@ logger = logging.getLogger("vmedtriage.source_support")
 DEFAULT_PATIENT_LABEL = "người bệnh"
 
 
-def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | None = None) -> SourceSupport:
+def run(
+    decision: dict[str, Any],
+    *,
+    triage_label: str,
+    index: SourceIndex | None = None,
+    on_progress: Progress | ProgressReporter | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> SourceSupport:
     """Chạy đủ bảy bước cho một quyết định. Raise khi guard chặn hoặc model hỏng - xem ràng buộc 3.
 
     `decision` là kết quả đầy đủ của C6 direct branch hoặc `result["llm_decision"]` của ensemble,
     lấy BÊN TRONG `service.decide_for_case` trước chỗ nó thu hẹp để trả UI. Bước 1 và Guard 0b cần
-    `evidence`; C6 direct branch cũng trả evidence có span đã được kiểm với phiếu tóm tắt."""
+    `evidence`; C6 direct branch cũng trả evidence có span đã được kiểm với phiếu tóm tắt.
+
+    HAI KÊNH BÁO RA NGOÀI, khác hẳn nhau, đừng gộp:
+
+    - `on_progress` nhận `ProgressEvent` cho MỌI bước. Đây là kênh thật sự làm ngắn cảm giác chờ, vì
+      nó phủ đúng đoạn dài nhất (bước 3-4: search, fetch, embed) - đoạn KHÔNG có chữ nào để stream.
+    - `on_token` nhận từng mẩu chữ của đoạn diễn giải ở bước 7, và CHỈ ở bước 7. Nó đến sau cùng, sau
+      khi phần lớn thời gian đã trôi qua, nên nó là hiệu ứng đọc chứ không phải cách rút ngắn chờ.
+      Chữ qua kênh này là BẢN NHÁP CHƯA QUA GUARD 5 - đọc `explain.write_explanation` trước khi dùng.
+
+    Một reporter DUY NHẤT được dựng ở đây rồi chuyền xuống mọi bước, để `elapsed_ms` trên màn hình
+    luôn là tổng thời gian đã chờ chứ không phải thời gian trong một bước."""
     settings = get_settings()
     meter = CostMeter()
+    reporter = reporter_for(on_progress)
+    reporter.emit("start", "Bắt đầu tra cứu tài liệu tham khảo", triage_label=triage_label)
 
     # Unit D (docs/eval/01_evaluation_units.md mục 5) - trích claim đi qua provider_router
     # (role=ROLE_CLAIM_SPLITTER), còn embedding (text-embedding-3-small) và web-search fallback
@@ -74,14 +96,21 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
             "can_change_label": False,
         },
     ) as claim_retrieval_span:
-        claims = extract_claims(decision, meter=meter)
+        claims = extract_claims(decision, meter=meter, on_progress=reporter)
         if not claims:
+            reporter.emit("done", "Không tách được mệnh đề nào - dừng, không có gì để trích")
             claim_retrieval_span.log(output={"claims_extracted": 0})
             return _empty(meter, note=NO_SOURCE_NOTE, reason="khong_tach_duoc_claim")
 
         index = index if index is not None else SourceIndex.load()
         before = len(index)
-        evidences = [retrieve(claim, index, meter=meter) for claim in claims]
+        evidences = [
+            retrieve(
+                claim, index, meter=meter, on_progress=reporter,
+                claim_index=position, claim_total=len(claims),
+            )
+            for position, claim in enumerate(claims, start=1)
+        ]
         if len(index) > before:
             index.save()
         claim_retrieval_span.log(
@@ -106,7 +135,7 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
     ) as verdict_span:
         results: list[ClaimResult] = []
         dropped = 0
-        for evidence, response in grade_all(evidences, meter=meter):
+        for evidence, response in grade_all(evidences, meter=meter, on_progress=reporter):
             # Guard 0c: claim đã bị viết lệch khỏi lập luận gốc thì bỏ hẳn, không đưa sang bước diễn
             # giải. Bỏ chứ không hạ verdict: một claim không phản ánh đúng lập luận thì kết quả đối
             # chiếu của nó - dù là `supports` hay `unsupported` - đều đang nói về một mệnh đề khác
@@ -132,6 +161,9 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
             # để lại dấu vết: nếu chỉ có mấy dòng `claim_dropped` rồi im bặt thì người đọc log không
             # phân biệt được "đã xong và không có gì để trích" với "treo giữa chừng" hay "văng ngoại lệ".
             verdict_span.log(output={"dropped_by_guard_0c": dropped, "results": 0})
+            reporter.emit(
+                "done", f"Guard 0c loại hết {dropped} mệnh đề - không có gì để trích", dropped=dropped,
+            )
             return _empty(meter, note=NO_SOURCE_NOTE, examined=len(claims), dropped=dropped,
                           reason="moi_claim_bi_guard_0c_loai")
 
@@ -141,6 +173,8 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
             patient_label=_patient_label(decision),
             patient_spans=_patient_spans(decision),
             meter=meter,
+            on_progress=reporter,
+            on_token=on_token,
         )
         verdict_span.log(
             output={
@@ -165,6 +199,15 @@ def run(decision: dict[str, Any], *, triage_label: str, index: SourceIndex | Non
         summary.claims_examined, summary.claims_with_support, summary.verified_citations,
         len(contradicted), dropped, summary.web_searches_performed, meter.llm_calls,
         meter.provider_calls, settings.source_support_threshold,
+    )
+    reporter.emit(
+        "done",
+        f"Xong: {summary.claims_examined} mệnh đề, {summary.verified_citations} trích dẫn, "
+        f"{summary.web_searches_performed} lượt search",
+        claims=summary.claims_examined,
+        citations=summary.verified_citations,
+        searches=summary.web_searches_performed,
+        requires_human_review=summary.requires_human_review,
     )
     return SourceSupport(
         explanation_vi=explanation,

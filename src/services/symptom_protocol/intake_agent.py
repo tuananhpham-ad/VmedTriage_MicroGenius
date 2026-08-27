@@ -136,9 +136,35 @@ def _missing_in_cluster(
 
 
 def _field_specs(protocol: SymptomProtocol, field_keys: tuple[str, ...]) -> str:
+    """Mô tả field cho prompt trích xuất. Field protocol không biết bị BỎ QUA kèm log, không raise.
+
+    VÌ SAO KHÔNG `raise`, DÙ ĐÓ LÀ TRIỆU CHỨNG CỦA MỘT LỖI THẬT. Hàm này chạy lúc dựng prompt, tức
+    NGOÀI khối `try` bọc lời gọi model trong `extract_turn` - nên một `KeyError` ở đây bay thẳng qua
+    `run_turn`, qua `session._turn`, ra tới route, và người bệnh nhận đúng một dòng "Không xử lý được
+    tin nhắn." giữa lúc đang khai bệnh. `extract_turn` hứa trong docstring của nó là KHÔNG BAO GIỜ
+    ném; chỗ này từng là lỗ thủng của lời hứa đó.
+
+    KHÓA THẬT NẰM Ở `key not in protocol.fields_by_key`: cụm đang hỏi thuộc protocol KHÁC với
+    protocol đang chạy. Nó xảy ra được vì lượt phát hiện đổi protocol chọn cụm kế tiếp bằng protocol
+    CŨ rồi mới đổi tên protocol (`session._turn`), nên lượt sau ghép cụm cũ với protocol mới. Ví dụ
+    đã tái hiện: cụm `AB-02` (bụng) mang `complaint_onset_at`, mà `fever`/`chest_pain`/`headache`
+    không khai field đó.
+
+    Bỏ qua ở đây là NGẮT MÁU, không phải chữa: field bị bỏ sẽ không được trích trong lượt đó. Nhưng
+    lượt vẫn chạy, `stage_machine.advance` vẫn chọn được cụm đúng của protocol mới cho lượt sau, nên
+    phiên tự về lại đường ray - khác hẳn việc chết cả lượt. Log ở mức WARNING vì nó luôn là dấu hiệu
+    của một lỗi định tuyến cần sửa, không phải trạng thái bình thường."""
+    unknown = [key for key in field_keys if key not in protocol.fields_by_key]
+    if unknown:
+        logger.warning(
+            "symptom_intake.unknown_fields protocol=%s fields=%s - cụm đang hỏi không thuộc protocol này",
+            protocol.name, ",".join(unknown),
+        )
     lines = []
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            continue
         # Ghi rõ ngoặc kép trong chính hint để giảm khả năng model trả bareword unknown (không quote)
         # - lỗi thật gặp phải với gpt-4o-mini qua OpenRouter khi chạy Checkpoint 6(b) của fever, xem
         # _repair_bareword_unknown ở dưới (vẫn giữ lớp sửa lỗi đó làm lưới an toàn, không chỉ dựa vào
@@ -777,7 +803,13 @@ def _collect_fields(
 
     collected: dict[str, TriState] = {}
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            # Field protocol đang chạy không khai - cùng nguyên nhân với `_field_specs` (cụm thuộc
+            # protocol khác) và cùng cách xử lý: bỏ qua, không raise. Không log lại ở đây vì
+            # `_field_specs` đã ghi đúng một dòng cho cùng lượt đó; log hai lần cho một sự cố làm
+            # người đọc tưởng nó xảy ra hai lần.
+            continue
         raw, evidence_span, operation = _field_payload(parsed.get(key))
 
         if operation == "unset":

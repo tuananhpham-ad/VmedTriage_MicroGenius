@@ -96,7 +96,9 @@ async def test_safety_gate_allows_c6_for_escalated_case(monkeypatch):
     case = TriageCase(status=CaseStatus.ESCALATED, summary_ready=True)
     await routes._attach_graph_decision(case, previous=None)
 
-    graph_decide.assert_called_once_with(case)
+    # Hai kwarg báo tiến trình luôn được truyền, kể cả khi rỗng - `/chat` thường không có ai
+    # nghe. Điều bài test này khẳng định là ca nào được đưa vào, không phải hình dạng lời gọi.
+    graph_decide.assert_called_once_with(case, on_progress=None, on_token=None)
     assert case.graph_decision == {"triage_label": "cap_cuu", "safety_gate": {}}
 
 

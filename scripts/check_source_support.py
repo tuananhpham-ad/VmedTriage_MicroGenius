@@ -32,6 +32,7 @@ from typing import Any
 from src.config import get_settings
 from src.source_support import pipeline
 from src.source_support.index import SourceIndex
+from src.source_support.progress import ProgressEvent
 from src.source_support.schemas import SourceSupport
 
 FEVER_CASE: dict[str, Any] = {
@@ -78,7 +79,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--provider-order", help='Ép thứ tự provider cho cả 3 bước, ví dụ "gemini,openai".')
     parser.add_argument("--index-only", action="store_true", help="Không search web, chỉ dùng index.")
     parser.add_argument("--json", action="store_true", help="In nguyên khối JSON thay vì bản đọc được.")
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="Tắt dòng tiến trình và bản nháp chạy chữ, chỉ in kết quả cuối.",
+    )
     return parser.parse_args()
+
+
+def _print_progress(event: ProgressEvent) -> None:
+    """In NGAY, không đệm. `flush=True` không phải để cho đẹp: stdout của Python khi bị pipe sang file
+    hay sang một terminal khác sẽ đệm theo khối 8KB, và cả lượt chạy chỉ ra chữ đúng một lần ở cuối -
+    tức là mất sạch thứ ta vừa dựng ra."""
+    print(f"  {event.elapsed_ms / 1000:6.1f}s  {event.text}", file=sys.stderr, flush=True)
+
+
+class _DraftPrinter:
+    """In bản nháp bước 7 theo từng mẩu, và nói THẲNG khi bản nháp bị Guard 5 vứt đi.
+
+    Không xoá được chữ đã in ra terminal, nên chỗ này không giả vờ "vẽ lại": nó in một đường kẻ và
+    một câu nói rõ đoạn vừa hiện KHÔNG phải kết quả. Phần `_render` phía sau vẫn in bản cuối cùng đầy
+    đủ - người đọc so hai bản là thấy ngay guard đã bắt được gì."""
+
+    def __init__(self) -> None:
+        self.started = False
+
+    def token(self, piece: str) -> None:
+        if not self.started:
+            print("", file=sys.stderr)
+            print("  --- bản nháp (CHƯA qua Guard 5) ---", file=sys.stderr, flush=True)
+            self.started = True
+        print(piece, end="", file=sys.stderr, flush=True)
+
+    def progress(self, event: ProgressEvent) -> None:
+        if event.phase == "explanation_replaced" and self.started:
+            print("", file=sys.stderr)
+            print(
+                "  --- ^ BẢN NHÁP TRÊN ĐÃ BỊ GUARD 5 CHẶN, KHÔNG PHẢI KẾT QUẢ ---",
+                file=sys.stderr, flush=True,
+            )
+        elif self.started and event.phase == "explain_done":
+            print("", file=sys.stderr, flush=True)
+        _print_progress(event)
 
 
 def main() -> int:
@@ -100,7 +141,16 @@ def main() -> int:
     print(f"Thứ tự provider: {settings.role_order_source_verdict or settings.llm_provider_order}\n")
 
     for name in [args.case] if args.case else list(CASES):
-        support = pipeline.run(CASES[name], triage_label=CASES[name]["triage_label"], index=index)
+        print("", file=sys.stderr)
+        print(f">>> CA: {name}", file=sys.stderr, flush=True)
+        printer = _DraftPrinter()
+        support = pipeline.run(
+            CASES[name],
+            triage_label=CASES[name]["triage_label"],
+            index=index,
+            on_progress=None if args.quiet else printer.progress,
+            on_token=None if args.quiet else printer.token,
+        )
         if args.json:
             print(json.dumps(support.model_dump(mode="json"), ensure_ascii=False, indent=2))
         else:

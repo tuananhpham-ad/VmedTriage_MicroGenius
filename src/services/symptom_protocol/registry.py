@@ -179,10 +179,14 @@ OPENING_QUESTIONS: tuple[str, ...] = (
     "Chào bạn. Hôm nay bạn hoặc người nhà đang thấy khó chịu ở đâu ạ?",
     "Bạn đang thấy trong người có gì không ổn ạ? Bạn cứ kể thoải mái, mình nghe.",
     "Mình có thể giúp gì cho bạn hôm nay? Bạn kể mình nghe đang khó chịu thế nào nhé.",
+    "Chào bạn, mình ở đây rồi. Trong người bạn hoặc người nhà đang có gì bất thường ạ?",
+    "Bạn đang gặp chuyện gì trong người vậy ạ? Kể mình nghe từ đầu cũng được, không cần vội.",
+    "Mình sẵn sàng nghe rồi ạ. Bạn hoặc người nhà đang thấy khó chịu chỗ nào?",
+    "Hôm nay có chuyện gì trong người khiến bạn phải nhắn cho mình vậy ạ? Bạn cứ kể tự nhiên nhé.",
 )
 """Các bản của câu mở. TĨNH, không qua LLM - nhưng KHÔNG chỉ một bản.
 
-Cả sáu bản nói đúng một việc: mời người bệnh kể tự do, một yêu cầu, một lượt. Bản dài hơn (liệt kê
+Cả mười bản nói đúng một việc: mời người bệnh kể tự do, một yêu cầu, một lượt. Bản dài hơn (liệt kê
 sẵn các thứ cần khai) làm người bệnh trả lời theo mẫu thay vì kể tự nhiên, mà kể tự nhiên mới là thứ
 lượt mở cần - nên các bản chỉ khác NHỊP và cách xưng hô, không khác nội dung.
 
