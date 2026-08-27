@@ -1,8 +1,9 @@
 import { api, ApiError, apiStream } from "../api.js";
-import { accountMenu, bindAccountMenu, openAccountInfo, openSettings } from "./account.js?v=design-20260827c";
+import { accountMenu, bindAccountMenu, openAccountInfo, openSettings } from "./account.js?v=design-20260827d";
 import { completedStatuses, setActiveCase, state } from "../state.js";
 import {
   appHeader,
+  applyAppTheme,
   escapeHtml,
   formatDate,
   icon,
@@ -11,6 +12,9 @@ import {
   priorityClass,
   priorityDot,
   priorityLabels,
+  readAppTheme,
+  resetAppTheme,
+  saveAppTheme,
   shortCaseId,
   showToast,
   statusClass,
@@ -30,7 +34,6 @@ const AI_SCOPE_VI =
 // bệnh nhân thì chưa có gì - đó là lý do trước đây phải F5 mới thấy kết quả.
 let casePolling = null;
 let quickChatPolling = null;
-const PATIENT_THEME_KEY = "vmed_patient_theme";
 const PATIENT_SIDEBAR_KEY = "vmed_patient_sidebar_collapsed";
 const QUICK_CHAT_OPEN_KEY = "vmed_quick_chat_open";
 const QUICK_CHAT_SEEN_PREFIX = "vmed_quick_chat_seen_";
@@ -44,38 +47,16 @@ function patientSidebarCollapsed() {
   }
 }
 
-function readPatientTheme() {
-  try {
-    return localStorage.getItem(PATIENT_THEME_KEY) === "dark" ? "dark" : "light";
-  } catch {
-    return "light";
-  }
-}
-
-function applyPatientTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-}
-
-/** Chủ đề là tuỳ chọn trong phiên bệnh nhân. Màn công khai không có bộ dark theme riêng, nên khi
+/** Chủ đề được dùng chung cho cả hai vai trò. Màn công khai không có bộ dark theme riêng, nên khi
  * đăng xuất phải trả token về sáng thay vì để màu chữ tối kế thừa trên các hero nền sáng. */
 export function resetPatientTheme() {
-  try {
-    localStorage.removeItem(PATIENT_THEME_KEY);
-  } catch {
-    // Vẫn trả giao diện về sáng nếu trình duyệt không cho truy cập localStorage.
-  }
-  applyPatientTheme("light");
+  resetAppTheme();
 }
 
 function bindPatientTheme(root) {
   root.querySelector("[data-theme-toggle]")?.addEventListener("click", (event) => {
     const next = event.currentTarget.dataset.theme === "dark" ? "light" : "dark";
-    try {
-      localStorage.setItem(PATIENT_THEME_KEY, next);
-    } catch {
-      // Chế độ vẫn đổi trong phiên hiện tại nếu trình duyệt chặn localStorage.
-    }
-    applyPatientTheme(next);
+    saveAppTheme(next);
     event.currentTarget.dataset.theme = next;
     event.currentTarget.setAttribute("aria-pressed", String(next === "dark"));
     event.currentTarget.querySelector("[data-theme-label]").textContent = `Chủ đề ${next === "dark" ? "sáng" : "tối"}`;
@@ -94,7 +75,7 @@ function bindPatientSidebar(root) {
     event.currentTarget.setAttribute("aria-label", label);
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
     event.currentTarget.dataset.tooltip = label;
-    event.currentTarget.innerHTML = icon(collapsed ? "chevronRight" : "chevronLeft", 16);
+    event.currentTarget.innerHTML = icon(collapsed ? "sidebarExpand" : "sidebarCollapse", 17);
     try {
       localStorage.setItem(PATIENT_SIDEBAR_KEY, collapsed ? "1" : "0");
     } catch {
@@ -103,7 +84,7 @@ function bindPatientSidebar(root) {
   });
 }
 
-applyPatientTheme(readPatientTheme());
+applyAppTheme(readAppTheme());
 
 export function stopCasePolling() {
   if (casePolling) window.clearInterval(casePolling);
@@ -187,7 +168,7 @@ function patientHeader(active, { title = "", right = "" } = {}) {
  * bệnh cần quay lại giữa trang chủ và kết quả; luồng khai báo vẫn dùng header gọn để tập trung vào
  * từng bước và không làm gián đoạn cảnh báo an toàn. */
 function patientSideNav(active) {
-  const theme = readPatientTheme();
+  const theme = readAppTheme();
   const collapsed = patientSidebarCollapsed();
   const toggleLabel = collapsed ? "Mở rộng" : "Thu gọn";
   const item = (key, label, glyph) => `<button class="patient-side-nav-item${key === active ? " is-active" : ""}" type="button" data-nav="${key}">
@@ -195,7 +176,7 @@ function patientSideNav(active) {
   </button>`;
 
   return `<aside class="patient-side-nav${collapsed ? " is-collapsed" : ""}" data-patient-sidebar>
-    <button class="patient-side-toggle" type="button" data-patient-sidebar-toggle aria-label="${toggleLabel}" aria-expanded="${!collapsed}" data-tooltip="${toggleLabel}">${icon(collapsed ? "chevronRight" : "chevronLeft", 16)}</button>
+    <button class="patient-side-toggle" type="button" data-patient-sidebar-toggle aria-label="${toggleLabel}" aria-expanded="${!collapsed}" data-tooltip="${toggleLabel}">${icon(collapsed ? "sidebarExpand" : "sidebarCollapse", 17)}</button>
     <a class="patient-side-brand brand" href="/" aria-label="VMedTriage">${icon("logo", 27)}<span class="brand-word">VMed<span>Triage</span></span></a>
     <nav aria-label="Điều hướng bệnh nhân">
       ${item("home", "Trang chủ", "pulse")}
@@ -722,10 +703,11 @@ export function renderPatientCases(root, { navigate, logout }) {
           <button class="primary-button" type="button" data-start>${icon("chat", 17)}<span>Khai báo ca mới</span></button>
         </div>
 
-        <div class="queue-toolbar">
-          <div class="filter-chips" role="group" aria-label="Lọc theo trạng thái xác nhận">
+        <div class="patient-case-toolbar">
+          <span>Trạng thái ca</span>
+          <div class="patient-case-filter-options" role="group" aria-label="Lọc theo trạng thái xác nhận">
             ${Object.entries(caseFilters)
-              .map(([key, filter], index) => `<button class="filter-chip${index === 0 ? " is-active" : ""}" type="button" data-case-filter="${key}"><span>${filter.label}</span><b data-count="${key}">0</b></button>`)
+              .map(([key, filter], index) => `<button class="patient-case-filter-button${index === 0 ? " is-active" : ""}" type="button" data-case-filter="${key}"><span>${filter.label}</span><b data-count="${key}">0</b></button>`)
               .join("")}
           </div>
         </div>

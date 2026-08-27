@@ -1,8 +1,8 @@
 import { api } from "../api.js";
-import { bindAccountMenu } from "./account.js?v=design-20260819b";
-import { bindSideNav, nurseShell, paintOverview } from "./nurse.js?v=design-20260824g";
+import { bindAccountMenu } from "./account.js?v=design-20260827d";
+import { bindSideNav, nurseShell, paintOverview } from "./nurse.js?v=design-20260827zh";
 import { completedStatuses, state } from "../state.js";
-import { escapeHtml, icon, symptomGroupLabels } from "../shared.js";
+import { escapeHtml, icon, priorityLabels, shortCaseId, showToast, symptomGroupLabels } from "../shared.js";
 
 /**
  * W-08 — bảng điều khiển của điều dưỡng.
@@ -28,9 +28,12 @@ const SERIES_DONE = "#eb6834";
 // không bao giờ chỉ dựa vào màu.
 const PRIORITY_TONES = { Emergency: "#c62828", Urgent: "#d68a00", "Self-care": "#1e7a4d" };
 const PRIORITY_TEXT = { Emergency: "Cấp cứu", Urgent: "Khám sớm", "Self-care": "Tự theo dõi" };
+// Phải khớp `red_flag_sla.SLA_CLINICAL_SECONDS` ở backend và `slaBadge()` ở nurse.js. Đồng hồ
+// chỉ chạy từ lúc ca vào hàng đợi (`queued_at`) đến lần đầu có điều dưỡng mở hồ sơ.
+const SLA_CLINICAL_SECONDS = 300;
 
 const GROUP_KEYS = ["fever", "abdominal_pain", "chest_pain", "shortness_of_breath", "headache"];
-const RANGES = { 7: "7 ngày", 30: "30 ngày" };
+const RANGES = [["yesterday", "Hôm qua"], ["7", "7 ngày"], ["30", "30 ngày"]];
 
 const view = { group: "all", days: 7 };
 
@@ -63,24 +66,35 @@ export function renderNurseDashboard(root, { navigate, logout }) {
       <span class="polling-chip">${icon("retry", 15)}<span id="dash-updated">Đang tải…</span></span>
     </div>
 
-    <div class="queue-toolbar">
-      <div class="filter-chips" role="group" aria-label="Lọc theo nhóm triệu chứng">
-        <button class="filter-chip is-active" type="button" data-group="all"><span>Tất cả nhóm</span></button>
-        ${GROUP_KEYS.map((key) => `<button class="filter-chip" type="button" data-group="${key}"><span>${escapeHtml(symptomGroupLabels[key] || key)}</span></button>`).join("")}
-      </div>
-      <div class="filter-chips" role="group" aria-label="Khoảng thời gian">
-        ${Object.entries(RANGES).map(([days, label], index) => `<button class="filter-chip${index === 0 ? " is-active" : ""}" type="button" data-days="${days}"><span>${label}</span></button>`).join("")}
-      </div>
+    <div class="dashboard-toolbar">
+      <section class="dashboard-filter-group" aria-label="Lọc theo nhóm triệu chứng">
+        <span>Nhóm triệu chứng</span>
+        <div class="dashboard-filter-options">
+          <button class="dashboard-filter-button is-active" type="button" data-group="all">Tất cả nhóm</button>
+          ${GROUP_KEYS.map((key) => `<button class="dashboard-filter-button" type="button" data-group="${key}">${escapeHtml(symptomGroupLabels[key] || key)}</button>`).join("")}
+        </div>
+      </section>
+      <section class="dashboard-filter-group dashboard-period-filter" aria-label="Khoảng thời gian">
+        <span>Khoảng thời gian</span>
+        <div class="dashboard-filter-options">
+          ${RANGES.map(([days, label], index) => `<button class="dashboard-filter-button${index === 1 ? " is-active" : ""}" type="button" data-days="${days}">${label}</button>`).join("")}
+        </div>
+      </section>
     </div>
 
     <div id="dash-body"></div>
+    <aside id="nurse-new-case-ticker" class="nurse-new-case-ticker" aria-live="polite"></aside>
   `);
 
   bindAccountMenu(root, { logout, onProfileSaved: () => renderNurseDashboard(root, { navigate, logout }) });
-  bindSideNav(root, { navigate }, "dashboard");
+  bindSideNav(root, { navigate, logout }, "dashboard");
   root.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", () => loadDashboard(root)));
   bindChips(root, "[data-group]", (button) => { view.group = button.dataset.group; });
-  bindChips(root, "[data-days]", (button) => { view.days = Number(button.dataset.days); });
+  bindChips(root, "[data-days]", (button) => { view.days = button.dataset.days === "yesterday" ? "yesterday" : Number(button.dataset.days); });
+  root.querySelector("#nurse-new-case-ticker")?.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-new-case]");
+    if (item) openDashboardCase(item.dataset.newCase, { navigate });
+  });
 
   view.group = "all";
   view.days = 7;
@@ -102,7 +116,7 @@ function bindChips(root, selector, apply) {
 async function loadDashboard(root) {
   try {
     state.queue = await api("/api/v1/nurse/queue");
-    root.querySelector("#dash-updated").textContent = `Cập nhật lúc ${new Date().toLocaleTimeString("vi-VN")}`;
+    root.querySelector("#dash-updated").textContent = `Cập nhật lúc ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}`;
   } catch (problem) {
     root.querySelector("#dash-updated").textContent = problem.message || "Không tải được dữ liệu";
   }
@@ -117,6 +131,11 @@ function groupOf(item) {
 
 function priorityOf(item) {
   return item.triage_proposal?.priority || "Manual review";
+}
+
+function isSlaBreached(item, now = Date.now()) {
+  if (!item.queued_at || item.first_opened_at || completedStatuses.has(item.status)) return false;
+  return now - new Date(item.queued_at).getTime() >= SLA_CLINICAL_SECONDS * 1000;
 }
 
 /** Ca thuộc phạm vi bộ lọc nhóm hiện tại. Bộ lọc áp cho KPI, biểu đồ đường và biểu đồ tròn; biểu đồ
@@ -138,7 +157,8 @@ function dailySeries(cases) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const days = [];
-  for (let offset = view.days - 1; offset >= 0; offset -= 1) {
+  const offsets = view.days === "yesterday" ? [1] : Array.from({ length: view.days }, (_, index) => view.days - index - 1);
+  for (const offset of offsets) {
     const date = new Date(today);
     date.setDate(date.getDate() - offset);
     days.push({ at: date, key: date.getTime(), arrived: 0, settled: 0 });
@@ -163,12 +183,14 @@ function paintDashboard(root) {
   const scopeName = view.group === "all" ? "tất cả nhóm" : symptomGroupLabels[view.group] || view.group;
   const redFlags = cases.filter((item) => item.status === "escalated" || item.red_flags?.length).length;
   const settled = cases.filter((item) => completedStatuses.has(item.status)).length;
+  const overdue = cases.filter((item) => isSlaBreached(item)).length;
 
   root.querySelector("#dash-body").innerHTML = `
     <div class="kpi-row">
       ${statTile("Tổng số ca", cases.length, `Trong phạm vi: ${escapeHtml(scopeName)}`)}
       ${statTile("Có dấu hiệu nguy hiểm", redFlags, cases.length ? `${Math.round((redFlags / cases.length) * 100)}% tổng số ca` : "Chưa có dữ liệu")}
       ${statTile("Đang chờ được xác nhận", cases.length - settled, "Chưa có quyết định của nhân viên y tế")}
+      ${statTile("Ca quá hạn", overdue, "Quá 5 phút, chưa có nhân viên mở hồ sơ", "is-overdue")}
       ${statTile("Đã chốt", settled, "Duyệt, từ chối hoặc đóng")}
     </div>
 
@@ -181,11 +203,77 @@ function paintDashboard(root) {
   `;
   bindLineHover(root);
   bindBarHover(root);
+  paintNewCaseTicker(root);
   drawDonut = false;
 }
 
-function statTile(label, value, note) {
-  return `<div class="kpi-tile">
+/** Dải ở đáy dashboard là một tín hiệu vận hành, không thay thế hàng đợi: chỉ nhắc những ca chưa
+ * được chốt và dẫn điều dưỡng tới đúng hồ sơ để vẫn thực hiện bước duyệt HITL. */
+function paintNewCaseTicker(root) {
+  const ticker = root.querySelector("#nurse-new-case-ticker");
+  if (!ticker) return;
+
+  const cases = state.queue
+    .filter((item) => !completedStatuses.has(item.status))
+    .sort((left, right) => {
+      const urgency = (item) => (item.status === "escalated" || item.red_flags?.length || priorityOf(item) === "Emergency" ? 0 : 1);
+      return urgency(left) - urgency(right) || new Date(right.created_at) - new Date(left.created_at);
+    })
+    .slice(0, 6);
+
+  if (!cases.length) {
+    ticker.classList.add("is-empty");
+    const waitingMessage = `${icon("pulse", 15)} VMedTriage đang theo dõi ca mới trong hàng đợi. Khi có bệnh nhân cần xử lý, thông báo sẽ xuất hiện tại đây để nhân viên y tế mở hồ sơ và xem xét.`;
+    ticker.innerHTML = `<div class="nurse-new-case-ticker-viewport">
+      <div class="nurse-new-case-ticker-track">
+        <div class="nurse-new-case-ticker-group"><span class="nurse-new-case-ticker-empty">${waitingMessage}</span><i aria-hidden="true">•</i><span class="nurse-new-case-ticker-empty">${waitingMessage}</span></div>
+        <div class="nurse-new-case-ticker-group" aria-hidden="true"><span class="nurse-new-case-ticker-empty">${waitingMessage}</span><i>•</i><span class="nurse-new-case-ticker-empty">${waitingMessage}</span></div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const itemMarkup = (item, interactive) => {
+    const priority = priorityOf(item);
+    const isUrgent = item.status === "escalated" || item.red_flags?.length || priority === "Emergency";
+    const name = item.patient_display_name || `Bệnh nhân · ${shortCaseId(item.case_id)}`;
+    const symptom = symptomGroupLabels[groupOf(item)] || "Triệu chứng chưa xác định";
+    const label = `${isUrgent ? "Ca cần ưu tiên" : "Ca mới"}: ${name}, ${symptom}. ${priorityLabels[priority] || "Cần điều dưỡng xem xét"}.`;
+    const content = `<span class="nurse-ticker-status${isUrgent ? " is-urgent" : ""}">${isUrgent ? "Ưu tiên" : "Ca mới"}</span>
+      <b>${escapeHtml(name)}</b><span>${escapeHtml(symptom)}</span>
+      <small>${escapeHtml(priorityLabels[priority] || "Cần xem xét")}</small>`;
+    return interactive
+      ? `<button class="nurse-ticker-item" type="button" data-new-case="${escapeHtml(item.case_id)}" aria-label="${escapeHtml(label)}">${content}</button>`
+      : `<span class="nurse-ticker-item" aria-hidden="true">${content}</span>`;
+  };
+
+  // Một hàng đợi ngắn cũng phải đủ dài để cuộn liên tục trên màn hình rộng. Các bản sao bổ sung
+  // chỉ để lấp dải chạy nên được ẩn khỏi trình đọc màn hình và không nhận focus.
+  const displayedItems = cases.map((item) => itemMarkup(item, true));
+  const fillerItems = Array.from({ length: Math.max(0, 8 - cases.length) }, (_, index) => itemMarkup(cases[index % cases.length], false));
+  const tickerItems = displayedItems.concat(fillerItems).join("");
+
+  ticker.classList.remove("is-empty");
+  ticker.innerHTML = `<div class="nurse-new-case-ticker-viewport">
+    <div class="nurse-new-case-ticker-track">
+      <div class="nurse-new-case-ticker-group">${tickerItems}</div>
+      <div class="nurse-new-case-ticker-group" aria-hidden="true">${cases.map((item) => itemMarkup(item, false)).concat(fillerItems).join("")}</div>
+    </div>
+  </div>`;
+}
+
+async function openDashboardCase(caseId, { navigate }) {
+  try {
+    state.selectedNurseCase = await api(`/api/v1/cases/${caseId}`);
+    sessionStorage.setItem("vmed_active_nurse_case_id", caseId);
+    navigate("nurse-case");
+  } catch (problem) {
+    showToast(problem.message || "Không thể mở hồ sơ ca.", true);
+  }
+}
+
+function statTile(label, value, note, tone = "") {
+  return `<div class="kpi-tile ${tone}">
     <span class="kpi-label">${escapeHtml(label)}</span>
     <b class="kpi-value">${escapeHtml(String(value))}</b>
     <span class="kpi-note">${escapeHtml(note)}</span>

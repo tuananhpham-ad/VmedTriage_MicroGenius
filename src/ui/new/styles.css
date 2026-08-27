@@ -204,10 +204,32 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .app-shell.is-fixed { height:100dvh; min-height:0; overflow:hidden; }
 /* `--rail` phải được ĐĂNG KÝ mới chuyển động được: custom property không khai báo kiểu thì trình
    duyệt coi nó là chuỗi và nhảy thẳng sang giá trị mới, không nội suy được. */
-@property --rail { syntax:"<length>"; inherits:true; initial-value:232px; }
-.nurse-body { display:grid; grid-template-columns:var(--rail, 232px) minmax(0, 1fr); flex:1; min-height:0; transition:--rail .24s cubic-bezier(.4, 0, .2, 1); }
+@property --rail { syntax:"<length>"; inherits:true; initial-value:248px; }
+.nurse-body { display:grid; grid-template-columns:var(--rail, 248px) minmax(0, 1fr); flex:1; min-height:0; transition:--rail .24s cubic-bezier(.4, 0, .2, 1); }
 .nurse-main { min-width:0; overflow-y:auto; padding:24px clamp(16px, 3vw, 30px) 40px; scrollbar-color:var(--blue-line) transparent; }
+.nurse-main:has(.nurse-new-case-ticker) { padding-bottom:72px; }
 .card { border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface); }
+
+/* Dải ca mới ghim ở đáy vùng làm việc, không phủ lên rail. Mỗi mục vẫn là nút mở hồ sơ, vì đây là
+   thông báo vận hành chứ không được phép thay cho bước điều dưỡng xem xét và duyệt ca. */
+.nurse-new-case-ticker { position:fixed; right:0; bottom:0; left:var(--rail, 248px); z-index:20; overflow:hidden; border-top:1px solid var(--blue-line); color:var(--blue-deep); background:var(--blue-soft); box-shadow:0 -5px 16px rgb(20 76 138 / .08); font-size:13.5px; font-weight:500; line-height:1.45; transition:left .24s cubic-bezier(.4, 0, .2, 1); }
+.nurse-new-case-ticker-viewport { overflow:hidden; padding:11px 28px; mask-image:linear-gradient(90deg, transparent 0%, #000 4%, #000 96%, transparent 100%); -webkit-mask-image:linear-gradient(90deg, transparent 0%, #000 4%, #000 96%, transparent 100%); }
+.nurse-new-case-ticker-track { display:flex; width:max-content; white-space:nowrap; animation:nurse-new-case-ticker 28s linear infinite; }
+.nurse-new-case-ticker:hover .nurse-new-case-ticker-track, .nurse-new-case-ticker:focus-within .nurse-new-case-ticker-track { animation-play-state:paused; }
+.nurse-new-case-ticker-group { display:flex; align-items:center; gap:20px; padding-right:20px; }
+.nurse-ticker-item { display:inline-flex; align-items:center; gap:7px; border:0; padding:0; color:var(--ink-2); background:transparent; font:inherit; font-size:13.5px; font-weight:500; line-height:1.45; white-space:nowrap; }
+button.nurse-ticker-item { cursor:pointer; transition:color .16s ease; }
+button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:var(--blue); outline:0; text-decoration:underline; text-underline-offset:3px; }
+.nurse-ticker-item > b { color:var(--blue-deep); font-weight:700; }
+.nurse-ticker-item > small { color:var(--muted); font-size:13.5px; }
+.nurse-ticker-status { display:inline-flex; align-items:center; gap:5px; color:var(--blue-deep); font-size:13.5px; font-weight:700; }
+.nurse-ticker-status::before { width:8px; height:8px; border-radius:50%; background:var(--blue); box-shadow:0 0 0 4px rgb(37 99 235 / .12); content:""; }
+.nurse-ticker-status.is-urgent { color:var(--red-deep); }
+.nurse-ticker-status.is-urgent::before { background:var(--red); box-shadow:0 0 0 4px var(--red-soft-2); }
+.nurse-new-case-ticker.is-empty { display:block; min-height:0; padding:0; color:var(--muted); background:var(--surface-soft); box-shadow:0 -5px 16px rgb(20 76 138 / .05); font-size:13.5px; }
+.nurse-new-case-ticker-empty { display:inline-flex; align-items:center; gap:8px; }
+.nurse-new-case-ticker.is-empty i { color:var(--blue); font-style:normal; }
+@keyframes nurse-new-case-ticker { from { transform:translateX(0); } to { transform:translateX(-50%); } }
 
 /* ── W-00P trang giới thiệu công khai ──────────────────────────────────────────────────────── */
 .landing-shell { display:flex; min-height:100dvh; justify-content:center; padding:clamp(16px, 3vw, 32px); background:var(--page); }
@@ -711,27 +733,68 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
    hai con số tổng thì liếc. Cột phải hẹp hơn cột lọc cũ vì nó không còn phải chứa 5 dòng bộ lọc. */
 .queue-side { display:flex; flex-direction:column; gap:16px; }
 
-/* Bộ lọc chuyển từ cột trái vào ngay trên bảng: bộ lọc và thứ nó lọc phải nằm cùng một chỗ, và bỏ
-   cột trái trả lại ~236px chiều ngang cho các cột dữ liệu của bảng. */
+/* Chỉ còn tìm kiếm ở đây; bộ lọc mức ưu tiên nằm trong menu con của Hàng đợi để chỉ có một nơi
+   điều khiển bộ lọc. */
 .queue-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; border:1px solid var(--line); border-radius:13px; padding:11px 13px; margin-bottom:14px; background:var(--surface); }
-.filter-chips { display:flex; gap:6px; flex-wrap:wrap; }
-.filter-chip { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:var(--r-pill); padding:7px 13px; color:var(--muted-2); background:var(--surface); font-size:13.5px; font-weight:500; white-space:nowrap; }
-.filter-chip:hover { background:var(--surface-soft); }
-.filter-chip.is-active { border-color:var(--blue-line); color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
-.filter-chip b { color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums; }
-.filter-chip.is-active b { color:inherit; font-weight:600; }
-.queue-search { flex:1; min-width:180px; max-width:290px; }
+.queue-search { flex:1; min-width:180px; max-width:290px; margin-left:auto; }
 .queue-search input { width:100%; min-height:38px; font-size:14px; }
+.dashboard-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; border:1px solid var(--line); border-radius:14px; padding:10px 12px; margin-bottom:16px; background:var(--surface); box-shadow:0 1px 2px rgb(22 32 43 / .02); }
+.dashboard-filter-group { display:flex; align-items:center; gap:10px; min-width:0; }
+.dashboard-filter-group > span { flex:none; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+.dashboard-filter-options { display:flex; align-items:center; gap:3px; min-width:0; overflow-x:auto; border:1px solid var(--line); border-radius:10px; padding:3px; background:var(--surface-soft); scrollbar-width:none; }
+.dashboard-filter-options::-webkit-scrollbar { display:none; }
+.dashboard-filter-button { flex:none; border:0; border-radius:7px; padding:7px 10px; color:var(--muted-2); background:transparent; font-size:13px; font-weight:500; line-height:1.25; white-space:nowrap; }
+.dashboard-filter-button:hover { color:var(--blue-deep); background:var(--blue-soft); }
+.dashboard-filter-button.is-active { color:var(--blue-deep); background:var(--blue-soft); box-shadow:inset 0 0 0 1px var(--blue), 0 3px 8px rgb(22 32 43 / .18); font-weight:700; transform:translateY(-1px); }
+.dashboard-filter-button:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
+.patient-case-toolbar { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:14px; padding:10px 12px; margin-bottom:14px; background:var(--surface); }
+.patient-case-toolbar > span { flex:none; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+.patient-case-filter-options { display:flex; align-items:center; gap:3px; min-width:0; overflow-x:auto; border:1px solid var(--line); border-radius:10px; padding:3px; background:var(--surface-soft); scrollbar-width:none; }
+.patient-case-filter-options::-webkit-scrollbar { display:none; }
+.patient-case-filter-button { display:inline-flex; align-items:center; gap:7px; flex:none; border:0; border-radius:7px; padding:7px 10px; color:var(--muted-2); background:transparent; font-size:13px; font-weight:500; line-height:1.25; white-space:nowrap; }
+.patient-case-filter-button:hover { color:var(--blue-deep); background:var(--blue-soft); }
+.patient-case-filter-button b { display:grid; min-width:18px; height:18px; place-items:center; border-radius:var(--r-pill); color:var(--faint); background:var(--surface-mute); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; }
+.patient-case-filter-button.is-active { color:var(--blue-deep); background:var(--blue-soft); box-shadow:inset 0 0 0 1px var(--blue), 0 3px 8px rgb(22 32 43 / .14); font-weight:700; transform:translateY(-1px); }
+.patient-case-filter-button.is-active b { color:var(--blue-deep); background:var(--surface); }
+.patient-case-filter-button:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
 
 /* Thanh điều hướng bên trái - dải dọc cao hết màn hình, không phải một thẻ nổi. Mục đang mở có
    vạch màu bên trái + nền xanh nhạt; nhãn nhóm chia các mục thành từng cụm đọc được. */
-.queue-side { position:relative; display:flex; flex-direction:column; gap:2px; overflow-y:auto; padding:14px 12px 18px; border-right:1px solid var(--line); background:var(--surface); }
-.nav-list { display:flex; flex-direction:column; gap:2px; }
+.queue-side { position:relative; display:flex; flex-direction:column; gap:2px; overflow:visible; padding:22px 14px 16px; border-right:1px solid var(--line); background:var(--surface); }
+.nurse-side-top { display:flex; align-items:center; justify-content:space-between; min-height:34px; margin:0 0 24px 8px; }
+.nurse-side-brand { min-width:0; }
+.nurse-side-brand > .ico { flex:none; color:var(--blue); }
+.nav-list { display:flex; flex:1; min-height:0; flex-direction:column; gap:2px; overflow-y:auto; }
+.nurse-side-account { position:relative; z-index:41; display:flex; flex:none; align-items:center; gap:24px; margin:auto 6px 0; border-top:1px solid var(--divider); padding-top:18px; }
+.nurse-side-account .header-identity { flex:1; min-width:0; gap:4px; text-align:left; }
+.nurse-side-account .header-identity b, .nurse-side-account .header-identity small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nurse-side-account .header-identity small { justify-self:start; margin-left:-8px; font-size:13px; }
+.nurse-side-account .header-identity b { font-size:16px; font-weight:600; }
+.nurse-side-account .account-avatar { width:46px; height:46px; color:#fff; background:var(--blue); font-size:14px; }
+.nurse-side-account .account-dropdown { top:auto; right:auto; bottom:calc(100% + 10px); left:0; }
 .nav-group { margin:16px 0 6px; padding-left:11px; color:var(--faint); font-size:11.5px; font-weight:500; letter-spacing:.02em; transition:font-size .24s cubic-bezier(.4, 0, .2, 1), margin .24s cubic-bezier(.4, 0, .2, 1), color .16s ease; }
 .nav-list > .nav-group:first-child { margin-top:2px; }
-.nav-item { position:relative; display:flex; align-items:center; gap:12px; overflow:hidden; width:100%; border:0; border-radius:9px; padding:10px 11px; color:var(--muted-2); background:transparent; font-size:14px; text-align:left; transition:gap .24s cubic-bezier(.4, 0, .2, 1), background-color .15s ease, color .15s ease; }
-.nav-item:hover { background:var(--surface-soft); }
+.nav-item { position:relative; display:flex; align-items:center; gap:12px; overflow:hidden; width:100%; border:0; border-radius:9px; padding:11px 12px; color:var(--muted-2); background:transparent; font-size:14px; font-weight:500; text-align:left; transition:gap .24s cubic-bezier(.4, 0, .2, 1), background-color .15s ease, color .15s ease; }
+.nav-item:hover { color:var(--blue); background:var(--surface-soft); }
+.nav-item:hover .nav-count { color:var(--blue); }
 .nav-item.is-on { color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
+.nav-subnav { display:grid; gap:2px; margin:3px 0 7px 30px; border-left:1px solid var(--line); padding-left:9px; }
+.nav-subnav[hidden] { display:none; }
+.nav-subnav-item { display:flex; align-items:center; gap:8px; width:100%; border:0; border-radius:8px; padding:8px 9px; color:var(--muted-2); background:transparent; font-size:13px; text-align:left; }
+.nav-subnav-item:hover { color:var(--blue); background:var(--surface-soft); }
+.nav-subnav-item:hover b { color:var(--blue); }
+.nav-subnav-item.is-active { color:var(--blue-deep); background:var(--blue-soft); font-weight:600; }
+.nav-subnav-item > .priority-dot { width:8px; height:8px; }
+.nav-subnav-item > span:not(.priority-dot) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nav-subnav-item b { margin-left:auto; color:var(--faint); font-size:12.5px; font-weight:500; font-variant-numeric:tabular-nums; }
+.nav-subnav-item.is-active b { color:inherit; font-weight:600; }
+.nav-subnav-item.is-emergency b { color:var(--red-deep); font-weight:700; }
+.nurse-theme-toggle { display:grid; grid-template-columns:18px minmax(0, 1fr); align-items:center; gap:12px; width:100%; border:0; border-radius:9px; padding:10px 12px; color:var(--muted-2); background:transparent; font-size:14px; font-weight:500; text-align:left; }
+.nurse-theme-toggle:hover { color:var(--blue); background:var(--surface-soft); }
+.nurse-theme-icon { display:grid; width:18px; height:18px; place-items:center; }
+.nurse-theme-icon .ico:first-child { display:none; }
+.nurse-theme-toggle[data-theme="dark"] .nurse-theme-icon .ico:first-child { display:block; }
+.nurse-theme-toggle[data-theme="dark"] .nurse-theme-icon .ico:last-child { display:none; }
 /* Vạch chỉ báo nằm ở MÉP RAIL, không phải mép nút - nó chỉ ra "bạn đang ở nhánh này", giống bản
    tham chiếu; vẽ bằng ::before nên không làm nút xê dịch khi đổi trạng thái. */
 .nav-item.is-on::before { content:""; position:absolute; top:7px; bottom:7px; left:-12px; width:3px; border-radius:0 3px 3px 0; background:var(--blue); }
@@ -739,22 +802,34 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .nav-text { flex:1; max-width:180px; white-space:nowrap; overflow:hidden; transition:max-width .24s cubic-bezier(.4, 0, .2, 1), opacity .16s ease; }
 .nav-count { max-width:40px; overflow:hidden; color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums; transition:max-width .24s cubic-bezier(.4, 0, .2, 1), opacity .16s ease; }
 .nav-item.is-on .nav-count { color:inherit; font-weight:600; }
+.nav-count.is-alert { display:grid; min-width:20px; height:20px; place-items:center; border-radius:var(--r-pill); padding:0 5px; color:#fff; background:var(--red); font-size:11px; font-weight:700; line-height:1; }
+.nav-item.is-on .nav-count.is-alert { color:#fff; }
 
-.nav-toggle { display:flex; align-items:center; justify-content:center; align-self:flex-end; flex:none; width:28px; height:28px; border:1px solid var(--line); border-radius:50%; color:var(--faint); background:var(--surface); transition:transform .24s cubic-bezier(.4, 0, .2, 1), color .15s ease, background-color .15s ease; }
-.nav-toggle:hover { color:var(--muted-2); background:var(--surface-soft); }
+.nav-toggle { position:relative; display:flex; align-items:center; justify-content:center; flex:none; width:34px; height:34px; border:1px solid var(--blue-line); border-radius:10px; color:var(--blue); background:var(--blue-soft); box-shadow:0 3px 9px rgb(20 76 138 / .12); transition:transform .16s ease, color .16s ease, border-color .16s ease, background-color .16s ease; }
+.nav-toggle:hover { border-color:var(--blue); color:#fff; background:var(--blue); transform:scale(1.05); }
+.nav-toggle::after { content:attr(data-tooltip); position:absolute; top:50%; left:calc(100% + 9px); z-index:4; width:max-content; max-width:190px; transform:translateY(-50%); border-radius:7px; padding:5px 8px; color:#fff; background:#1f2a36; box-shadow:var(--shadow-menu); font-size:11.5px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .14s ease; }
+.nav-toggle:hover::after, .nav-toggle:focus-visible::after { opacity:1; }
 
 /* Thu gọn: chỉ còn dải icon. Nhãn bóp về bề rộng 0 + mờ đi chứ KHÔNG `display:none` - thuộc tính
    `display` không chuyển động được, đặt nó thì nhãn biến mất giật cục giữa lúc rail đang trượt.
    Rộng 0 + `gap:0` nên icon vẫn nằm đúng tâm dải. Bề rộng rail đổi qua `--rail`, lưới tự co theo. */
-.nurse-body:has(.queue-side.is-collapsed) { --rail:68px; }
+.nurse-body:has(.queue-side.is-collapsed) { --rail:76px; }
 .queue-side.is-collapsed .nav-text, .queue-side.is-collapsed .nav-count { max-width:0; opacity:0; }
 .queue-side.is-collapsed .nav-group { overflow:hidden; margin:14px 0 6px; padding:0; border-top:1px solid var(--divider); color:transparent; font-size:0; }
 .queue-side.is-collapsed .nav-item { justify-content:center; gap:0; padding-inline:0; }
-.queue-side.is-collapsed .nav-toggle { align-self:center; transform:rotate(180deg); }
+.queue-side.is-collapsed .nurse-side-top { justify-content:center; margin-inline:0; }
+.queue-side.is-collapsed .nurse-side-brand { display:none; }
+.queue-side.is-collapsed .nav-subnav { display:none; }
+.queue-side.is-collapsed .nurse-theme-toggle { grid-template-columns:18px; justify-content:center; padding-inline:0; }
+.queue-side.is-collapsed .nurse-theme-toggle > span:nth-child(2) { display:none; }
+.queue-side.is-collapsed .nurse-side-account { justify-content:center; margin-inline:0; padding-inline:0; }
+.queue-side.is-collapsed .nurse-side-account .header-identity { display:none; }
 
 .queue-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:16px; }
 .queue-head h1 { margin:0; font-size:22px; font-weight:600; }
 .queue-head p { margin:3px 0 0; color:var(--muted); font-size:13.5px; }
+.queue-head-actions { display:flex; align-items:center; justify-content:flex-end; gap:14px; }
+.queue-head .queue-search { flex:none; width:clamp(240px, 22vw, 330px); max-width:none; margin:0; }
 .polling-chip { display:flex; align-items:center; gap:8px; color:var(--faint); font-size:13px; }
 .polling-chip .ico { animation:vmt-spin 4s linear infinite; }
 .queue-table { display:flex; flex-direction:column; gap:8px; padding-top:8px; }
@@ -778,6 +853,164 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .queue-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; border:1px solid var(--line); border-radius:var(--r-card); padding:96px 20px; background:var(--surface); }
 .queue-empty h2 { margin:0; font-size:19px; font-weight:600; letter-spacing:-.01em; }
 .queue-empty p { margin:0; color:var(--muted); font-size:14px; }
+
+/* Hộp thư điều dưỡng là một danh sách hội thoại độc lập: có thể nhắn nhiều ca song song, nhưng chỉ
+   hiện các ca ở trạng thái hỏi thêm. Vì thế nó không lẫn với hàng đợi cần duyệt và không tạo ảo giác
+/* ── Tin nhắn nhân viên y tế (Nurse Messaging Workspace) ────────────────────────── */
+.nurse-msg-avatar { display:grid; place-items:center; border-radius:50%; font-weight:700; color:#fff; flex:none; user-select:none; text-transform:uppercase; letter-spacing:.02em; box-shadow:0 2px 8px rgb(0 0 0 / .12); transition:transform .15s ease; }
+.nurse-msg-avatar.is-patient { background:linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); }
+.nurse-msg-avatar.is-nurse { background:linear-gradient(135deg, #10b981 0%, #059669 100%); }
+
+.message-inbox { display:grid; grid-template-columns:320px minmax(460px, 1fr) 295px; gap:16px; height:calc(100dvh - 190px); max-height:calc(100dvh - 190px); min-height:520px; background:transparent; border:none; box-shadow:none; }
+.message-inbox-list, .message-thread-panel, .message-case-context { display:flex; flex-direction:column; height:100%; min-height:0; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:var(--shadow-frame); overflow:hidden; }
+
+/* Cột 1: Danh sách hội thoại có thanh cuộn riêng */
+.message-inbox-list-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:16px 18px 12px; background:var(--surface); border-bottom:1px solid var(--line); flex:none; }
+.message-inbox-list-head > span { display:grid; gap:2px; }
+.message-inbox-list-head strong { color:var(--ink); font-size:15px; font-weight:700; }
+.message-inbox-list-head small { color:var(--muted); font-size:11.5px; }
+.message-inbox-list-head > b { display:grid; min-width:24px; height:24px; place-items:center; border-radius:var(--r-pill); padding:0 7px; color:var(--blue-deep); background:var(--blue-soft); font-size:12px; font-weight:700; }
+.message-inbox-search { padding:12px 14px; border-bottom:1px solid var(--line); background:var(--surface); flex:none; }
+.message-inbox-search input { width:100%; min-height:38px; border-radius:10px; font-size:13px; padding-left:12px; }
+.message-case-list { display:flex; flex:1; min-height:0; height:100%; flex-direction:column; gap:4px; overflow-y:auto; overflow-x:hidden; padding:8px; scrollbar-width:none; -ms-overflow-style:none; }
+.message-case-list::-webkit-scrollbar { display:none; width:0; height:0; }
+.message-case-row { display:flex; gap:11px; align-items:center; width:100%; border:1px solid transparent; border-radius:12px; padding:10px 12px; color:var(--ink); background:transparent; text-align:left; transition:all .14s ease; flex:none; cursor:pointer; }
+.message-case-row:hover { border-color:var(--line); background:var(--surface-soft); }
+.message-case-row.is-active { border-color:var(--blue-line); background:var(--blue-soft); box-shadow:inset 3px 0 var(--blue); }
+.message-case-row-avatar { flex:none; }
+.message-case-row-body { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.message-case-row-top { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.message-case-name { color:var(--ink); font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.message-case-meta { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.message-case-complaint { color:var(--blue); font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.message-case-time { color:var(--muted); font-size:11px; white-space:nowrap; flex:none; }
+.message-case-preview { display:flex; align-items:center; justify-content:space-between; gap:6px; color:var(--muted); font-size:12px; line-height:1.35; }
+.preview-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; }
+.preview-author { color:var(--muted-2); font-weight:500; }
+.message-case-id { font-family:monospace; font-size:10.5px; font-weight:600; color:var(--faint); background:var(--surface-mute); padding:1px 5px; border-radius:4px; flex:none; }
+.priority-badge.is-compact { font-size:10.5px; padding:1px 7px; border-radius:var(--r-pill); }
+.message-inbox-empty { display:grid; place-content:center; justify-items:center; gap:8px; margin:auto 10px; padding:36px 14px; color:var(--muted); text-align:center; }
+.message-inbox-empty strong { color:var(--ink); font-size:14.5px; }
+.message-inbox-empty p { margin:0; font-size:12.5px; line-height:1.5; }
+
+/* Cột 2: Khung chat chính có thanh cuộn riêng */
+.message-thread-panel { display:flex; flex-direction:column; height:100%; min-width:0; min-height:0; background:var(--surface); }
+.message-thread-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:none; border-bottom:1px solid var(--line); padding:14px 20px; background:var(--surface); }
+.message-thread-identity { display:flex; align-items:center; min-width:0; gap:12px; }
+.message-thread-avatar-wrap { position:relative; flex:none; }
+.online-status-dot { position:absolute; bottom:0; right:0; width:10px; height:10px; border-radius:50%; background:#10b981; box-shadow:0 0 0 2px var(--surface); }
+.message-thread-identity-text { display:grid; gap:3px; min-width:0; }
+.message-thread-name-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.message-thread-name-row strong { color:var(--ink); font-size:16px; font-weight:700; }
+.message-thread-identity-text small { color:var(--muted); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.message-thread-identity-text small b { color:var(--ink); }
+.message-thread-status { display:inline-flex; align-items:center; gap:4px; border-radius:var(--r-pill); padding:3px 9px; color:var(--amber-deep); background:var(--amber-soft); font-size:11px; font-weight:600; }
+.message-thread-head-actions { display:flex; align-items:center; gap:8px; flex:none; }
+.message-safety-note { display:flex; align-items:center; gap:9px; flex:none; border-bottom:1px solid var(--blue-line); padding:9px 20px; color:var(--blue-deep); background:var(--blue-soft); font-size:12px; line-height:1.45; }
+.message-safety-note .ico { flex:none; color:var(--blue); }
+.message-thread-log { display:flex; flex:1; min-height:0; height:100%; flex-direction:column; gap:16px; overflow-y:auto; overflow-x:hidden; padding:20px 24px; background:var(--surface-soft); scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent; }
+.message-day-divider { display:flex; align-items:center; gap:12px; margin:4px 0 8px; color:var(--faint); font-size:11px; font-weight:600; text-align:center; flex:none; }
+.message-day-divider::before, .message-day-divider::after { content:""; flex:1; height:1px; background:var(--line); }
+.message-day-divider span { border-radius:var(--r-pill); padding:3px 10px; background:var(--surface-mute); }
+
+/* Thanh cuộn WebKit tùy chỉnh mượt mà cho khung chat & ngữ cảnh ca */
+.message-thread-log::-webkit-scrollbar,
+.message-context-body::-webkit-scrollbar { width:6px; }
+.message-thread-log::-webkit-scrollbar-track,
+.message-context-body::-webkit-scrollbar-track { background:transparent; }
+.message-thread-log::-webkit-scrollbar-thumb,
+.message-context-body::-webkit-scrollbar-thumb { background:var(--line-strong); border-radius:999px; }
+.message-thread-log::-webkit-scrollbar-thumb:hover,
+.message-context-body::-webkit-scrollbar-thumb:hover { background:var(--muted); }
+
+/* Chat bubble Turns */
+.nurse-chat-turn { display:flex; gap:12px; max-width:min(85%, 680px); width:auto; }
+.nurse-chat-turn.is-nurse { align-self:flex-end; flex-direction:row-reverse; }
+.nurse-chat-turn.is-patient { align-self:flex-start; flex-direction:row; }
+.nurse-chat-turn-avatar { flex:none; margin-top:2px; }
+.nurse-chat-turn-content { display:flex; flex-direction:column; gap:5px; min-width:0; max-width:100%; }
+.nurse-chat-turn.is-nurse .nurse-chat-turn-content { align-items:flex-end; }
+.nurse-chat-turn.is-patient .nurse-chat-turn-content { align-items:flex-start; }
+.nurse-chat-turn-header { display:flex; align-items:center; gap:8px; font-size:12px; padding:0 4px; }
+.nurse-chat-turn.is-nurse .nurse-chat-turn-header { flex-direction:row-reverse; }
+.nurse-chat-turn-author { font-weight:600; color:var(--ink); }
+.nurse-chat-turn-time { font-size:11px; color:var(--muted); }
+.chat-tts-icon-btn { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:50%; border:none; background:transparent; color:var(--muted); cursor:pointer; opacity:.7; transition:all .15s ease; margin-left:2px; padding:0; }
+.chat-tts-icon-btn:hover { opacity:1; color:var(--blue); background:var(--blue-soft); transform:scale(1.1); }
+.chat-tts-icon-btn.is-speaking { opacity:1; color:var(--blue); animation:pulse-speaking 1s infinite; }
+@keyframes pulse-speaking { 0% { transform:scale(1); } 50% { transform:scale(1.2); } 100% { transform:scale(1); } }
+.nurse-chat-bubble { display:inline-block; min-width:60px; max-width:100%; padding:13px 18px; border-radius:18px; font-size:14.5px; line-height:1.55; text-align:left; text-align-last:left; text-wrap:normal; overflow-wrap:break-word; word-break:break-word; white-space:normal; box-shadow:0 2px 8px rgb(0 0 0 / .04); }
+.nurse-chat-bubble p { margin:0; }
+.nurse-chat-bubble p + p { margin-top:8px; }
+.nurse-chat-turn.is-nurse .nurse-chat-bubble { border-top-right-radius:4px; color:#fff; background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); box-shadow:0 3px 12px rgb(37 99 235 / .25); }
+.nurse-chat-turn.is-patient .nurse-chat-bubble { border-top-left-radius:4px; color:var(--ink); background:var(--surface); border:1px solid var(--line); box-shadow:0 2px 8px rgb(0 0 0 / .06); }
+
+/* Khung soạn thảo tin nhắn hiện đại (Modern Capsule Chat Composer) */
+.message-composer-wrapper { display:flex; flex-direction:column; flex:none; background:var(--surface); border-top:1px solid var(--line); padding:10px 18px 12px; gap:8px; }
+.message-quick-responses { display:flex; align-items:center; gap:8px; padding:0; border:none; background:transparent; overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none; }
+.message-quick-responses::-webkit-scrollbar { display:none; }
+.quick-response-head { display:inline-flex; align-items:center; gap:4px; color:var(--muted); font-size:11.5px; font-weight:600; flex:none; }
+.quick-response-head .ico { color:var(--blue); }
+.quick-response-chips { display:flex; align-items:center; gap:6px; flex:1; overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none; }
+.quick-response-chips::-webkit-scrollbar { display:none; }
+.quick-macro-chip { display:inline-flex; align-items:center; border:1px solid var(--line-strong); border-radius:var(--r-pill); padding:5px 12px; color:var(--blue-deep); background:var(--surface-soft); font-size:11.5px; font-weight:500; white-space:nowrap; cursor:pointer; transition:all .15s ease; }
+.quick-macro-chip:hover { border-color:var(--blue); background:var(--blue-soft); color:var(--blue); transform:translateY(-1px); }
+
+.message-thread-composer { display:flex; flex-direction:column; gap:6px; padding:0; border:none; background:transparent; }
+.message-input-capsule { display:flex; align-items:center; gap:8px; border:1px solid var(--line-strong); border-radius:24px; padding:4px 6px 4px 6px; background:var(--surface-soft); transition:all .16s ease; box-shadow:0 2px 6px rgb(0 0 0 / .03); min-height:44px; }
+.message-input-capsule:focus-within { border-color:var(--blue); background:var(--surface); box-shadow:0 0 0 3px rgb(26 94 168 / .12), 0 2px 8px rgb(0 0 0 / .06); }
+.message-input-capsule textarea { flex:1; min-height:36px; max-height:120px; height:36px; resize:none; border:none; padding:7px 4px; background:transparent; font-size:14px; line-height:22px; color:var(--ink); outline:none; box-shadow:none; display:block; }
+.message-input-capsule textarea::placeholder { color:var(--faint); line-height:22px; }
+.composer-actions-left { display:flex; align-items:center; gap:2px; flex:none; }
+.composer-icon-btn { display:grid; place-items:center; width:36px; height:36px; min-width:36px; min-height:36px; border-radius:50%; border:none; background:transparent; color:var(--muted-2); cursor:pointer; transition:all .15s ease; flex:none; }
+.composer-icon-btn:hover { color:var(--blue); background:var(--blue-soft); }
+.composer-icon-btn.is-recording { color:#ef4444 !important; background:rgba(239, 68, 68, .15) !important; animation:pulse-recording 1.2s infinite; }
+@keyframes pulse-recording { 0% { transform:scale(1); } 50% { transform:scale(1.15); } 100% { transform:scale(1); } }
+.composer-send-circle-btn { display:grid; place-items:center; width:36px; height:36px; min-width:36px; min-height:36px; border-radius:50%; border:none; background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color:#fff; cursor:pointer; transition:all .15s ease; box-shadow:0 2px 8px rgb(37 99 235 / .3); flex:none; }
+.composer-send-circle-btn:hover { transform:scale(1.06); box-shadow:0 4px 12px rgb(37 99 235 / .45); }
+.composer-send-circle-btn:active { transform:scale(0.96); }
+.composer-send-circle-btn .ico { margin-left:1px; margin-top:1px; }
+.message-composer-note { display:inline-flex; align-items:center; gap:5px; color:var(--faint); font-size:11px; padding-left:8px; }
+
+.message-thread-empty { display:grid; place-content:center; justify-items:center; gap:12px; flex:1; padding:32px; color:var(--muted); text-align:center; }
+.message-thread-empty h2 { margin:0; color:var(--ink); font-size:20px; font-weight:600; }
+.message-thread-empty p { max-width:360px; margin:0; font-size:13.5px; line-height:1.55; }
+.message-thread-empty-prompt { display:grid; place-items:center; gap:8px; padding:36px 20px; color:var(--muted); text-align:center; }
+.message-thread-empty-prompt h3 { margin:0; color:var(--ink); font-size:16px; font-weight:600; }
+.message-thread-empty-prompt p { margin:0; font-size:13px; color:var(--muted); }
+
+/* Cột 3: Ngữ cảnh ca lâm sàng */
+.message-case-context { display:flex; flex-direction:column; min-width:0; background:var(--surface); }
+.message-context-head { display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); padding:16px 18px 12px; }
+.message-context-head strong { display:inline-flex; align-items:center; gap:6px; color:var(--ink); font-size:14.5px; font-weight:700; }
+.message-context-head strong .ico { color:var(--blue); }
+.message-context-head small { display:block; color:var(--muted); font-size:11.5px; margin-top:2px; }
+.message-context-body { display:flex; flex-direction:column; flex:1; overflow-y:auto; }
+.message-context-patient-box { display:flex; align-items:center; gap:12px; padding:14px 16px; margin:14px 16px 0; border:1px solid var(--line); border-radius:14px; background:var(--surface-soft); }
+.patient-box-meta { display:grid; gap:2px; min-width:0; }
+.patient-box-name { color:var(--ink); font-size:14.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.patient-box-id { color:var(--muted); font-size:12px; }
+.patient-box-id b { color:var(--ink-2); }
+.patient-box-time { display:inline-flex; align-items:center; gap:4px; color:var(--faint); font-size:11px; margin-top:2px; }
+.message-context-card-stack { display:grid; gap:10px; padding:14px 16px; }
+.message-context-card { display:grid; gap:5px; padding:11px 14px; border:1px solid var(--line); border-radius:12px; background:var(--surface-soft); }
+.context-card-label { color:var(--faint); font-size:11px; font-weight:600; letter-spacing:.02em; text-transform:uppercase; }
+.context-card-val { color:var(--ink); font-size:13.5px; font-weight:500; }
+.context-card-val.is-complaint { font-weight:700; font-size:14.5px; color:var(--ink); }
+.message-context-alert-card { display:grid; gap:5px; padding:12px 14px; border:1px solid var(--red-line); border-radius:12px; background:var(--red-soft); color:var(--red-deep); }
+.alert-card-head { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; color:var(--red-deep); }
+.message-context-alert-card p { margin:0; font-size:12px; line-height:1.45; }
+.message-context-state-pill { display:inline-flex; align-items:center; gap:5px; border-radius:var(--r-pill); padding:4px 10px; color:var(--amber-deep); background:var(--amber-soft); font-size:11.5px; font-weight:700; }
+.message-context-action-wrap { padding:4px 16px 14px; }
+.primary-button.wide-cta { width:100%; justify-content:center; min-height:44px; font-size:14px; font-weight:600; border-radius:12px; }
+.message-context-safety-banner { display:flex; align-items:flex-start; gap:7px; margin:auto 16px 16px; border-radius:12px; padding:11px 13px; color:var(--muted); background:var(--surface-soft); font-size:11.5px; line-height:1.5; }
+.message-context-safety-banner .ico { flex:none; margin-top:2px; color:var(--blue); }
+.message-context-empty { display:grid; place-content:center; justify-items:center; gap:8px; flex:1; padding:24px; color:var(--muted); font-size:12.5px; text-align:center; }
+.message-context-empty .ico { color:var(--faint); }
+@media (max-width:1320px) {
+  .message-inbox { grid-template-columns:300px minmax(0, 1fr); }
+  .message-case-context { display:none; }
+}
 .sla-badge { display:inline-block; margin-top:2px; border-radius:var(--r-pill); padding:2px 8px; font-size:11px; font-weight:600; }
 .sla-badge.is-warning { color:var(--amber-deep); background:var(--amber-soft); }
 .sla-badge.is-breached { color:var(--red-deep); background:var(--red-soft); }
@@ -787,11 +1020,17 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
    (nhận diện đến từ chấm/nét màu đứng CẠNH chữ), và mọi giá trị đều đọc được mà không cần hover. */
 .kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(168px, 1fr)); gap:12px; margin-bottom:16px; }
 .kpi-tile { display:flex; flex-direction:column; gap:5px; border:1px solid var(--line); border-radius:var(--r-card); padding:15px 16px; background:var(--surface); }
+.kpi-tile.is-overdue { border-color:var(--red-line); background:linear-gradient(135deg, var(--red-soft) 0%, var(--surface) 76%); }
+.kpi-tile.is-overdue .kpi-label, .kpi-tile.is-overdue .kpi-value { color:var(--red-deep); }
 .kpi-label { color:var(--muted); font-size:12.5px; font-weight:500; }
 .kpi-value { color:var(--ink); font-size:26px; font-weight:600; line-height:1.15; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
 .kpi-note { color:var(--faint); font-size:12px; line-height:1.45; }
 
-.chart-row { display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(0, 1fr); gap:16px; margin-bottom:16px; }
+/* Dùng đúng 5 cột và gap của hàng KPI: biểu đồ trái chiếm 3 cột, biểu đồ phải chiếm 2 cột.
+   Nhờ thế khe giữa hai biểu đồ thẳng tuyệt đối với khe giữa KPI thứ 3 và thứ 4. */
+.chart-row { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:12px; margin-bottom:16px; }
+.chart-row > .chart-card:first-child { grid-column:span 3; }
+.chart-row > .chart-card:nth-child(2) { grid-column:span 2; }
 .chart-card { border:1px solid var(--line); border-radius:var(--r-card); padding:16px 18px 18px; background:var(--surface); }
 .chart-card > .chart-plot, .chart-card > .bar-list { flex:1; }
 .chart-head { display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
@@ -1015,7 +1254,7 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .patient-workspace { position:relative; display:grid; grid-template-columns:248px minmax(0, 1fr); flex:1; min-height:0; }
 .patient-workspace.is-sidebar-collapsed { grid-template-columns:76px minmax(0, 1fr); }
 .patient-side-nav { position:relative; display:flex; flex-direction:column; min-height:calc(100dvh - 52px); border-right:1px solid var(--line); padding:22px 14px 16px; background:var(--surface); transition:padding .18s ease; }
-.patient-side-toggle { position:absolute; top:21px; right:13px; z-index:2; display:grid; width:32px; height:32px; place-items:center; border:1px solid var(--blue-line); border-radius:50%; color:var(--blue); background:var(--blue-soft); box-shadow:0 3px 9px rgb(20 76 138 / .12); transition:color .16s ease, border-color .16s ease, background .16s ease, transform .16s ease; }
+.patient-side-toggle { position:absolute; top:21px; right:13px; z-index:2; display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--blue-line); border-radius:10px; color:var(--blue); background:var(--blue-soft); box-shadow:0 3px 9px rgb(20 76 138 / .12); transition:color .16s ease, border-color .16s ease, background .16s ease, transform .16s ease; }
 .patient-side-toggle:hover { border-color:var(--blue); color:#fff; background:var(--blue); transform:scale(1.06); }
 .patient-side-toggle::after { content:attr(data-tooltip); position:absolute; top:50%; left:calc(100% + 9px); width:max-content; max-width:190px; transform:translateY(-50%); border-radius:7px; padding:5px 8px; color:#fff; background:#1f2a36; box-shadow:var(--shadow-menu); font-size:11.5px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .14s ease; }
 .patient-side-toggle:hover::after, .patient-side-toggle:focus-visible::after { opacity:1; }
@@ -1275,7 +1514,6 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .account-summary-name { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .account-summary strong { font-size:14px; }
 .account-summary > div > span { display:block; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
-.role-badge { flex:none; border-radius:var(--r-pill); padding:3px 8px; color:var(--blue-deep); background:var(--blue-soft); font-size:10px !important; font-weight:600; white-space:nowrap; }
 .account-links, .account-logout { display:grid; padding:6px; }
 .account-logout { border-top:1px solid var(--line); }
 .account-links button, .account-logout button { display:flex; align-items:center; gap:11px; width:100%; border:0; border-radius:8px; padding:10px 8px; color:var(--muted-2); background:transparent; font-size:14px; text-align:left; }
@@ -1308,6 +1546,9 @@ input[type=checkbox] { width:16px; height:16px; min-height:0; accent-color:var(-
 .help-emergency-notice strong { color:var(--red-deep); font-size:14px; }
 .help-emergency-notice span { font-size:13px; line-height:1.45; }
 .help-emergency-notice a { width:max-content; margin-top:3px; color:var(--red-deep); font-size:13px; font-weight:700; text-decoration:underline; }
+.help-staff-urgent-notice { display:grid; gap:5px; border:1px solid var(--amber-line); border-radius:12px; padding:13px; color:var(--muted-2); background:var(--amber-soft); }
+.help-staff-urgent-notice strong { color:var(--amber-deep); font-size:14px; }
+.help-staff-urgent-notice span { font-size:13px; line-height:1.45; }
 .help-contact-section { display:grid; gap:5px; }
 .help-contact-section h3 { margin:0; color:var(--ink); font-size:14px; }
 .help-contact-section p { font-size:13px; }
@@ -1442,9 +1683,23 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
   .queue-side .nav-group { overflow:hidden; margin:14px 0 6px; padding:0; border-top:1px solid var(--divider); color:transparent; font-size:0; }
   .queue-side .nav-item { justify-content:center; gap:0; padding-inline:0; }
   .queue-side .nav-toggle { display:none; }
+  .nurse-side-top { justify-content:center; margin-inline:0; }
+  .nurse-side-brand .brand-word { display:none; }
+  .queue-side .nav-subnav { display:none; }
+  .nurse-theme-toggle { grid-template-columns:18px; justify-content:center; padding-inline:0; }
+  .nurse-theme-toggle > span:nth-child(2) { display:none; }
+  .nurse-side-account { justify-content:center; margin-inline:0; padding-inline:0; }
+  .nurse-side-account .header-identity { display:none; }
+  .nurse-side-account .account-avatar { width:36px; height:36px; }
   .queue-toolbar { align-items:stretch; flex-direction:column; }
   .queue-search { max-width:none; }
+  .patient-case-toolbar { align-items:stretch; flex-direction:column; }
+  .patient-case-filter-options { width:100%; }
+  .dashboard-toolbar { align-items:stretch; flex-direction:column; }
+  .dashboard-filter-group { width:100%; }
+  .dashboard-filter-options { flex:1; }
   .chart-row { grid-template-columns:1fr; }
+  .chart-row > .chart-card { grid-column:auto; }
   .auth-shell { height:auto; min-height:100dvh; overflow:visible; padding:24px 16px; }
   .auth-card { grid-template-columns:1fr; width:100%; height:auto; }
   .auth-aside { border-right:0; border-bottom:1px solid var(--line); }
@@ -1471,6 +1726,15 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
 }
 @media (max-width:720px) {
   .app-header { gap:10px; padding:12px 16px; }
+  .queue-head { align-items:stretch; flex-direction:column; }
+  .queue-head-actions { flex-wrap:wrap; justify-content:space-between; }
+  .queue-head .queue-search { width:min(100%, 330px); }
+  .message-inbox { grid-template-columns:1fr; min-height:0; }
+  .message-inbox-list { max-height:260px; border-right:0; border-bottom:1px solid var(--line); }
+  .message-thread-panel { min-height:500px; }
+  .message-thread-head { align-items:flex-start; flex-direction:column; }
+  .message-thread-composer { grid-template-columns:1fr; }
+  .message-thread-composer .primary-button { width:100%; }
   .app-header nav { order:3; width:100%; }
   .header-divider { display:none; }
   .landing-nav-links { display:none; }
@@ -1619,4 +1883,38 @@ body.is-high-contrast { --muted:#364758; --faint:#526476; --line:#c1cad4; --line
 .demo-access-note { margin:11px 0 0; }
 @media (min-width:640px) {
   .demo-access-options { grid-template-columns:1fr 1fr; }
+}
+
+/* ── Dark Theme Overrides for Nurse Messaging Workspace ── */
+:root[data-theme="dark"] .nurse-chat-turn.is-patient .nurse-chat-bubble {
+  color: #f8fafc;
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 4px 12px rgb(0 0 0 / .25);
+}
+:root[data-theme="dark"] .nurse-chat-turn.is-nurse .nurse-chat-bubble {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgb(37 99 235 / .35);
+}
+:root[data-theme="dark"] .message-input-capsule {
+  background: #0f172a;
+  border-color: #334155;
+}
+:root[data-theme="dark"] .message-input-capsule:focus-within {
+  border-color: var(--blue);
+  background: #1e293b;
+}
+:root[data-theme="dark"] .quick-macro-chip {
+  background: #1e293b;
+  border-color: #334155;
+  color: #93c5fd;
+}
+:root[data-theme="dark"] .quick-macro-chip:hover {
+  background: #1e3a8a;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+:root[data-theme="dark"] .message-thread-log {
+  background: #0b1120;
 }

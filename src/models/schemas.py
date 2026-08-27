@@ -310,6 +310,12 @@ class TriageCase(BaseModel):
     )
 
 
+class NurseCaseView(TriageCase):
+    """Bản case cho nhân viên y tế, có tên người bệnh để nhận diện cuộc hội thoại."""
+
+    patient_display_name: str | None = Field(default=None, max_length=120)
+
+
 # Request body của endpoint chat gốc: tin nhắn bệnh nhân + case_id nếu tiếp tục hội thoại đã có.
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000, description="Patient message")
