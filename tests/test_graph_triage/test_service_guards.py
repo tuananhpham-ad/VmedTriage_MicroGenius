@@ -282,7 +282,9 @@ def test_c6_still_cannot_lower_a_rule_engine_emergency(safety_gate_on, monkeypat
     monkeypatch.setattr(
         source_support_pipeline,
         "run",
-        lambda decision, *, triage_label: (captured.update({"triage_label": triage_label}) or SourceSupport()),
+        lambda decision, *, triage_label, **kwargs: (
+            captured.update({"triage_label": triage_label}) or SourceSupport()
+        ),
     )
     case = _ready_case()
     case.triage_proposal = TriageProposal(priority=TriagePriority.EMERGENCY, reason="rule baseline")
