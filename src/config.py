@@ -384,6 +384,36 @@ class Settings(BaseSettings):
     braintrust_api_key: str = os.getenv("BRAINTRUST_API_KEY", "")
     braintrust_project: str = os.getenv("BRAINTRUST_PROJECT", "vmedtriage-eval")
 
+    # Gợi ý bệnh viện gần nhất (patient-only, xem ADR-010). Ba nhà cung cấp sau một adapter chung
+    # (`src/services/hospital_lookup/`) - chọn qua `hospital_lookup_provider`, đổi bằng biến môi
+    # trường khi hết free tier bên này, KHÔNG cần sửa code. Provider đang chọn thiếu cấu hình bắt
+    # buộc (key rỗng với goong/google, email rỗng với osm) thì tính năng tự tắt (503), không crash
+    # luồng triage chính - đúng nguyên tắc best-effort toàn repo.
+    hospital_lookup_provider: Literal["goong", "google", "osm"] = os.getenv("HOSPITAL_LOOKUP_PROVIDER", "goong")
+
+    goong_api_key: str = os.getenv("GOONG_API_KEY", "")
+    goong_base_url: str = os.getenv("GOONG_BASE_URL", "https://rsapi.goong.io")
+    """Free tier 1.000 request/ngày, 5/giây (docs.goong.io/rest/api-key/). KHÔNG có nearby-search
+    theo category - `GoongProvider.find_nearby_hospitals` phải ghép AutoComplete + Detail, tức 1
+    lượt tốn 1+N request. Bán kính API này nhận theo KM."""
+
+    google_maps_api_key: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
+    """Places Nearby Search có filter `type=hospital` thật, 1 request/lượt - nhưng cần bật billing
+    (thẻ quốc tế) trên Google Cloud Console. Bán kính API này nhận theo MÉT."""
+
+    osm_nominatim_base_url: str = os.getenv("OSM_NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
+    osm_overpass_base_url: str = os.getenv("OSM_OVERPASS_BASE_URL", "https://overpass-api.de/api/interpreter")
+    osm_contact_email: str = os.getenv("OSM_CONTACT_EMAIL", "")
+    """Nominatim Usage Policy bắt buộc User-Agent định danh thật cho server công cộng - rỗng thì
+    provider osm tự tắt giống thiếu API key, tôn trọng ToS thay vì gửi request nặc danh. Server công
+    cộng giới hạn cứng 1 request/giây, KHÔNG phù hợp traffic thật quy mô lớn (chỉ dùng làm phương án
+    dự phòng free/demo, tự host nếu cần ổn định). Bán kính Overpass nhận theo MÉT."""
+
+    hospital_lookup_radius_km: int = Field(default=5, ge=1, le=50)
+    hospital_lookup_max_results: int = Field(default=5, ge=1, le=10)
+    """Trần thấp cố ý: mỗi kết quả Goong tốn thêm 1 request Detail (xem `goong_base_url`), và quota
+    free 1.000/ngày phải chia cho toàn bộ lượt tra cứu trong ngày."""
+
     # MCP external tools
     mcp_call_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
     mcp_require_human_approval_for_side_effects: bool = True

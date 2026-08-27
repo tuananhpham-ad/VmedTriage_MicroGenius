@@ -21,6 +21,8 @@ from src.models.auth import (
     ChangePasswordRequest,
     DemoLoginRequest,
     EmailVerificationConfirmRequest,
+    HealthProfileResponse,
+    HealthProfileUpdateRequest,
     LoginRequest,
     MessageResponse,
     PasswordResetConfirmRequest,
@@ -30,6 +32,7 @@ from src.models.auth import (
     UpdateProfileRequest,
     UserResponse,
 )
+from src.models.health_profile import HealthProfileRecord
 from src.models.schemas import (
     ActorRole,
     CaseStatus,
@@ -42,6 +45,7 @@ from src.models.schemas import (
     TriageCase,
     TriagePriority,
 )
+from src.models.user import UserRole
 from src.observability.braintrust_tracing import traced_root_span
 from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY, PRIORITY_RANK
 from src.services.infra.account_mailer import account_mailer
@@ -247,6 +251,47 @@ def update_current_user(
         return UserResponse.model_validate(auth_service.update_profile(db, user=user, payload=payload))
     except UserAlreadyExistsError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _patient_for_health_profile(request: Request, db: Session):
+    user = auth_service.get_user_by_id(db, int(request.state.auth.sub))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không còn hoạt động")
+    if user.role is not UserRole.PATIENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chỉ bệnh nhân có thể quản lý hồ sơ sức khỏe")
+    return user
+
+
+@router.get("/me/health-profile", response_model=HealthProfileResponse)
+def current_health_profile(request: Request, db: Session = Depends(get_db_session)) -> HealthProfileResponse:
+    """Đọc duy nhất hồ sơ do chính bệnh nhân sở hữu; không cấp cho hàng đợi điều dưỡng."""
+    user = _patient_for_health_profile(request, db)
+    profile = db.query(HealthProfileRecord).filter(HealthProfileRecord.user_id == user.id).one_or_none()
+    if profile is None:
+        return HealthProfileResponse()
+    return HealthProfileResponse.model_validate(profile)
+
+
+@router.put("/me/health-profile", response_model=HealthProfileResponse)
+def update_health_profile(
+    request: Request, payload: HealthProfileUpdateRequest, db: Session = Depends(get_db_session)
+) -> HealthProfileResponse:
+    """Lưu hồ sơ tự khai, không biến nó thành dữ liệu đầu vào tự động của sàng lọc."""
+    user = _patient_for_health_profile(request, db)
+    profile = db.query(HealthProfileRecord).filter(HealthProfileRecord.user_id == user.id).one_or_none()
+    data = payload.model_dump()
+    if profile is None:
+        profile = HealthProfileRecord(user_id=user.id, **data)
+        db.add(profile)
+    else:
+        for field, value in data.items():
+            setattr(profile, field, value)
+    now = datetime.now(timezone.utc)
+    profile.confirmed_at = now
+    profile.updated_at = now
+    db.commit()
+    db.refresh(profile)
+    return HealthProfileResponse.model_validate(profile)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -840,10 +885,41 @@ async def nurse_queue() -> list[TriageCase]:
 async def patient_history(request: Request) -> list[TriageCase]:
     patient_id = int(request.state.auth.sub)
     return sorted(
-        (_patient_case_view(case) for case in case_store.list_cases() if case.patient_id == patient_id),
+        (
+            _patient_case_view(case)
+            for case in case_store.list_cases()
+            if case.patient_id == patient_id and case.patient_hidden_at is None
+        ),
         key=lambda case: case.updated_at,
         reverse=True,
     )
+
+
+@router.delete("/cases/{case_id}", response_model=MessageResponse)
+async def hide_patient_case(case_id: str, request: Request) -> MessageResponse:
+    """Ẩn một ca khỏi lịch sử của đúng người bệnh sở hữu nó.
+
+    Không xóa bản ghi lâm sàng, hàng đợi hay audit: một thao tác giao diện của bệnh nhân tuyệt đối
+    không được làm biến mất ca mà điều dưỡng cần đối chiếu hoặc ca đã có red-flag.
+    """
+    triage_case = case_store.get(case_id)
+    if triage_case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if triage_case.patient_id != int(request.state.auth.sub):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xóa case này")
+
+    if triage_case.patient_hidden_at is None:
+        triage_case.patient_hidden_at = datetime.now(timezone.utc)
+        case_store.save(triage_case)
+        approval_store.log(
+            AuditLogEntry(
+                case_id=case_id,
+                actor=f"patient:{triage_case.patient_id}",
+                action="hidden_from_patient_history",
+                reason="Người bệnh xóa ca khỏi lịch sử hiển thị.",
+            )
+        )
+    return MessageResponse(message="Đã xóa ca khỏi lịch sử của bạn.")
 
 
 @router.get("/cases/{case_id}", response_model=TriageCase)
@@ -853,6 +929,8 @@ async def get_case(case_id: str, request: Request) -> TriageCase:
         raise HTTPException(status_code=404, detail="Case not found")
     if request.state.auth.role.value == "patient" and triage_case.patient_id != int(request.state.auth.sub):
         raise HTTPException(status_code=403, detail="Bạn không có quyền xem case này")
+    if request.state.auth.role.value == "patient" and triage_case.patient_hidden_at is not None:
+        raise HTTPException(status_code=404, detail="Case không còn trong lịch sử của bạn")
     if request.state.auth.role.value == "patient":
         return _patient_case_view(triage_case)
     return _mark_opened_by_nurse(triage_case)

@@ -67,14 +67,33 @@ Ví dụ phải chấm unsupported:
   Vì sao  : đoạn nêu hai dấu hiệu đó là cảnh báo NẾU XUẤT HIỆN; nó không hề nói vắng chúng thì
             loại trừ được phản vệ.
 
+QUY TẮC QUAN TRỌNG THỨ HAI - KHÔNG LẤY "verdict" LÀM CỚ CHẤM claim_matches_reasoning:
+
+Đây là HAI câu hỏi hoàn toàn tách biệt: "tài liệu có xác nhận mệnh đề không" (verdict) và "mệnh đề có
+đúng ý lập luận gốc không" (claim_matches_reasoning). Đoạn trích lạc đề/không đủ để khẳng định mệnh đề
+KHÔNG PHẢI bằng chứng để nghi ngờ chính mệnh đề đã bị viết sai lệch - đó là hai lỗi khác hẳn nhau, một
+lỗi ở TÀI LIỆU, một lỗi ở BƯỚC TÁCH MỆNH ĐỀ.
+
+Ví dụ PHẢI chấm claim_matches_reasoning=true dù verdict=unsupported:
+  Mệnh đề     : "Người cao tuổi có sốt và thở nhanh cần được đánh giá lâm sàng tìm nhiễm trùng hô hấp
+                 dưới."
+  Lập luận gốc: "Bệnh nhân 65 tuổi có sốt 3 ngày, nhiệt độ 38,3°C, nhịp thở 22 lần/phút"
+  Đoạn        : "Arterial blood gas analysis may be indicated in patients with suspected respiratory
+                 failure. Chest X-ray is recommended when pulmonary infiltrates are suspected..."
+  verdict     : unsupported - đoạn trích lạc đề, không nói gì về sốt/thở nhanh ở người cao tuổi.
+  claim_matches_reasoning : true - mệnh đề vẫn khái quát ĐÚNG ý lập luận gốc (tuổi -> "người cao
+                 tuổi", sốt + nhịp thở nhanh -> nguyên văn, thêm đúng hệ quả lâm sàng tương ứng,
+                 không đảo chiều, không bịa dấu hiệu mới). Đoạn trích dở không làm mệnh đề sai.
+
 CÁC TRƯỜNG PHẢI TRẢ:
 - verdict                 : một trong bốn nấc trên.
 - verdict_reason          : một câu tiếng Việt, nói rõ đoạn trích khẳng định được gì và không khẳng
                             định được gì. Đừng nhắc lại mệnh đề, hãy nói về đoạn trích.
 - best_chunk_id           : id của đoạn trích mà verdict dựa vào. Không đoạn nào dùng được thì để "".
 - claim_matches_reasoning : mệnh đề có khẳng định CÙNG một điều với "lap_luan_goc" trong đầu vào
-                            không. false khi mệnh đề đã bị viết lệch, đặc biệt khi nó bị lật thành
-                            mệnh đề đảo của lập luận gốc.
+                            không - CHỈ so với "lap_luan_goc", không liên quan gì tới "cac_doan_trich"
+                            hay "verdict" (xem quy tắc thứ hai ở trên). false khi mệnh đề đã bị viết
+                            lệch, đặc biệt khi nó bị lật thành mệnh đề đảo của lập luận gốc.
 
 Trả về DUY NHẤT một JSON object với đúng bốn trường trên."""
 

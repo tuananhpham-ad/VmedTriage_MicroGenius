@@ -6,7 +6,8 @@ export function accountMenu() {
   applyDisplaySettings(readSettings());
   const name = state.user?.full_name || "Tài khoản";
   const role = state.user?.role === "nurse" ? "Nhân viên y tế" : "Bệnh nhân";
-  return `<div class="account-menu"><button class="account-avatar" type="button" data-account-toggle aria-expanded="false" aria-label="Mở menu tài khoản">${initials(name)}</button><div class="account-dropdown" data-account-dropdown hidden><div class="account-summary"><span class="account-summary-avatar" aria-hidden="true">${initials(name)}</span><div><div class="account-summary-name"><strong>${escapeHtml(name)}</strong><span class="role-badge">${role}</span></div><span>${escapeHtml(state.user?.email || "")}</span></div></div><div class="account-links"><button type="button" data-open-profile><span class="account-item-icon account-icon-profile" aria-hidden="true"></span>Hồ sơ</button><button type="button" data-account-info="settings"><span class="account-item-icon account-icon-settings" aria-hidden="true"></span>Cài đặt</button><button type="button" data-account-info="privacy"><span class="account-item-icon account-icon-privacy" aria-hidden="true"></span>Chính sách quyền riêng tư</button><button type="button" data-account-info="help"><span class="account-item-icon account-icon-help" aria-hidden="true"></span>Trợ giúp &amp; liên hệ</button></div><div class="account-logout"><button type="button" data-account-logout><span class="account-item-icon account-icon-logout" aria-hidden="true"></span>Đăng xuất</button></div></div></div>`;
+  const roleBadge = state.user?.role === "nurse" ? `<span class="role-badge">${role}</span>` : "";
+  return `<div class="account-menu"><button class="account-avatar" type="button" data-account-toggle aria-expanded="false" aria-label="Mở menu tài khoản">${initials(name)}</button><div class="account-dropdown" data-account-dropdown hidden><div class="account-summary"><span class="account-summary-avatar" aria-hidden="true">${initials(name)}</span><div><div class="account-summary-name"><strong>${escapeHtml(name)}</strong>${roleBadge}</div><span>${escapeHtml(state.user?.email || "")}</span></div></div><div class="account-links"><button type="button" data-open-profile><span class="account-item-icon account-icon-profile" aria-hidden="true"></span>Hồ sơ</button><button type="button" data-account-info="settings"><span class="account-item-icon account-icon-settings" aria-hidden="true"></span>Cài đặt</button><button type="button" data-account-info="privacy"><span class="account-item-icon account-icon-privacy" aria-hidden="true"></span>Chính sách quyền riêng tư</button><button type="button" data-account-info="help"><span class="account-item-icon account-icon-help" aria-hidden="true"></span>Trợ giúp &amp; liên hệ</button></div><div class="account-logout"><button type="button" data-account-logout><span class="account-item-icon account-icon-logout" aria-hidden="true"></span>Đăng xuất</button></div></div></div>`;
 }
 
 export function bindAccountMenu(root, { logout, onProfileSaved }) {
@@ -31,27 +32,178 @@ export function bindAccountMenu(root, { logout, onProfileSaved }) {
   root.querySelector("[data-account-logout]").addEventListener("click", logout);
 }
 
-function openAccountInfo(kind) {
+export function openAccountInfo(kind) {
   if (kind === "settings") {
     openSettings();
     return;
   }
   const content = {
-    privacy: { title: "Chính sách quyền riêng tư", text: "VMedTriage sử dụng thông tin tài khoản và nội dung khai báo để vận hành dịch vụ, bảo mật tài khoản và hỗ trợ phân luồng ban đầu. Quyền truy cập dữ liệu được giới hạn theo vai trò." },
-    help: { title: "Trợ giúp & liên hệ", text: "Cần hỗ trợ? Liên hệ vitriage@gmail.com hoặc 0356 276 505. Chúng tôi hoạt động tại Hà Nội, Việt Nam." },
+    privacy: {
+      title: "Chính sách quyền riêng tư",
+      body: "<p>VMedTriage sử dụng thông tin tài khoản và nội dung khai báo để vận hành dịch vụ, bảo mật tài khoản và hỗ trợ phân luồng ban đầu. Quyền truy cập dữ liệu được giới hạn theo vai trò.</p>",
+    },
+    help: {
+      title: "Trợ giúp & liên hệ",
+      body: helpAndContactContent(),
+    },
   }[kind];
   const dialog = document.createElement("div");
   dialog.className = "account-info-dialog";
-  dialog.innerHTML = `<button class="profile-backdrop" type="button" aria-label="Đóng" data-close-info></button><section class="account-info-card" role="dialog" aria-modal="true" aria-labelledby="account-info-title"><button class="profile-close" type="button" aria-label="Đóng" data-close-info>×</button><p class="eyebrow">VMedTriage</p><h2 id="account-info-title">${content.title}</h2><p>${content.text}</p><button class="primary-button" type="button" data-close-info>Đã hiểu</button></section>`;
+  dialog.innerHTML = `<button class="profile-backdrop" type="button" aria-label="Đóng" data-close-info></button><section class="account-info-card" role="dialog" aria-modal="true" aria-labelledby="account-info-title"><button class="profile-close" type="button" aria-label="Đóng" data-close-info>×</button><p class="eyebrow">VMedTriage</p><h2 id="account-info-title">${content.title}</h2><div class="account-info-content">${content.body}</div><button class="primary-button" type="button" data-close-info>Đã hiểu</button></section>`;
   document.body.append(dialog);
   dialog.querySelectorAll("[data-close-info]").forEach((button) => button.addEventListener("click", () => dialog.remove()));
 }
 
-function openSettings() {
+function helpAndContactContent() {
+  const isNurse = state.user?.role === "nurse";
+  const roleGuidance = isNurse
+    ? "Nếu gặp lỗi phân ca, quyền truy cập hoặc duyệt kết quả, hãy liên hệ bộ phận hỗ trợ kỹ thuật."
+    : "Bạn có thể khai báo triệu chứng, bổ sung thông tin khi cần và theo dõi trạng thái trong mục “Kết quả của tôi”. Hướng dẫn chỉ hiển thị sau khi nhân viên y tế duyệt.";
+
+  return `<p class="account-info-intro">${roleGuidance}</p>
+    <section class="help-emergency-notice" aria-label="Hướng dẫn tình huống khẩn cấp">
+      <strong>Trường hợp khẩn cấp</strong>
+      <span>Đau ngực dữ dội, khó thở cấp, ngất xỉu hoặc chấn thương nặng: không chờ phản hồi trên ứng dụng.</span>
+      <a href="tel:115">Gọi 115 ngay</a>
+    </section>
+    <section class="help-contact-section" aria-labelledby="technical-support-title">
+      <h3 id="technical-support-title">Liên hệ hỗ trợ kỹ thuật</h3>
+      <p>Hỗ trợ đăng nhập, sử dụng hệ thống, góp ý hoặc báo lỗi.</p>
+      <a href="mailto:vitriage@gmail.com">vitriage@gmail.com</a>
+      <a href="tel:+84356276505">0356 276 505</a>
+    </section>
+    <section class="help-contact-section" aria-labelledby="privacy-help-title">
+      <h3 id="privacy-help-title">Bảo mật thông tin</h3>
+      <p>Thông tin triệu chứng là dữ liệu nhạy cảm và chỉ nhân viên y tế được gán ca mới có thể truy cập.</p>
+    </section>
+    <p class="help-disclaimer">VMedTriage hỗ trợ phân loại ưu tiên ban đầu, không chẩn đoán bệnh hoặc thay thế khám chữa bệnh trực tiếp.</p>`;
+}
+
+export function openSettings() {
   const preferences = readSettings();
   const dialog = document.createElement("div");
   dialog.className = "settings-dialog";
-  dialog.innerHTML = `<button class="profile-backdrop" type="button" aria-label="Đóng" data-close-settings></button><section class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="profile-close" type="button" aria-label="Đóng" data-close-settings>×</button><p class="eyebrow">Tài khoản của bạn</p><h2 id="settings-title">Cài đặt</h2><p class="settings-intro">Điều chỉnh thông báo, bảo mật, dữ liệu và cách hiển thị theo nhu cầu của bạn.</p><section class="settings-group"><h3>Thông báo</h3><label class="setting-row"><span class="setting-copy"><strong>Thông báo khi kết quả được duyệt</strong><small>Nhận email khi điều dưỡng đã duyệt phản hồi cho ca của bạn.</small></span><input class="setting-switch" type="checkbox" name="email_notifications" ${preferences.email_notifications ? "checked" : ""} /></label><label class="setting-row"><span class="setting-copy"><strong>Nhắc khi ca đang mở chờ quá lâu</strong><small>Giúp bạn theo dõi tiến trình và chủ động xem lại ca đang mở.</small></span><input class="setting-switch" type="checkbox" name="case_reminders" ${preferences.case_reminders ? "checked" : ""} /></label></section><section class="settings-group"><h3>Bảo mật</h3><div class="setting-row setting-row-action"><span class="setting-copy"><strong>Đổi mật khẩu</strong><small>Gửi liên kết đặt lại mật khẩu đến email đã xác thực.</small></span><button class="secondary-button" type="button" data-change-password>Gửi liên kết</button></div><div class="setting-row setting-row-action"><span class="setting-copy"><strong>Đổi email</strong><small>Yêu cầu xác minh bằng email hiện tại trước khi thay đổi địa chỉ liên hệ.</small></span><a class="link-button" href="mailto:vitriage@gmail.com?subject=Y%C3%AAu%20c%E1%BA%A7u%20%C4%91%E1%BB%95i%20email%20VMedTriage">Yêu cầu đổi</a></div><div class="setting-row"><span class="setting-copy"><strong>Quản lý phiên đăng nhập</strong><small>Đăng xuất các thiết bị khác để bảo vệ tài khoản dùng chung trong gia đình.</small></span><span class="setting-note">Sắp có</span></div></section><section class="settings-group"><h3>Dữ liệu &amp; quyền riêng tư</h3><div class="setting-row setting-row-action"><span class="setting-copy"><strong>Xem hoặc tải xuống dữ liệu cá nhân</strong><small>Tải bản sao hồ sơ và lịch sử khai báo thuộc tài khoản của bạn.</small></span><button class="link-button" type="button" data-download-data>Tải xuống</button></div><div class="setting-row setting-row-action"><span class="setting-copy"><strong>Yêu cầu xoá tài khoản &amp; dữ liệu</strong><small>Gửi yêu cầu để đội ngũ hỗ trợ xác minh và xử lý an toàn.</small></span><a class="link-button danger-link" href="mailto:vitriage@gmail.com?subject=Y%C3%AAu%20c%E1%BA%A7u%20xo%C3%A1%20t%C3%A0i%20kho%E1%BA%A3n%20VMedTriage">Gửi yêu cầu</a></div><div class="setting-row"><span class="setting-copy"><strong>Lịch sử truy cập hồ sơ</strong><small>Xem các lượt truy cập hồ sơ, bao gồm nhân viên y tế đã xem khi có nhật ký truy cập.</small></span><span class="setting-note">Đang hoàn thiện</span></div><div class="setting-row setting-row-action"><span class="setting-copy"><strong>Chính sách quyền riêng tư</strong><small>Xem cách VMedTriage sử dụng và bảo vệ dữ liệu của bạn.</small></span><button class="link-button" type="button" data-open-privacy>Xem</button></div></section><section class="settings-group"><h3>Khác</h3><label class="setting-row"><span class="setting-copy"><strong>Cỡ chữ dễ đọc hơn</strong><small>Tăng nhẹ cỡ chữ trên thiết bị này.</small></span><input class="setting-switch" type="checkbox" name="large_text" ${preferences.large_text ? "checked" : ""} /></label><label class="setting-row"><span class="setting-copy"><strong>Độ tương phản cao</strong><small>Làm rõ chữ và đường viền để dễ theo dõi.</small></span><input class="setting-switch" type="checkbox" name="high_contrast" ${preferences.high_contrast ? "checked" : ""} /></label></section><div class="settings-actions"><button class="primary-button" type="button" data-close-settings>Đã hiểu</button></div></section>`;
+  dialog.innerHTML = `
+    <button class="profile-backdrop" type="button" aria-label="Đóng" data-close-settings></button>
+    <section class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <button class="profile-close" type="button" aria-label="Đóng" data-close-settings>×</button>
+      <div class="settings-header">
+        <p class="eyebrow">Tài khoản của bạn</p>
+        <h2 id="settings-title">Cài đặt</h2>
+        <p class="settings-intro">Điều chỉnh thông báo, bảo mật, dữ liệu và cách hiển thị theo nhu cầu của bạn.</p>
+      </div>
+
+      <div class="settings-body">
+        <section class="settings-group">
+          <h3>Thông báo</h3>
+          <label class="setting-row">
+            <span class="setting-copy">
+              <strong>Thông báo khi kết quả được duyệt</strong>
+              <small>Nhận email khi điều dưỡng đã duyệt phản hồi cho ca của bạn.</small>
+            </span>
+            <span class="setting-toggle">
+              <input class="setting-switch" type="checkbox" name="email_notifications" ${preferences.email_notifications ? "checked" : ""} />
+              <span class="setting-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy">
+              <strong>Nhắc khi ca đang mở chờ quá lâu</strong>
+              <small>Giúp bạn theo dõi tiến trình và chủ động xem lại ca đang mở.</small>
+            </span>
+            <span class="setting-toggle">
+              <input class="setting-switch" type="checkbox" name="case_reminders" ${preferences.case_reminders ? "checked" : ""} />
+              <span class="setting-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+        </section>
+
+        <section class="settings-group">
+          <h3>Bảo mật</h3>
+          <div class="setting-row setting-row-action">
+            <span class="setting-copy">
+              <strong>Đổi mật khẩu</strong>
+              <small>Gửi liên kết đặt lại mật khẩu đến email đã xác thực.</small>
+            </span>
+            <button class="setting-action-btn" type="button" data-change-password>Gửi liên kết</button>
+          </div>
+          <div class="setting-row setting-row-action">
+            <span class="setting-copy">
+              <strong>Đổi email</strong>
+              <small>Yêu cầu xác minh bằng email hiện tại trước khi thay đổi địa chỉ liên hệ.</small>
+            </span>
+            <a class="setting-action-btn" href="mailto:vitriage@gmail.com?subject=Y%C3%AAu%20c%E1%BA%A7u%20%C4%91%E1%BB%95i%20email%20VMedTriage">Yêu cầu đổi</a>
+          </div>
+          <div class="setting-row">
+            <span class="setting-copy">
+              <strong>Quản lý phiên đăng nhập</strong>
+              <small>Đăng xuất các thiết bị khác để bảo vệ tài khoản dùng chung trong gia đình.</small>
+            </span>
+            <span class="setting-note">Sắp có</span>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h3>Dữ liệu &amp; quyền riêng tư</h3>
+          <div class="setting-row setting-row-action">
+            <span class="setting-copy">
+              <strong>Xem hoặc tải xuống dữ liệu cá nhân</strong>
+              <small>Tải bản sao hồ sơ và lịch sử khai báo thuộc tài khoản của bạn.</small>
+            </span>
+            <button class="setting-action-btn" type="button" data-download-data>Tải xuống</button>
+          </div>
+          <div class="setting-row setting-row-action">
+            <span class="setting-copy">
+              <strong>Yêu cầu xoá tài khoản &amp; dữ liệu</strong>
+              <small>Gửi yêu cầu để đội ngũ hỗ trợ xác minh và xử lý an toàn.</small>
+            </span>
+            <a class="setting-action-btn is-danger" href="mailto:vitriage@gmail.com?subject=Y%C3%AAu%20c%E1%BA%A7u%20xo%C3%A1%20t%C3%A0i%20kho%E1%BA%A3n%20VMedTriage">Gửi yêu cầu</a>
+          </div>
+          <div class="setting-row">
+            <span class="setting-copy">
+              <strong>Lịch sử truy cập hồ sơ</strong>
+              <small>Xem các lượt truy cập hồ sơ, bao gồm nhân viên y tế đã xem khi có nhật ký truy cập.</small>
+            </span>
+            <span class="setting-note">Đang hoàn thiện</span>
+          </div>
+          <div class="setting-row setting-row-action">
+            <span class="setting-copy">
+              <strong>Chính sách quyền riêng tư</strong>
+              <small>Xem cách VMedTriage sử dụng và bảo vệ dữ liệu của bạn.</small>
+            </span>
+            <button class="setting-action-btn" type="button" data-open-privacy>Xem</button>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h3>Khác</h3>
+          <label class="setting-row">
+            <span class="setting-copy">
+              <strong>Cỡ chữ dễ đọc hơn</strong>
+              <small>Tăng cỡ chữ và phần điều khiển trên thiết bị này.</small>
+            </span>
+            <span class="setting-toggle">
+              <input class="setting-switch" type="checkbox" name="large_text" ${preferences.large_text ? "checked" : ""} />
+              <span class="setting-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy">
+              <strong>Độ tương phản cao</strong>
+              <small>Làm rõ chữ và đường viền để dễ theo dõi.</small>
+            </span>
+            <span class="setting-toggle">
+              <input class="setting-switch" type="checkbox" name="high_contrast" ${preferences.high_contrast ? "checked" : ""} />
+              <span class="setting-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+        </section>
+      </div>
+
+      <div class="settings-actions">
+        <button class="primary-button" type="button" data-close-settings>Đã hiểu</button>
+      </div>
+    </section>`;
   document.body.append(dialog);
 
   const persist = () => {
