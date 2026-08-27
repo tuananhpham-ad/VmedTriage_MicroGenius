@@ -63,6 +63,7 @@ _FEVER_FIELDS: tuple[FeverField, ...] = common_fields.FEVER_SIGNAL_FIELDS + (
     FeverField("temp_device_type", "Loại nhiệt kế", "O", "Gán measurement_confidence", tri_state=False, allowed_values=("digital", "infrared_ear", "infrared_forehead", "mercury_glass", "chemical_dot", "unknown",)),
     FeverField("temp_max_24h_c", "Nhiệt độ cao nhất 24h qua (°C)", "O", "Bắt đỉnh sốt bị thuốc che", tri_state=False),
     FeverField("fever_onset_at", "Thời điểm bắt đầu sốt", "M0", "Tính fever_duration_days - mốc 5/7 ngày", tri_state=False),
+    FeverField("fever_duration_days", "Số ngày đã sốt", "M1", "Tính TỰ ĐỘNG từ fever_onset_at - không hỏi trực tiếp", tri_state=False),
     FeverField("fever_pattern", "Kiểu sốt", "O", "continuous/intermittent/relapsing - giá trị hạn chế", tri_state=False, allowed_values=("continuous", "intermittent", "relapsing", "unknown",)),
     FeverField("rigors", "Rét run dữ dội", "M0", "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét"),
     FeverField("hypothermia_reported", "Nhiệt độ < 36°C", "C", "Red flag ở nhóm nguy cơ, kích hoạt theo tuổi/miễn dịch"),

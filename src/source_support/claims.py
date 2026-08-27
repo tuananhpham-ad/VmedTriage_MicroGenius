@@ -39,6 +39,7 @@ from typing import Any
 from src.graph_triage.graph_schema import normalise_span
 from src.services.infra.provider_router import ROLE_CLAIM_SPLITTER
 from src.source_support.llm import CostMeter, call_json
+from src.source_support.progress import Progress, ProgressReporter, reporter_for
 from src.source_support.schemas import Claim, ClaimBatch
 
 MAX_CLAIMS = 3
@@ -203,12 +204,19 @@ def guard_polarity(claims: list[Claim], evidence: list[dict[str, Any]]) -> None:
 # ---------- điều phối ----------
 
 
-def extract_claims(decision: dict[str, Any], *, meter: CostMeter | None = None) -> list[Claim]:
+def extract_claims(
+    decision: dict[str, Any],
+    *,
+    meter: CostMeter | None = None,
+    on_progress: Progress | ProgressReporter | None = None,
+) -> list[Claim]:
     """Bước 1 + Guard 0a + Guard 0b. Trả về các claim đã neo được vào quyết định gốc.
 
     Raise `ClaimGuardError` khi guard chặn, `SourceSupportLLMError` khi model không cho ra JSON hợp
     lệ. Cả hai đều để người gọi ở tầng trên quyết định - part 3 là best-effort, nhưng "best-effort"
     nghĩa là bỏ phần trích nguồn của ca đó, KHÔNG phải đi tiếp với claim hỏng."""
+    reporter = reporter_for(on_progress)
+    reporter.emit("claims_start", "Đang tách lập luận thành mệnh đề lâm sàng")
     batch = call_json(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=build_user_prompt(decision),
@@ -219,4 +227,11 @@ def extract_claims(decision: dict[str, Any], *, meter: CostMeter | None = None) 
     claims = list(batch.claims)[:MAX_CLAIMS]
     guard_grounded_in(claims, decision)
     guard_polarity(claims, decision.get("evidence", []))
+    # Báo SAU guard, không phải sau khi model trả lời: một claim bị Guard 0a/0b loại thì nó không tồn
+    # tại với các bước sau, nên đếm nó vào dòng tiến trình là hứa với người đọc một việc sẽ không xảy ra.
+    reporter.emit(
+        "claims_done",
+        f"Tách được {len(claims)} mệnh đề, bắt đầu tra tài liệu",
+        claims=[claim.claim_vi for claim in claims],
+    )
     return claims

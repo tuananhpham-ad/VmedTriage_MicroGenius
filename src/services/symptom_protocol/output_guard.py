@@ -126,6 +126,73 @@ def check(
     return _record(GuardResult(ok=not violations, violations=violations))
 
 
+PREFIX_SAFE_TAIL = 32
+"""Số ký tự CUỐI phải giữ lại chưa phát khi stream, để `check_prefix` luôn nhìn thấy trọn cụm cấm.
+
+Cụm dài nhất trong `DISEASE_NAMES` + `_TREATMENT_ADVICE` là 24 ký tự ("đây là dấu hiệu của bệnh").
+Không giữ lại đuôi thì một cụm bị cắt đôi giữa hai mẩu sẽ phát nửa đầu ra màn hình TRƯỚC khi có đủ
+chữ để nhận ra nó - đúng thứ guard sinh ra để chặn, chỉ chậm hơn một mẩu. 32 là 24 cộng biên."""
+
+
+def check_prefix(
+    text: str,
+    *,
+    plan: ResponsePlan,
+    protocol: SymptomProtocol,
+    cluster: QuestionCluster,
+    answers: dict[str, object],
+) -> GuardResult:
+    """Phần guard chạy được trên câu MỚI VIẾT DỞ, để stream từng chữ mà không phát ra thứ chưa kiểm.
+
+    HAI LOẠI VI PHẠM, và sự khác nhau giữa chúng là toàn bộ lý do hàm này tồn tại:
+
+    - **ĐƠN ĐIỆU** - đã vi phạm thì viết thêm bao nhiêu cũng không hết: xuất hiện tên bệnh, xuất hiện
+      lời khuyên điều trị, hỏi lại field đã biết, markdown không an toàn, thừa dấu hỏi. Cả năm đều
+      dựa trên "có chứa", mà tập con chuỗi thì chỉ nở ra chứ không co lại. Phát hiện được trên tiền
+      tố, và phát hiện rồi thì kết luận đã chốt - không cần chờ hết câu.
+    - **CHỈ BIẾT KHI XONG** - `VIOLATION_EMPTY` và `VIOLATION_NOT_A_QUESTION`. Một câu mới viết được
+      nửa thì đương nhiên chưa có dấu hỏi; kết tội nó ở đây là chặn mọi câu ngay từ chữ đầu tiên.
+
+    Điều quan trọng là loại thứ hai KHÔNG PHẢI vi phạm an toàn lâm sàng - chúng nói về HÌNH DẠNG câu.
+    Nên bỏ chúng khỏi vòng kiểm tiền tố không nới lỏng gì về an toàn: mọi thứ có thể gây hại cho người
+    bệnh đều nằm ở loại đơn điệu và vẫn bị chặn TRƯỚC khi chữ nào lên màn hình. `check()` đầy đủ vẫn
+    chạy lại trên câu hoàn chỉnh như cũ.
+
+    KHÔNG VIẾT LẠI LUẬT Ở ĐÂY. Hàm dùng đúng các hằng và hàm mà `check()` dùng: hai định nghĩa "câu
+    này có được gửi không" lệch nhau là cách chắc chắn nhất để mở lại đúng lỗ hổng cả module này tồn
+    tại để bịt."""
+    violations: list[str] = []
+    stripped = (text or "").strip()
+    if not stripped:
+        return _record_free(GuardResult(ok=True))
+
+    lowered = stripped.casefold()
+    allowed = (cluster.script_hint or "").casefold()
+    if any(name in lowered and name not in allowed for name in DISEASE_NAMES):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if any(phrase in lowered for phrase in _TREATMENT_ADVICE):
+        violations.append(VIOLATION_DIAGNOSIS)
+    if _asks_a_known_field(protocol, plan, answers, lowered):
+        violations.append(VIOLATION_ASKS_KNOWN_FIELD)
+    if _UNSAFE_MARKDOWN.search(stripped):
+        violations.append(VIOLATION_UNSAFE_MARKDOWN)
+    if stripped.count("?") > max(plan.max_questions, _MIN_QUESTION_ALLOWANCE):
+        violations.append(VIOLATION_TOO_MANY_QUESTIONS)
+
+    if not violations:
+        return _record_free(GuardResult(ok=True))
+    return _record(GuardResult(ok=False, violations=violations))
+
+
+def _record_free(result: GuardResult) -> GuardResult:
+    """Tiền tố sạch KHÔNG được ghi vào sổ đếm.
+
+    `check_prefix` chạy mỗi mẩu stream, tức hàng chục lần cho MỘT câu. Đếm chúng như những lần kiểm
+    độc lập sẽ làm loãng tỉ lệ "bị guard chặn" của §12 tới mức vô nghĩa - mẫu số phình theo tốc độ
+    token của provider chứ không theo số câu."""
+    return result
+
+
 VIOLATION_REASSURANCE = "reassurance"
 """Câu trấn an: "không sao đâu", "bạn yên tâm", "không nguy hiểm".
 

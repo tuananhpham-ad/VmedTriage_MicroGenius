@@ -149,6 +149,34 @@ COMMON_FIELDS: tuple[FieldSpec, ...] = (
 COMMON_FIELDS_BY_KEY: dict[str, FieldSpec] = {field.key: field for field in COMMON_FIELDS}
 
 
+# --- Thời điểm khởi phát DÙNG CHUNG -------------------------------------------------------------
+COMPLAINT_ONSET_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("complaint_onset_at", "Thời điểm bắt đầu", "M0", "YYYY-MM-DD; quy đổi từ 'hôm qua', '3 ngày nay' theo ngày hiện tại", tri_state=False),
+)
+"""Chuyển từ `generic_checklist.py` sang ngày 2026-08-26, nguyên văn.
+
+"Bắt đầu từ khi nào" không phải kiến thức về bệnh nào - nó là câu hỏi của MỌI than phiền, và
+`SymptomProtocol.onset_field` của `abdominal`/`breathing`/`general` đều trỏ vào đúng field này.
+
+Để nó ở riêng `generic_checklist` là nguyên nhân trực tiếp của sự cố 2026-08-26: `abdominal` cụm
+`AB-02` và `breathing` cụm `BR-01` khai `complaint_onset_at` trong `fields` nhưng không có
+`FieldSpec` nào, nên `intake_agent._field_specs` ném `KeyError` NGAY lượt người bệnh trả lời câu đó,
+và `routes.py` trả 500 "Không xử lý được tin nhắn." - lặp lại mọi lần vì lỗi là tất định."""
+
+
+# --- Field của cụm phủ chéo đau ngực × khó thở (F09 §3.10b) --------------------------------------
+CHEST_DYSPNEA_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("diaphoresis", "Vã mồ hôi lạnh", "M0", "Diaphoresis kèm đau ngực - dấu hiệu hội chứng vành cấp"),
+    FieldSpec("palpitations", "Tim đập nhanh / không đều", "M0", "Rối loạn nhịp kèm đau ngực - tiêu chí Cấp cứu"),
+)
+"""Hai field mà `clusters.chest_dyspnea_cluster` hỏi tới, ngoài phần đã có trong `RESPIRATORY_FIELDS`.
+
+**Cụm dùng chung thì field của nó cũng phải dùng chung.** Bản đầu khai hai field này trong
+`chest_pain_checklist.py` rồi cho `breathing` mượn cụm - `breathing` vỡ ngay lượt hỏi `BR-03`. Đây là
+cùng một lỗi với `complaint_onset_at` ở trên, và cùng một cách sửa: field đi theo cụm, không đi theo
+protocol nào."""
+
+
 # --- Tín hiệu sốt DÙNG CHUNG (F09 §3.8) -----------------------------------------------------------
 FEVER_SIGNAL_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("fever_reported", "Người dùng khai có sốt", "M0", "Cổng vào toàn bộ protocol sốt"),

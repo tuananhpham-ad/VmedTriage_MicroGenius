@@ -1304,10 +1304,14 @@ function messageMarkup(message) {
   if (message.role === "system") {
     return `<div class="bubble is-system">${icon("check", 14)}<span>${escapeHtml(message.text)}</span></div>`;
   }
-  // Bong bóng đang stream giữ nguyên văn bản thô: con trỏ nhấp nháy là `::after` của chính div này,
-  // mà chèn `<p>` vào giữa sẽ đẩy nó xuống dòng riêng sau mỗi mẩu chữ mới về.
+  // tanh - sửa format output agent (2026-08-27).
+  // Bong bóng đang stream đi qua ĐÚNG `paragraphs()` như bong bóng đã xong, chỉ thêm cờ `pending`.
+  // Trước đây nó giữ văn bản thô rồi mới được `done` vẽ lại thành đoạn/gạch đầu dòng, nên người dùng
+  // thấy cả câu trả lời nhảy một nhịp ngay lúc vừa đọc xong - format phải chạy CÙNG luồng chữ, không
+  // phải sau nó. Con trỏ nhấp nháy theo `.is-typing` sang phần tử chữ cuối (xem `renderTextBlock`),
+  // nên việc chèn `<p>` không còn đẩy nó xuống dòng riêng nữa.
   if (message.role === "streaming") {
-    return `<div class="chat-message is-agent"><span class="chat-message-sender"><i class="chat-source-avatar">${icon("logo", 15)}</i><span>VMedTriage</span></span><div class="bubble is-streaming">${escapeHtml(message.text)}</div></div>`;
+    return `<div class="chat-message is-agent"><span class="chat-message-sender"><i class="chat-source-avatar">${icon("logo", 15)}</i><span>VMedTriage</span></span><div class="bubble is-streaming">${paragraphs(message.text, { pending: true })}</div></div>`;
   }
   const sender = message.role === "agent"
     ? "VMedTriage"
@@ -1392,7 +1396,16 @@ async function streamChatTurn(message, root, context) {
     // dùng cảm nhận được: chữ hiện dần thay vì màn hình đứng im vài giây.
     state.patientMessages = state.patientMessages.filter((item) => item.role !== "pending" && item.role !== "streaming");
     state.patientMessages.push({ role: "streaming", text });
-    renderPatientChat(root, context);
+    // tanh - sửa format output agent (2026-08-27).
+    // Mẩu chữ thứ hai trở đi chỉ vẽ lại BONG BÓNG, không dựng lại cả trang: `renderPatientChat` thay
+    // `root.innerHTML`, gắn lại toàn bộ handler và mở lại vòng polling ca - làm việc đó vài chục lần
+    // mỗi giây thì chính nó là thứ giật, và mỗi lần thay DOM lại khởi động lại animation con trỏ.
+    // Lần đầu vẫn phải render đủ để bong bóng ra đời; `state` vẫn được cập nhật trước đó nên mọi lần
+    // render đầy đủ sau này (`done`, lỗi, điều hướng) đều dựng lại đúng những gì đang thấy.
+    const bubble = root.querySelector(".bubble.is-streaming");
+    if (!bubble) { renderPatientChat(root, context); return; }
+    bubble.innerHTML = paragraphs(text, { pending: true });
+    scrollChat(root);
   };
 
   try {

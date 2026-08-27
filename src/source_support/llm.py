@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
@@ -82,27 +83,196 @@ def call_json(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    problem = ""
-    for attempt in range(2):
-        result = provider_router.complete(messages, temperature=temperature, role=role)
-        if meter is not None:
-            meter.record_call(result.provider, system_prompt + user_prompt, result.text)
-        try:
-            return schema.model_validate(parse_json_object(result.text))
-        except (ValidationError, ValueError, json.JSONDecodeError) as error:
-            problem = str(error)
-            logger.warning(
-                "source_support.json_rejected role=%s provider=%s attempt=%s reason=%s",
-                role, result.provider, attempt + 1, type(error).__name__,
-            )
-            if attempt == 0:
-                # Chỉ đưa lại MÔ TẢ LỖI, tuyệt đối không gợi ý nội dung lâm sàng nào - cùng nguyên tắc
-                # với `deepseek_extractor.REPAIR_PROMPT`. Gợi ý nội dung là tự tay bịa hộ model.
-                messages = messages[:2] + [
-                    {"role": "assistant", "content": result.text},
-                    {"role": "user", "content": _REPAIR_PROMPT.format(errors=problem)},
-                ]
-    raise SourceSupportLLMError(f"Bước {role} không trả được JSON hợp lệ: {problem}")
+    result = provider_router.complete(messages, temperature=temperature, role=role)
+    if meter is not None:
+        meter.record_call(result.provider, system_prompt + user_prompt, result.text)
+    try:
+        return schema.model_validate(parse_json_object(result.text))
+    except (ValidationError, ValueError, json.JSONDecodeError) as error:
+        logger.warning(
+            "source_support.json_rejected role=%s provider=%s attempt=1 reason=%s",
+            role, result.provider, type(error).__name__,
+        )
+        return _repair(
+            messages=messages, previous=result.text, problem=str(error), schema=schema,
+            role=role, meter=meter, temperature=temperature,
+            meter_prompt=system_prompt + user_prompt,
+        )
+
+
+class StreamedFieldDecoder:
+    """Bóc dần MỘT trường chuỗi ra khỏi một JSON đang được stream về.
+
+    VÌ SAO BÓC, THAY VÌ ĐỔI PROMPT SANG VĂN XUÔI. Bước 7 trả JSON vì Guard 5a cần `used_markers` và
+    cần ranh giới rõ giữa đoạn văn với phần siêu dữ liệu; bỏ JSON để stream cho tiện là đánh đổi một
+    lớp guard lấy một hiệu ứng hiển thị. Ở đây JSON giữ nguyên - ta chỉ đọc ké phần thân của trường
+    trong lúc nó đang được viết ra, còn validate vẫn chạy trên KHỐI JSON HOÀN CHỈNH y như cũ.
+
+    KHÔNG DÙNG PARSER JSON TĂNG DẦN. Việc cần làm hẹp hơn nhiều: đúng một trường, kiểu chuỗi, ở tầng
+    ngoài cùng. Quét chuỗi bằng tay cho việc đó là vài chục dòng đọc hết được, còn kéo về một parser
+    tăng dần là thêm phụ thuộc cho một bài toán ta không có.
+
+    HAI THỨ PHẢI CHỊU ĐƯỢC, vì mẩu stream cắt ở vị trí tuỳ ý:
+
+    1. Mẩu kết thúc GIỮA một chuỗi thoát (dấu gạch chéo ngược đứng lẻ, hoặc một escape unicode mới
+       viết được nửa). Decode ngay sẽ ném lỗi, nên phần đuôi dở dang bị cắt lại và chờ mẩu sau.
+    2. Trường chưa xuất hiện trong buffer - trả về rỗng. Đó là trạng thái bình thường của mấy mẩu
+       đầu tiên chứ không phải lỗi.
+    """
+
+    def __init__(self, field_name: str) -> None:
+        self._name = json.dumps(field_name)
+        self._buffer = ""
+        self._emitted = 0
+
+    def feed(self, piece: str) -> str:
+        """Nạp một mẩu thô, trả về phần chữ MỚI của trường (rỗng nếu chưa có gì mới)."""
+        self._buffer += piece
+        decoded = self._decode_so_far()
+        if len(decoded) <= self._emitted:
+            # `<=` chứ không `<`: một stream chỉ nối thêm thì không bao giờ ngắn đi, nhưng nếu có thì
+            # phát ra một đoạn "lùi" còn khó hiểu cho người đọc hơn là im lặng.
+            return ""
+        fresh = decoded[self._emitted:]
+        self._emitted = len(decoded)
+        return fresh
+
+    def _decode_so_far(self) -> str:
+        start = self._buffer.find(self._name)
+        if start < 0:
+            return ""
+        colon = self._buffer.find(":", start + len(self._name))
+        if colon < 0:
+            return ""
+        opening = self._buffer.find('"', colon + 1)
+        if opening < 0:
+            return ""
+
+        body: list[str] = []
+        index = opening + 1
+        while index < len(self._buffer):
+            char = self._buffer[index]
+            if char == "\\":
+                body.append(self._buffer[index:index + 2])
+                index += 2
+                continue
+            if char == '"':
+                break
+            body.append(char)
+            index += 1
+
+        raw = "".join(body)
+        while raw:
+            try:
+                return json.loads('"' + raw + '"')
+            except ValueError:
+                # Đuôi dở dang: bỏ một ký tự rồi thử lại. Thực tế chạy tối đa 5 lượt - escape unicode
+                # là dạng dài nhất JSON có.
+                raw = raw[:-1]
+        return ""
+
+
+def call_json_streaming(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    schema: type[BaseModel],
+    role: str,
+    stream_field: str,
+    on_token: Callable[[str], None],
+    meter: CostMeter | None = None,
+    temperature: float = 0.0,
+) -> BaseModel:
+    """Như `call_json` nhưng phát dần phần thân của `stream_field` ra `on_token` trong lúc chờ.
+
+    HỢP ĐỒNG VỚI NGƯỜI GỌI, phải đọc trước khi dùng: những gì đi qua `on_token` là BẢN NHÁP CHƯA QUA
+    GUARD. Bước 7 có Guard 5a/5b chạy SAU khi đã có đủ văn bản, và khi guard chặn thì cả đoạn bị thay
+    bằng bản do code dựng. Người gọi vì thế phải hiển thị dòng chảy này ĐÚNG NHƯ một bản nháp và luôn
+    vẽ lại theo giá trị trả về cuối cùng - để chữ đã stream nằm lại trên màn hình như kết quả là đúng
+    thứ `explain.py` tồn tại để chặn.
+
+    KHÔNG STREAM LƯỢT SỬA. Lượt hai mang theo lỗi validate và gần như luôn viết lại từ đầu; phát tiếp
+    vào cùng một dòng sẽ nối hai bản văn thành một đoạn vô nghĩa. Lượt sửa quay về `complete()` một
+    cục - hỏng ở lượt đầu thì mất hiệu ứng chữ chạy, đổi lấy một kết quả không lẫn lộn.
+    """
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    decoder = StreamedFieldDecoder(stream_field)
+    pieces: list[str] = []
+    provider_used = "(stream)"
+
+    def _note_provider(provider: str, _model: str | None) -> None:
+        nonlocal provider_used
+        provider_used = provider
+
+    try:
+        for piece in provider_router.complete_stream(
+            messages, temperature=temperature, role=role, on_provider=_note_provider,
+        ):
+            pieces.append(piece)
+            fresh = decoder.feed(piece)
+            if fresh:
+                on_token(fresh)
+    except Exception as error:
+        # Stream hỏng KHÔNG phải bước 7 hỏng: rơi về đường gọi một cục, chỉ mất hiệu ứng chữ chạy.
+        logger.warning(
+            "source_support.stream_failed role=%s reason=%s: %s", role, type(error).__name__, error,
+        )
+        return call_json(
+            system_prompt=system_prompt, user_prompt=user_prompt, schema=schema,
+            role=role, meter=meter, temperature=temperature,
+        )
+
+    text = "".join(pieces)
+    if meter is not None:
+        meter.record_call(provider_used, system_prompt + user_prompt, text)
+    try:
+        return schema.model_validate(parse_json_object(text))
+    except (ValidationError, ValueError, json.JSONDecodeError) as error:
+        logger.warning(
+            "source_support.json_rejected role=%s provider=%s attempt=1 mode=stream reason=%s",
+            role, provider_used, type(error).__name__,
+        )
+        return _repair(
+            messages=messages, previous=text, problem=str(error), schema=schema,
+            role=role, meter=meter, temperature=temperature,
+            meter_prompt=system_prompt + user_prompt,
+        )
+
+
+def _repair(
+    *,
+    messages: list[dict[str, str]],
+    previous: str,
+    problem: str,
+    schema: type[BaseModel],
+    role: str,
+    meter: CostMeter | None,
+    temperature: float,
+    meter_prompt: str,
+) -> BaseModel:
+    """Lượt sửa DUY NHẤT. Tách ra để đường một-cục và đường stream dùng chung đúng một prompt sửa:
+    hai bản sao của prompt này sẽ trôi ra xa nhau, mà đây là prompt phải giữ được lời hứa "không gợi
+    ý nội dung lâm sàng" ở cả hai đường."""
+    repair_messages = messages[:2] + [
+        {"role": "assistant", "content": previous},
+        # Chỉ đưa lại MÔ TẢ LỖI, tuyệt đối không gợi ý nội dung lâm sàng nào - cùng nguyên tắc với
+        # `deepseek_extractor.REPAIR_PROMPT`. Gợi ý nội dung là tự tay bịa hộ model.
+        {"role": "user", "content": _REPAIR_PROMPT.format(errors=problem)},
+    ]
+    result = provider_router.complete(repair_messages, temperature=temperature, role=role)
+    if meter is not None:
+        meter.record_call(result.provider, meter_prompt, result.text)
+    try:
+        return schema.model_validate(parse_json_object(result.text))
+    except (ValidationError, ValueError, json.JSONDecodeError) as error:
+        logger.warning(
+            "source_support.json_rejected role=%s provider=%s attempt=2 reason=%s",
+            role, result.provider, type(error).__name__,
+        )
+        raise SourceSupportLLMError(f"Bước {role} không trả được JSON hợp lệ: {error}") from error
 
 
 _REPAIR_PROMPT = """JSON của bạn bị bộ kiểm tra từ chối. Lỗi ghi nhận được:

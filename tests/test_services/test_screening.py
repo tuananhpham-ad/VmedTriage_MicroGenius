@@ -11,6 +11,7 @@ hàm thuần: chốt đỏ vẫn nổ ngay trong lượt sàng lọc, và verdic
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -334,13 +335,32 @@ def test_generic_protocol_screens_the_same_universal_groups_as_fever():
 # --- câu hỏi sàng lọc ----------------------------------------------------------------------------
 
 
-def test_probe_question_lists_every_group_hint_verbatim():
+def _signals(text: str) -> set[str]:
+    """Các TỪ mang dấu hiệu, bỏ dấu câu và liên từ nối vế.
+
+    So theo TỪ chứ không dùng `screening.hint_items` để dựng kỳ vọng: một bài test gọi chính hàm đang
+    được kiểm sẽ vẫn xanh khi hàm đó nuốt mất một vế."""
+    dropped = {"hoặc", "hay"}
+    return {word for word in re.findall(r"\w+", text.casefold()) if word not in dropped}
+
+
+def test_probe_question_reads_every_signal_of_every_group():
     """Bất biến an toàn của cả cơ chế: một nhóm chỉ được đóng khi người bệnh ĐÃ nghe đọc danh sách dấu
     hiệu của nó. Câu hỏi được ghép TĨNH nên phép kiểm này là đủ - nếu đưa qua LLM diễn đạt lại thì
-    không có cách nào đảm bảo được điều đó nữa."""
+    không có cách nào đảm bảo được điều đó nữa.
+
+    TRƯỚC ĐÂY BÀI NÀY KIỂM `probe_hint in question` (nguyên văn cả chuỗi). Phép kiểm đó chặt hơn mức
+    bất biến đòi hỏi: nó khoá luôn cả DẤU CÂU nối các vế, nên `probe_hint` gộp ba dấu hiệu bằng chấm
+    phẩy buộc phải đọc liền một mạch. Điều bất biến thật sự cần là "mọi dấu hiệu đều được đọc lên",
+    và đó là thứ được kiểm ở đây - từng vế một, sau khi `probe_lines` tách dòng.
+
+    Ràng buộc "không qua LLM" vẫn nguyên vẹn và vẫn là lý do phép kiểm này đủ: việc tách dòng chạy
+    bằng code, tất định. `test_probe_rendering.py` khoá riêng phần không được mất chữ nào."""
     question = screening.probe_question(GROUPS_3A)
+    asked = _signals(question)
     for group in GROUPS_3A:
-        assert group.probe_hint in question
+        missing = [word for word in _signals(group.probe_hint) if word not in asked]
+        assert not missing, f"{group.id} không được đọc lên: {missing}"
     assert screening.PROBE_INTRO in question
 
 

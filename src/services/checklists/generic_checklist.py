@@ -25,7 +25,6 @@ from src.services.symptom_protocol.models import FieldSpec, QuestionCluster
 COMPLAINT_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("chief_complaint", "Triệu chứng chính", "M0", "Người bệnh tự mô tả điều khó chịu nhất, giữ NGUYÊN VĂN lời họ - không quy về tên bệnh", tri_state=False),
     FieldSpec("complaint_site", "Vị trí/bộ phận khó chịu", "M1", "Ngực, bụng, đầu, lưng, tay chân... theo lời người bệnh", tri_state=False),
-    FieldSpec("complaint_onset_at", "Thời điểm bắt đầu", "M0", "YYYY-MM-DD; quy đổi từ 'hôm qua', '3 ngày nay' theo ngày hiện tại", tri_state=False),
     FieldSpec("complaint_duration_days", "Số ngày đã kéo dài", "M1", "Tính TỰ ĐỘNG từ complaint_onset_at - không hỏi trực tiếp", tri_state=False),
     FieldSpec("complaint_severity", "Mức khó chịu (0-10)", "M1", "Thang 0-10 theo cảm nhận người bệnh", tri_state=False),
     FieldSpec("complaint_progression", "Diễn tiến", "M1", "better/same/worse - đang đỡ dần, như cũ, hay nặng lên", tri_state=False, allowed_values=("better", "same", "worse", "unknown",)),
@@ -35,6 +34,10 @@ GENERIC_FIELDS: tuple[FieldSpec, ...] = (
     common_fields.DEMOGRAPHIC_FIELDS
     + common_fields.SAFETY_NETTING_FIELDS
     + COMPLAINT_FIELDS
+    # `complaint_onset_at` đã chuyển sang `common_safety.COMPLAINT_ONSET_FIELDS` (2026-08-26):
+    # `abdominal`/`breathing` cũng trỏ `onset_field` vào nó, nên nó không còn là tài sản riêng
+    # của generic. Import lại ở đây để chỉ có MỘT định nghĩa.
+    + common_fields.COMPLAINT_ONSET_FIELDS
     + common_fields.GENERAL_FIELDS
     + common_fields.RESPIRATORY_FIELDS
     + common_fields.CIRCULATION_FIELDS

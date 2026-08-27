@@ -2,7 +2,9 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -72,6 +74,7 @@ from src.services.symptom_protocol.session import (
     SessionNotFoundError,
     SessionState,
 )
+from src.source_support.progress import Progress, ProgressEvent
 from src.tool.base import MCPToolCallRequest, MCPToolCallResult, MCPToolDescriptor
 from src.tool.registry import tool_registry
 
@@ -389,7 +392,20 @@ def _prepare_chat_turn(payload: ChatRequest, patient_id: int) -> tuple[str, Tria
     return session_id, previous
 
 
-async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | None) -> ChatResponse:
+async def _finish_chat_turn(
+    session,
+    *,
+    patient_id: int,
+    previous: TriageCase | None,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> ChatResponse:
+    """`on_progress`/`on_token` chỉ có tác dụng trên nhánh chạy C6 ĐỒNG BỘ.
+
+    Nhánh `_should_background_safety_gate` đẩy part 2/3 sang nền và trả lời bệnh nhân ngay bằng câu
+    red-flag cố định - lượt SSE đó kết thúc trước khi part 3 bắt đầu, nên không có gì để báo về. Đó
+    là hành vi ĐÚNG chứ không phải thiếu sót: ca cấp cứu không được chờ mạng, và đổi nó để lấy vài
+    dòng tiến trình là đổi sai thứ."""
     triage_case = symptom_case_bridge.to_triage_case(session, patient_id=patient_id, previous=previous)
     _remember_nurse_summary(session, triage_case, patient_id=patient_id)
     if _should_background_safety_gate(triage_case, previous):
@@ -398,7 +414,9 @@ async def _finish_chat_turn(session, *, patient_id: int, previous: TriageCase | 
         case_store.save(triage_case)
         _schedule_safety_gate(triage_case.case_id)
     else:
-        await _attach_graph_decision(triage_case, previous)
+        await _attach_graph_decision(
+            triage_case, previous, on_progress=on_progress, on_token=on_token,
+        )
         changed = (
             _raise_priority_from_c6(triage_case, triage_case.graph_decision)
             if (
@@ -477,7 +495,16 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
 
     - `status`  - đang trích xuất lời khai (LLM #1, không hiển thị được vì nó trả JSON);
     - `token`   - từng mẩu câu hỏi (LLM #2, thứ duy nhất người bệnh đọc);
-    - `done`    - NGUYÊN VĂN body của `ChatResponse`, để client dùng lại đúng đường xử lý cũ;
+    - `source_progress` - tiến trình part 3 (tách mệnh đề, search, fetch, embed, chấm verdict). Đây
+      là đoạn IM LẶNG LÂU NHẤT của một lượt chốt phiếu - hàng chục giây không có chữ nào để phát ra
+      vì mọi bước đều trả JSON hoặc là network I/O. Client hiển thị `text` là đủ; `phase` và các số
+      `index`/`total` để vẽ thanh tiến trình nếu muốn;
+    - `source_draft` - từng mẩu chữ của đoạn diễn giải part 3. **BẢN NHÁP CHƯA QUA GUARD 5.** Client
+      PHẢI hiển thị nó như bản nháp và PHẢI vẽ lại theo `done`: Guard 5a/5b chỉ chạy được khi đã có
+      trọn đoạn văn, và khi nó chặn thì đoạn thật khác hẳn thứ vừa chảy qua màn hình. Sự kiện
+      `source_progress` có `phase="explanation_replaced"` là tín hiệu XOÁ bản nháp ngay;
+    - `done`    - NGUYÊN VĂN body của `ChatResponse`, để client dùng lại đúng đường xử lý cũ. Đây là
+      nguồn sự thật DUY NHẤT cho phần hiển thị cuối cùng;
     - `error`   - lỗi sau khi header đã gửi đi, lúc đó không còn đặt được HTTP status nữa.
 
     Lỗi TRƯỚC khi stream bắt đầu (403/400/404) vẫn là HTTP status thật - `_prepare_chat_turn` chạy
@@ -508,6 +535,15 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
             # đúng để đẩy dữ liệu về đây.
             loop.call_soon_threadsafe(queue.put_nowait, ("token", piece))
 
+        def on_source_progress(event: ProgressEvent) -> None:
+            # Cũng từ threadpool, và với part 3 thì còn từ LUỒNG CON của bước chấm verdict. Không tự
+            # nối chuỗi hay gom nhóm ở đây: `ProgressReporter` đã khoá quanh sink, còn việc hiển thị
+            # thế nào là của client.
+            loop.call_soon_threadsafe(queue.put_nowait, ("source_progress", event.as_dict()))
+
+        def on_source_token(piece: str) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, ("source_draft", {"text": piece}))
+
         async def run_turn() -> None:
             # Root span mở BÊN TRONG `run_turn`, không phải trong `events()`: span sống theo
             # contextvar, mà `events()` là async generator - context của nó bị tháo/lắp lại mỗi lần
@@ -519,7 +555,10 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
                         symptom_session.session_store.submit_message,
                         session_id, payload.message, on_token=on_token,
                     )
-                    body = await _finish_chat_turn(session, patient_id=patient_id, previous=previous)
+                    body = await _finish_chat_turn(
+                        session, patient_id=patient_id, previous=previous,
+                        on_progress=on_source_progress, on_token=on_source_token,
+                    )
                 await queue.put(("done", body.model_dump(mode="json")))
             except EmptyMessageError as error:
                 await queue.put(("error", {"detail": str(error), "status": 400}))
@@ -585,7 +624,13 @@ async def force_complete_case(case_id: str, request: Request) -> ChatResponse:
         return _patient_chat_response(triage_case)
 
 
-async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase | None) -> None:
+async def _attach_graph_decision(
+    triage_case: TriageCase,
+    previous: TriageCase | None,
+    *,
+    on_progress: Progress | None = None,
+    on_token: Callable[[str], None] | None = None,
+) -> None:
     """Gắn C6/ý kiến graph từ `src/graph_triage/` khi phiếu vừa chốt.
 
     `to_triage_case` là hàm THUẦN, dựng lại `TriageCase` từ đầu mỗi lượt và không biết gì về trường
@@ -613,7 +658,14 @@ async def _attach_graph_decision(triage_case: TriageCase, previous: TriageCase |
         return
     # `decide_for_case` không bao giờ raise (best-effort), nhưng nó đồng bộ và nặng - đẩy sang
     # threadpool để không chặn event loop của các request khác.
-    triage_case.graph_decision = await run_in_threadpool(graph_triage_service.decide_for_case, triage_case)
+    triage_case.graph_decision = await run_in_threadpool(
+        partial(
+            graph_triage_service.decide_for_case,
+            triage_case,
+            on_progress=on_progress,
+            on_token=on_token,
+        )
+    )
 
 
 def _retry_graph_decision_if_stranded(triage_case: TriageCase) -> None:

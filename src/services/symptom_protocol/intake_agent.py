@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+from src.config import get_settings
 from src.services.engines.semantic_mapper import _contains_any
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
@@ -136,9 +137,35 @@ def _missing_in_cluster(
 
 
 def _field_specs(protocol: SymptomProtocol, field_keys: tuple[str, ...]) -> str:
+    """Mô tả field cho prompt trích xuất. Field protocol không biết bị BỎ QUA kèm log, không raise.
+
+    VÌ SAO KHÔNG `raise`, DÙ ĐÓ LÀ TRIỆU CHỨNG CỦA MỘT LỖI THẬT. Hàm này chạy lúc dựng prompt, tức
+    NGOÀI khối `try` bọc lời gọi model trong `extract_turn` - nên một `KeyError` ở đây bay thẳng qua
+    `run_turn`, qua `session._turn`, ra tới route, và người bệnh nhận đúng một dòng "Không xử lý được
+    tin nhắn." giữa lúc đang khai bệnh. `extract_turn` hứa trong docstring của nó là KHÔNG BAO GIỜ
+    ném; chỗ này từng là lỗ thủng của lời hứa đó.
+
+    KHÓA THẬT NẰM Ở `key not in protocol.fields_by_key`: cụm đang hỏi thuộc protocol KHÁC với
+    protocol đang chạy. Nó xảy ra được vì lượt phát hiện đổi protocol chọn cụm kế tiếp bằng protocol
+    CŨ rồi mới đổi tên protocol (`session._turn`), nên lượt sau ghép cụm cũ với protocol mới. Ví dụ
+    đã tái hiện: cụm `AB-02` (bụng) mang `complaint_onset_at`, mà `fever`/`chest_pain`/`headache`
+    không khai field đó.
+
+    Bỏ qua ở đây là NGẮT MÁU, không phải chữa: field bị bỏ sẽ không được trích trong lượt đó. Nhưng
+    lượt vẫn chạy, `stage_machine.advance` vẫn chọn được cụm đúng của protocol mới cho lượt sau, nên
+    phiên tự về lại đường ray - khác hẳn việc chết cả lượt. Log ở mức WARNING vì nó luôn là dấu hiệu
+    của một lỗi định tuyến cần sửa, không phải trạng thái bình thường."""
+    unknown = [key for key in field_keys if key not in protocol.fields_by_key]
+    if unknown:
+        logger.warning(
+            "symptom_intake.unknown_fields protocol=%s fields=%s - cụm đang hỏi không thuộc protocol này",
+            protocol.name, ",".join(unknown),
+        )
     lines = []
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            continue
         # Ghi rõ ngoặc kép trong chính hint để giảm khả năng model trả bareword unknown (không quote)
         # - lỗi thật gặp phải với gpt-4o-mini qua OpenRouter khi chạy Checkpoint 6(b) của fever, xem
         # _repair_bareword_unknown ở dưới (vẫn giữ lớp sửa lỗi đó làm lưới an toàn, không chỉ dựa vào
@@ -777,7 +804,13 @@ def _collect_fields(
 
     collected: dict[str, TriState] = {}
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            # Field protocol đang chạy không khai - cùng nguyên nhân với `_field_specs` (cụm thuộc
+            # protocol khác) và cùng cách xử lý: bỏ qua, không raise. Không log lại ở đây vì
+            # `_field_specs` đã ghi đúng một dòng cho cùng lượt đó; log hai lần cho một sự cố làm
+            # người đọc tưởng nó xảy ra hai lần.
+            continue
         raw, evidence_span, operation = _field_payload(parsed.get(key))
 
         if operation == "unset":
@@ -1018,12 +1051,23 @@ def _field_brief(protocol: SymptomProtocol, keys: tuple[str, ...]) -> str:
     return "\n".join(lines) if lines else "(không có ý nào)"
 
 
-def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
+def _format_history(conversation: list[dict[str, str]], limit: int | None = None) -> str:
     """Cửa sổ hội thoại gửi cho model: bản tóm tắt phần cũ (nếu có) + `limit` lượt thô gần nhất.
+
+    `limit` ĐỌC TỪ `context_compaction_keep_turns`, không viết cứng nữa. Hai con số này phải bằng
+    nhau, và trước đây chúng chỉ *tình cờ* bằng nhau vì cả hai cùng là 6: `maybe_compact` chừa lại
+    `keep_turns` lượt không nén, còn hàm này đọc 6 lượt cuối. Lượt nào vừa không bị nén vừa nằm
+    ngoài 6 lượt cuối thì rơi vào VÙNG CHẾT - không có trong bản tóm tắt, cũng không có trong phần
+    model đọc. Nó biến mất, và biến mất không kèm exception, không kèm log.
+
+    Đo được: hội thoại 30 lượt, đặt `keep_turns=20` (hợp lệ, `Field(ge=2, le=40)`) thì 14 lượt giữa
+    phiên bốc hơi khỏi tầm nhìn của model. Vặn núm lên với ý định cho model nhớ nhiều hơn lại làm nó
+    nhớ ít đi - đúng kiểu hỏng mà một cấu hình "an toàn" gây ra.
 
     Lượt mang vai `compaction.ROLE_SUMMARY` được tách ra xử lý RIÊNG chứ không đi qua `[-limit:]`:
     nó là bản nén của hàng chục lượt trước đó, và để nó bị đẩy khỏi cửa sổ vì mấy lượt "vâng"/"không"
     mới nhất là đánh mất đúng thứ việc nén sinh ra để giữ (§4.9 M2)."""
+    limit = get_settings().context_compaction_keep_turns if limit is None else limit
     summary = " ".join(
         str(turn.get("content", "")).strip()
         for turn in conversation
@@ -1043,6 +1087,33 @@ def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
 # temperature cao hơn CHỈ dùng cho bước "diễn đạt lại câu hỏi" - không trích xuất field ở đây nên
 # không đánh đổi độ chính xác. temperature=0 khiến LLM trả gần như Y HỆT một câu cho cùng 1
 # script_hint mỗi lần, làm hội thoại cảm giác "học thuộc lòng" (phát hiện qua test tay với LLM thật).
+def _emit_static(on_token: TokenSink | None, text: str) -> None:
+    """Phát một câu TĨNH ra kênh streaming ngay khi nó được chọn.
+
+    Câu tĩnh không cần chờ model, nên nó là câu đến được màn hình NHANH NHẤT trong cả hệ - nhưng
+    trước đây nó lại là câu duy nhất không đi qua `on_token`, nên người bệnh phải đợi hết lượt
+    (rule engine, chốt triage, lưu case) rồi mới đọc được nó trong sự kiện `done`. Nghịch lý: câu
+    rẻ nhất lại hiện chậm nhất.
+
+    Phát nguyên một mẩu chứ không cắt nhỏ giả vờ: chữ đã có sẵn đủ, chia nhỏ ra để trông giống đang
+    gõ là làm chậm một cách cố ý."""
+    if on_token is not None and text:
+        on_token(text)
+
+
+def _visible_text(raw: str) -> str:
+    """Phần ĐẦU của output model sẽ thật sự hiện ra cho người bệnh, bỏ rác mở đầu.
+
+    Tồn tại vì streaming cần một hệ toạ độ ỔN ĐỊNH. Bản gom-trọn cũ chỉ cần `raw.strip().strip('"')`
+    một lần ở cuối, nhưng khi phát dần thì mỗi mẩu được cắt theo CHỈ SỐ, mà `strip()` ở cuối lại dịch
+    toàn bộ chỉ số nếu model mở đầu bằng khoảng trắng hoặc một dấu nháy. Lệch một ký tự ở đây nghĩa là
+    người bệnh đọc một câu mất chữ đầu hoặc lặp chữ.
+
+    Chỉ gỡ ĐẦU, không gỡ đuôi: đuôi còn đang được viết tiếp, `rstrip` giữa chừng sẽ cắt mất khoảng
+    trắng ngăn từ rồi mẩu sau dính liền vào từ trước."""
+    return raw.lstrip().lstrip('"')
+
+
 _QUESTION_TEMPERATURE = 0.7
 
 # Số lần hỏi lại tối đa cho MỘT cụm trước khi bỏ qua.
@@ -1151,20 +1222,46 @@ def _generate_question(
             # Chỉ bước NÀY được stream, và chỉ vì nó là văn bản người bệnh đọc. Lượt trích xuất trả
             # JSON - JSON dở dang thì không parse được nên streaming ở đó không giúp gì.
             #
-            # GOM TRỌN rồi mới phát: `output_guard` phải chạy TRƯỚC khi người bệnh đọc được chữ nào
-            # (§6.5). Phát từng token rồi mới kiểm thì lúc guard bắt được một tên bệnh, câu đó đã
-            # nằm trên màn hình - và "đính chính" một câu vừa hiện ra còn tệ hơn là chờ. Cái giá đã
-            # đo được: bước diễn đạt p50 1.2s (`eval/baselines/2026-08-17-p0-summary.md`).
+            # PHÁT DẦN, NHƯNG CHỈ PHÁT PHẦN ĐÃ QUA GUARD. Bản trước gom trọn rồi mới phát một cục, vì
+            # §6.5 đòi `output_guard` chạy TRƯỚC khi người bệnh đọc được chữ nào - đúng, và ràng buộc
+            # đó vẫn được giữ nguyên ở đây. Thứ đổi là cách giữ nó: mọi vi phạm NGUY HIỂM của guard
+            # (tên bệnh, lời khuyên điều trị, hỏi lại field đã biết, markdown hỏng, thừa dấu hỏi) đều
+            # ĐƠN ĐIỆU - đã vi phạm thì viết thêm không hết - nên `check_prefix` phán được ngay trên
+            # câu viết dở. Chữ chỉ rời khỏi đây sau khi tiền tố chứa nó đã sạch.
+            #
+            # GIỮ LẠI ĐUÔI `PREFIX_SAFE_TAIL` ký tự: không giữ thì một cụm cấm bị cắt đôi giữa hai mẩu
+            # sẽ phát nửa đầu ra màn hình trước khi có đủ chữ để nhận ra nó.
             pieces: list[str] = []
+            emitted = 0
+            blocked = False
             for piece in provider_router.complete_stream(
                 messages, temperature=_QUESTION_TEMPERATURE, credential=credential,
                 role=provider_router.ROLE_SYNTHESIS,
             ):
                 pieces.append(piece)
-            question = "".join(pieces).strip().strip('"')
+                draft = _visible_text("".join(pieces))
+                if not output_guard.check_prefix(
+                    draft, plan=plan, protocol=protocol, cluster=cluster, answers=answers
+                ):
+                    # Dừng ĐỌC luôn, không chỉ dừng phát: phần còn lại của một câu đã hỏng thì không
+                    # có giá trị gì, mà vẫn tính tiền token.
+                    blocked = True
+                    break
+                if on_token is not None:
+                    safe_upto = len(draft) - output_guard.PREFIX_SAFE_TAIL
+                    if safe_upto > emitted:
+                        on_token(draft[emitted:safe_upto])
+                        emitted = safe_upto
+            question = "" if blocked else _visible_text("".join(pieces)).rstrip().rstrip('"').rstrip()
         if question and _passes_output_guard(question, protocol, cluster, plan, answers):
             if on_token is not None:
-                on_token(question)
+                # Phát nốt phần đuôi đã giữ lại - câu giờ đã hoàn chỉnh và qua guard ĐẦY ĐỦ.
+                #
+                # `emitted` đếm trên `_visible_text`, cùng một gốc với `question`, nên hai chuỗi khớp
+                # tiền tố. `min` là lưới an toàn cho trường hợp model kết thúc bằng cả một khối
+                # khoảng trắng dài hơn phần đuôi giữ lại: lúc đó `question` ngắn hơn `emitted` và cắt
+                # thẳng sẽ ném. Cắt lố chỉ làm mất phần đã hiện, không bao giờ phát trùng.
+                on_token(question[min(emitted, len(question)):])
             return question, True
     except Exception as exc:
         logger.warning("symptom_intake.question_failed reason=%s", type(exc).__name__)
@@ -1563,6 +1660,7 @@ def run_turn(
     if next_probe:
         # Câu sàng lọc là văn bản TĨNH, không qua LLM - xem `screening.probe_question`.
         question, question_llm_used = following.script_hint, False
+        _emit_static(on_token, question)
     else:
         question, question_llm_used = (
             _generate_question(
@@ -1717,6 +1815,7 @@ def run_open_turn(
     if next_probe:
         following = screening.probe_cluster(protocol, step.stage, next_probe)
         question, question_llm_used = following.script_hint, False
+        _emit_static(on_token, question)
     else:
         # Lượt mở là chỗ gộp có giá trị nhất: người bệnh vừa kể tự do xong, hỏi dồn 2-3 ý nền (tuổi,
         # giới, triệu chứng chính) nghe tự nhiên hơn hẳn so với hỏi nhỏ giọt từng câu.
