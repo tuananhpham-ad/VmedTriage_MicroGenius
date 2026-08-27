@@ -19,8 +19,10 @@ BỐN RÀNG BUỘC KHÔNG ĐƯỢC PHÁ:
 
 4. MODE TƯỜNG MINH. `graph_triage_mode="ensemble"` chạy ba model cũ để điều dưỡng tham khảo;
    `"c6"` dùng đúng combiner đã benchmark: GPT direct OR Fusion OR documented-rule emergency.
-   C6 có thể nâng (không bao giờ hạ) priority sau khi case đã vào hàng đợi. Rule engine của symptom
-   protocol vẫn tạo priority tức thời và HITL vẫn bắt buộc.
+   Rule engine của symptom protocol vẫn tạo priority tức thời và là SÀN CHO CẤP CỨU - C6 không được
+   phép hạ một ca rule engine đã chốt đỏ. Ngoài phạm vi cấp cứu, khám sớm/tự theo dõi hoàn toàn do
+   C6 quyết định, kể cả khi điều đó hạ mức so với đề xuất tạm thời của rule engine (ADR-011, xem
+   `_effective_c6_label`). HITL vẫn bắt buộc trong mọi trường hợp.
 """
 
 from __future__ import annotations
@@ -36,14 +38,10 @@ from typing import Any
 
 from src.config import get_settings
 from src.graph_triage.summary_text import build_summary_text
-from src.models.schemas import TriageCase
+from src.models.schemas import TriageCase, TriagePriority
 from src.observability.braintrust_tracing import traced_root_span, traced_span
 from src.paths import RUNS_DIR
-from src.services.engines.priority_labels import (
-    C6_TRIAGE_LABEL_TO_PRIORITY,
-    PRIORITY_RANK,
-    c6_label_for_priority,
-)
+from src.services.engines.priority_labels import C6_TRIAGE_LABEL_TO_PRIORITY
 from src.source_support import pipeline as source_support
 from src.source_support.progress import Progress
 from src.source_support.schemas import SourceSupport
@@ -323,19 +321,29 @@ def _c6_only_decision(triage_case: TriageCase, summary_text: str) -> dict[str, A
 
 
 def _effective_c6_label(triage_case: TriageCase, c6_label: str) -> str:
-    """Return the non-lowered final label that Part 3 and the nurse UI must see.
+    """Return the final label that Part 3 and the nurse UI must see.
 
-    The C6 label is advisory until compared with the priority synchronously set by the deterministic
-    rule engine.  If C6 is lower, preserve the rule-engine label before source support runs, rather
-    than citing an urgency that is no longer the one in the nurse queue.
-    """
+    RULE ENGINE IS A FLOOR FOR EMERGENCY ONLY - NOT FOR khám sớm/tự theo dõi (changed 2026-08-27,
+    see ADR-011; supersedes the `max(rule-engine, C6)` rule of ADR-009 for the non-emergency range).
+    The deterministic rule engine (`symptom_protocol.rule_engine`, runs synchronously the moment the
+    handoff summary is confirmed) is still the one thing that can never be overridden downward: if it
+    already flagged EMERGENCY, C6 is not allowed to quietly settle on anything less urgent. But once
+    the rule engine has NOT flagged emergency, the choice between "khám sớm" and "tự theo dõi" is
+    C6's alone - including cases where that means going lower than the rule engine's own provisional
+    label.
+
+    MEASURED 2026-08-27 (`eval/scripts/eval_rule_plus_c6.py`, 45 Semigran cases, `documented_rule`
+    standing in for an independent rule engine): the old `max(rule, C6)` formula made accuracy WORSE,
+    not better - C6-only 65.0% > rule-only 57.5% > combined-max 50.0%. Every one of the 6 cases the
+    combine broke was the rule branch pulling a correct C6 "tự theo dõi" up to "khám sớm"; the rule
+    branch never once rescued a case C6 got wrong (0/40). Outside the emergency range, treating the
+    rule engine as equally trustworthy as C6 only stacks both sides' over-triage bias."""
     proposal = triage_case.triage_proposal
-    c6_priority = C6_TRIAGE_LABEL_TO_PRIORITY.get(c6_label)
-    if proposal is None or c6_priority is None:
+    if proposal is None:
         return c6_label
-    if PRIORITY_RANK[c6_priority] < PRIORITY_RANK[proposal.priority]:
-        return c6_label
-    return c6_label_for_priority(proposal.priority) or c6_label
+    if proposal.priority is TriagePriority.EMERGENCY and c6_label != "cap_cuu":
+        return "cap_cuu"
+    return c6_label
 
 
 def _compact_payload(

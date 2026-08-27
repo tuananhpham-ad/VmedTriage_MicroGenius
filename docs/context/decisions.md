@@ -154,3 +154,30 @@
   crash luồng triage chính, đúng nguyên tắc best-effort toàn repo (xem `src/source_support/`). Vị trí
   bệnh nhân lấy qua GPS trình duyệt (HTML5 Geolocation), fallback nhập địa chỉ text khi từ chối quyền/
   không hỗ trợ — geocode qua chính nhà cung cấp đang chọn.
+
+## ADR-011: Rule engine chỉ là sàn cho cấp cứu, không còn là sàn cho khám sớm/tự theo dõi — thu hẹp phạm vi ADR-009
+
+- **Ngày:** 27/08/2026 · **Trạng thái:** Đã chốt (thu hẹp phạm vi phần "không hạ priority" của ADR-009)
+- **Bối cảnh:** ADR-009 đặt quy tắc `max(rule-engine, C6)` cho CẢ BA mức, với lý do C6 benchmark chỉ
+  đạt accuracy 66.67% nên không đủ tin cậy để tự quyết định một mình. Đo thêm ngày 27/08/2026
+  (`eval/scripts/eval_rule_plus_c6.py`, 45 ca Semigran, dùng nhánh `documented_rule` của C6 làm rule
+  engine độc lập vì rule engine thật của `symptom_protocol` cần structured checklist answers mà
+  Semigran - văn bản tự do - không có) cho thấy quy tắc `max()` áp dụng ngoài phạm vi cấp cứu làm
+  ĐỘ CHÍNH XÁC GIẢM chứ không tăng: C6-only 65.0% (26/40) > rule-only 57.5% (23/40) >
+  combined-max 50.0% (20/40). Toàn bộ 6 ca combine sai đều là rule kéo nhầm một ca C6 đã đúng
+  ("tự theo dõi") lên "khám sớm"; rule chưa từng cứu được ca nào mà C6 sai một mình (0/40). Xem
+  `result_model/eval_rule_plus_c6.txt` và `.jsonl` cho chi tiết từng ca.
+- **Quyết định:** Sửa `_effective_c6_label` (`src/graph_triage/service.py`): rule engine
+  (`symptom_protocol.rule_engine`, chạy đồng bộ khi phiếu tóm tắt chốt) chỉ còn là sàn khi nó đã chốt
+  `EMERGENCY` — C6 không được phép hạ xuống dưới cấp cứu trong trường hợp đó, giữ nguyên đúng tinh
+  thần ADR-009/nguyên tắc 4 CLAUDE.md (escalate ngay, không chờ). Khi rule engine KHÔNG chốt cấp cứu,
+  việc chọn "khám sớm" hay "tự theo dõi" hoàn toàn do C6 quyết định — kể cả khi kết quả thấp hơn đề
+  xuất tạm thời của rule engine. Không đổi gì ở phần cấp cứu: mọi nhánh escalate-ngay (Guard đỏ,
+  `_apply_c6_safety_gate`, thông điệp tĩnh cho bệnh nhân) giữ nguyên.
+- **Hệ quả:** `PRIORITY_RANK`/`c6_label_for_priority` không còn dùng trong so sánh này (gỡ khỏi
+  import của `service.py`, hàm `c6_label_for_priority` vẫn giữ lại ở `priority_labels.py` vì là tiện
+  ích dùng chung, không phải dead code bắt buộc xoá). Cảnh báo phạm vi số liệu: nhánh `documented_rule`
+  dùng để đóng vai "rule engine" trong phép đo này KHÔNG tái lập được (đã ghi nhận trước đó - chạy 3
+  lần ra 3 kết quả khác nhau) và không phải rule engine thật của production (rule engine thật đọc
+  structured checklist, không qua tầng LLM trích fact) — số đo dùng để chọn hướng thiết kế, không phải
+  bằng chứng accuracy cuối cùng của rule engine thật trên production.

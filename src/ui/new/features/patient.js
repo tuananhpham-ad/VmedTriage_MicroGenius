@@ -159,7 +159,10 @@ function bindPatientNav(root, { navigate }) {
       if (button.dataset.nav === "start") navigate("disclaimer");
       if (button.dataset.nav === "cases") navigate("patient-cases");
       if (button.dataset.nav === "health") navigate("patient-health");
-      if (button.dataset.nav === "maps") showToast("Bản đồ cơ sở y tế đang được phát triển.");
+      // Đi thẳng vào màn bản đồ bệnh viện (`renderHospitalSuggestion`) - trước đây chỉ hiện toast
+      // "đang phát triển" dù tính năng đã xong (ADR-010). Chưa mở ca nào thì màn đó tự rơi về màn
+      // "hãy mở một ca trước" (`loadHospitalSuggestion`), không cần chặn ở đây.
+      if (button.dataset.nav === "maps") navigate("patient-hospital");
       if (button.dataset.nav === "settings") openSettings();
       if (button.dataset.nav === "help") openAccountInfo("help");
     }),
@@ -1510,15 +1513,22 @@ export function renderRedFlag(root, { navigate }) {
   root.querySelector("[data-continue]").addEventListener("click", () => navigate("patient-chat"));
 }
 
-/** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải. */
+/** W-05 — kết quả. Ba trạng thái: chờ duyệt / đã duyệt / lỗi tải.
+ *
+ * Dùng `patientDashboardShell` (thanh bên trái) thay vì `patientHeader` cũ - đồng bộ với các màn
+ * còn lại của khu vực bệnh nhân (trang chủ/kết quả/hồ sơ sức khỏe/khai báo đều đã chuyển sang bố
+ * cục này; đây từng là 2 màn cuối còn sót lại kiểu header rời). */
 export function renderPatientResult(root, { navigate, logout }) {
   const current = state.currentPatientCase;
-  const header = patientHeader("cases", {
-    title: current ? `Hướng dẫn xử trí · <b>${shortCaseId(current.case_id)}</b>` : "Hướng dẫn xử trí",
-    // Màn này là nhánh CUỐI của chuỗi Kết quả của tôi -> Chi tiết ca -> Hướng dẫn xử trí, nên nút
-    // quay lại trỏ về chi tiết ca chứ không nhảy thẳng về danh sách.
-    right: `<div class="header-right">${current ? `<button class="back-button" type="button" data-case-back>${icon("chevronLeft", 15)}<span>Chi tiết ca</span></button>` : ""}${accountMenu()}</div>`,
-  });
+  // Màn này là nhánh CUỐI của chuỗi Kết quả của tôi -> Chi tiết ca -> Hướng dẫn xử trí, nên nút
+  // quay lại trỏ về chi tiết ca chứ không nhảy thẳng về danh sách.
+  const backButton = current
+    ? `<button class="back-button" type="button" data-case-back>${icon("chevronLeft", 15)}<span>Chi tiết ca</span></button>`
+    : "";
+  const pageHeading = `<header class="patient-page-heading patient-flow-heading">
+    <div><p class="eyebrow">Kết quả của tôi</p><h1>${current ? `Hướng dẫn xử trí · ${shortCaseId(current.case_id)}` : "Hướng dẫn xử trí"}</h1><p>Mức ưu tiên và hướng dẫn xử trí chỉ hiển thị sau khi nhân viên y tế xác nhận.</p></div>
+    ${backButton}
+  </header>`;
 
   let body;
   if (!current) {
@@ -1553,8 +1563,16 @@ export function renderPatientResult(root, { navigate, logout }) {
     ? `<div class="hospital-suggestion-link"><button class="secondary-button" type="button" data-goto-hospital>${icon("mapPin", 16)}<span>Tìm bệnh viện gần nhất</span></button></div>`
     : "";
 
-  root.innerHTML = `<section class="app-shell">${header}<main class="page">${hospitalLink}${body}</main>${quickChatDockMarkup()}</section>`;
+  root.innerHTML = patientDashboardShell("cases", `
+    <div class="patient-flow-page">
+      ${pageHeading}
+      ${hospitalLink}
+      ${body}
+    </div>
+  `);
   bindPatientNav(root, { navigate });
+  bindPatientSidebar(root);
+  bindPatientTheme(root);
   bindAccountMenu(root, { logout, onProfileSaved: () => renderPatientResult(root, { navigate, logout }) });
   root.querySelector("[data-retry]")?.addEventListener("click", () => refreshResult(root, { navigate, logout }));
   root.querySelector("[data-new-case]")?.addEventListener("click", () => navigate("disclaimer"));
@@ -1623,15 +1641,25 @@ async function refreshResult(root, context) {
 // GPS trình duyệt ưu tiên; từ chối quyền/không hỗ trợ/timeout đều rơi về form nhập địa chỉ tay - đây
 // là fallback bắt buộc chốt với PM, không phải nhánh phụ.
 
+// Dùng `patientDashboardShell` (thanh bên trái, mục "Bản đồ cơ sở y tế") thay vì `patientHeader`
+// cũ - đồng bộ với các màn còn lại của khu vực bệnh nhân, và làm rõ đây là cùng một điểm đến với
+// mục "Bản đồ cơ sở y tế" ở thanh bên (trước đây mục đó chỉ hiện toast "đang phát triển").
 export function renderHospitalSuggestion(root, { navigate, logout }) {
   const current = state.currentPatientCase;
-  const header = patientHeader("cases", {
-    title: "Bệnh viện gần nhất",
-    right: `<div class="header-right"><button class="back-button" type="button" data-hospital-back>${icon("chevronLeft", 15)}<span>Quay lại</span></button>${accountMenu()}</div>`,
-  });
+  const pageHeading = `<header class="patient-page-heading patient-flow-heading">
+    <div><p class="eyebrow">Bản đồ cơ sở y tế</p><h1>Bệnh viện gần nhất</h1><p>Thông tin logistics (tên/địa chỉ/khoảng cách) - hiển thị ngay, không cần chờ điều dưỡng duyệt.</p></div>
+    <button class="back-button" type="button" data-hospital-back>${icon("chevronLeft", 15)}<span>Quay lại</span></button>
+  </header>`;
 
-  root.innerHTML = `<section class="app-shell">${header}<main class="page"><div id="hospital-body">${hospitalStatePanel("clock", "Đang tải…")}</div></main>${quickChatDockMarkup()}</section>`;
+  root.innerHTML = patientDashboardShell("maps", `
+    <div class="patient-flow-page">
+      ${pageHeading}
+      <div id="hospital-body">${hospitalStatePanel("clock", "Đang tải…")}</div>
+    </div>
+  `);
   bindPatientNav(root, { navigate });
+  bindPatientSidebar(root);
+  bindPatientTheme(root);
   bindAccountMenu(root, { logout, onProfileSaved: () => renderHospitalSuggestion(root, { navigate, logout }) });
   root.querySelector("[data-hospital-back]").addEventListener("click", () => navigate(current ? "patient-result" : "patient-cases"));
   bindQuickChatDock(root, { navigate });

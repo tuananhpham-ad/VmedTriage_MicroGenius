@@ -349,7 +349,7 @@ class Settings(BaseSettings):
     )
     """Danh sách domain y khoa được phép trích. Guard 1 kiểm theo NHÃN TÊN MIỀN, không phải theo chuỗi
     con, nên `nhs.uk.evil.com` không lọt."""
-    source_support_search_provider: Literal["gemini", "tavily", "pubmed", "auto", "none"] = "gemini"
+    source_support_search_provider: Literal["gemini", "tavily", "pubmed", "auto", "parallel", "none"] = "gemini"
     """Backend cho bước 3 (tìm URL khi index không phủ được claim).
 
     `gemini` = Grounding with Google Search, dùng key Gemini sẵn có, KHÔNG tốn tiền riêng nhưng mỗi
@@ -375,6 +375,19 @@ class Settings(BaseSettings):
     đúng lúc cần). KHÔNG rẻ hơn dùng 1 backend cố định: trường hợp xấu nhất tốn tới 3 lời gọi mạng
     cho một lần index-miss thay vì 1; chỉ đáng dùng khi cần độ tin cậy cao hơn một backend đơn lẻ
     đang không ổn định. Không đổi default sang `auto` - vẫn phải tự bật.
+    `parallel` = Tavily + PubMed chạy ĐỒNG THỜI (2 thread), gộp URL - KHÔNG có Gemini trong danh sách.
+
+    ĐO 2026-08-26 (`eval/scripts/eval_part2_part3_web_search.py`, 45 ca Semigran, index rỗng) CHO THẤY
+    GEMINI KHÔNG ĐÁNG GIỮ TRONG CHAIN: Gemini 0/41 ca tìm được nguồn lọt allowlist
+    (`result_model/part2_c6_part3_gemini_full45.txt`), Tavily 24/41, PubMed 15/41. Giữ Gemini ở đầu
+    chain chỉ tốn thêm một lượt `generate_content` (đôi khi 429 riêng của quota grounding, xem trên)
+    mà không đổi kết quả cuối cùng - nên bỏ hẳn thay vì giữ làm bước đầu vô ích.
+
+    ĐÁNH ĐỔI SO VỚI `auto`: `auto` DỪNG ở backend đầu tiên có URL nên trung bình rẻ hơn về số lời gọi
+    mạng. `parallel` LUÔN gọi cả Tavily và PubMed - đúng 2 lời gọi mạng mỗi lần index-miss, không hơn
+    không kém - đổi lấy độ trễ THỰC TẾ chỉ bằng lần lâu nhất trong hai (thay vì cộng dồn khi chạy tuần
+    tự) và nhiều ứng viên hơn cho bước chấm vì kết quả được GỘP chứ không chọn một backend rồi bỏ backend
+    kia. Hợp lý khi độ trễ (chạy hàng loạt N ca) quan trọng hơn số lời gọi mạng tiết kiệm được.
     `none`   = tắt hẳn, tương đương `source_support_index_only`."""
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
     ncbi_api_key: str = os.getenv("NCBI_API_KEY", "")
