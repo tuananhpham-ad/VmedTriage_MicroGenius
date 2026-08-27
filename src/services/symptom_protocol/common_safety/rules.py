@@ -17,8 +17,6 @@ nào khác khớp chưa. Protocol nào ghép catalog riêng phải giữ rule ph
 
 from __future__ import annotations
 
-import unicodedata
-
 from src.services.symptom_protocol.common_safety.predicates import (
     age_in_months,
     array_has_any,
@@ -28,6 +26,7 @@ from src.services.symptom_protocol.common_safety.predicates import (
     is_true,
 )
 from src.services.symptom_protocol.models import RuleMatch
+from src.services.text_norm import fold_diacritics
 
 CHRONIC_SEVERE = frozenset({"cardiac", "pulmonary", "renal", "hepatic", "hematologic_thalassemia", "malignancy"})
 CHEST_PAIN_TEXT_MARKERS = frozenset({"dau nguc", "tuc nguc", "nang nguc", "that nguc", "nguc"})
@@ -261,9 +260,7 @@ def r_e_21(a: dict[str, object], matches: tuple[RuleMatch, ...]) -> RuleMatch | 
 
 
 def _fold_text(value: object) -> str:
-    text = str(value or "").casefold().replace("đ", "d")
-    stripped = unicodedata.normalize("NFD", text)
-    return "".join(char for char in stripped if unicodedata.category(char) != "Mn")
+    return fold_diacritics(str(value or ""))
 
 
 def _has_chest_pain_complaint(a: dict[str, object]) -> bool:

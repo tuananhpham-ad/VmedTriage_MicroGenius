@@ -15,7 +15,6 @@ Ranh giới an toàn (giữ đúng nguyên tắc đã chốt ở _guidance/vmedt
 from __future__ import annotations
 
 import logging
-import unicodedata
 from dataclasses import dataclass, field
 
 from src.services.checklists.intake_checklist import (
@@ -28,6 +27,7 @@ from src.services.checklists.intake_checklist import (
 from src.services.engines.red_flag_text_rules import detect_text_red_flags
 from src.services.infra import provider_router
 from src.services.infra.json_output import parse_json_object
+from src.services.text_norm import fold_diacritics
 
 logger = logging.getLogger("vmedtriage.intake")
 
@@ -84,9 +84,7 @@ def strip_diacritics(text: str) -> str:
     "co giat"). Nếu chỉ so khớp bản có dấu thì red-flag sẽ lọt - đây là lỗi an toàn, không phải lỗi
     tiện dụng. `đ` không bị NFD tách nên phải thay tay.
     """
-    lowered = (text or "").casefold().replace("đ", "d")
-    decomposed = unicodedata.normalize("NFD", lowered)
-    return "".join(char for char in decomposed if not unicodedata.combining(char))
+    return fold_diacritics(text)
 
 
 def scan_red_flags(*texts: str) -> list[RedFlagHit]:

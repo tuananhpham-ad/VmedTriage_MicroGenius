@@ -277,8 +277,14 @@ def test_an_ambiguous_signal_is_confirmed_deterministically_when_the_model_retur
 
     store.submit_message(session.session_id, "Em bé bị sưng họng")
 
-    assert "xác nhận" in session.last_question
-    assert "sưng họng" in session.last_question.lower()
+    # Kiểm HAI NGHĨA VỤ, không kiểm câu có chứa chữ "xác nhận".
+    #
+    # Câu này giờ có mười bản diễn đạt (`text_safety_signals.CONFIRMATION_TEMPLATES`) và bản được
+    # chọn phụ thuộc seed của phiên, nên bám vào một từ khoá làm bài test đỏ ở 1/10 số lần chạy CI -
+    # đúng loại nhấp nháy khó truy nhất. Hai điều dưới đây là thứ bản nào cũng phải có, và
+    # `test_static_phrasing_variants` canh chúng trên cả mười bản.
+    assert "sưng họng" in session.last_question.lower(), "phải nhắc lại đúng dấu hiệu vừa nghe"
+    assert "115" in session.last_question, "mất chỉ dẫn gọi cấp cứu ở đúng lượt model đã hỏng"
     assert session.pending_safety_signals == ("throat_swelling",)
     # Giữ nguyên cụm: lượt sau vẫn trích theo đúng schema đang hỏi dở.
     assert session.current_cluster is cluster_before

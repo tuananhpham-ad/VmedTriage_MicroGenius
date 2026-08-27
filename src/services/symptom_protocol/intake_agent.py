@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -45,6 +44,7 @@ from src.services.symptom_protocol.common_safety import screening_groups as comm
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
+from src.services.text_norm import fold_diacritics
 
 logger = logging.getLogger("vmedtriage.symptom_intake")
 
@@ -571,11 +571,8 @@ def _normalize_for_evidence(text: str) -> str:
 
 
 def _fold_bare_reply(text: str) -> str:
-    folded = unicodedata.normalize("NFD", text or "")
-    folded = "".join(char for char in folded if unicodedata.category(char) != "Mn")
-    folded = folded.replace("đ", "d").replace("Đ", "D")
-    folded = _EDGE_PUNCT_RE.sub("", folded)
-    return _WHITESPACE_RE.sub(" ", folded.strip()).casefold()
+    folded = _EDGE_PUNCT_RE.sub("", fold_diacritics(text))
+    return _WHITESPACE_RE.sub(" ", folded.strip())
 
 
 _BARE_CLUSTER_NEGATIVE_REPLIES: frozenset[str] = frozenset({
