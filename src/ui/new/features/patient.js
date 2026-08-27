@@ -159,6 +159,7 @@ function bindPatientNav(root, { navigate }) {
       if (button.dataset.nav === "start") navigate("disclaimer");
       if (button.dataset.nav === "cases") navigate("patient-cases");
       if (button.dataset.nav === "health") navigate("patient-health");
+      if (button.dataset.nav === "maps") showToast("Bản đồ cơ sở y tế đang được phát triển.");
       if (button.dataset.nav === "settings") openSettings();
       if (button.dataset.nav === "help") openAccountInfo("help");
     }),
@@ -204,6 +205,7 @@ function patientSideNav(active) {
     <div class="patient-side-tools">
       <p>Tiện ích</p>
       ${item("health", "Hồ sơ sức khỏe", "user")}
+      ${item("maps", "Bản đồ cơ sở y tế", "mapPin")}
       ${item("settings", "Cài đặt", "settings")}
       ${item("help", "Trợ giúp & liên hệ", "ask")}
       <button class="patient-theme-toggle" type="button" data-theme-toggle data-theme="${theme}" aria-pressed="${theme === "dark"}" aria-label="Chuyển sang chủ đề ${theme === "dark" ? "sáng" : "tối"}">
@@ -1064,8 +1066,10 @@ export function renderPatientChat(root, { navigate, logout }) {
           : state.patientForcedComplete ? `<div class="chat-history-note">${icon("lock", 17)}<span>Bạn đã xác nhận khai báo xong triệu chứng. Thông tin đã được chuyển cho nhân viên y tế, bạn không thể gửi thêm tin nhắn tại đây.</span></div>`
           : `<form id="chat-form" class="chat-composer">
             <label class="sr-only" for="patient-message">Mô tả triệu chứng</label>
-            <textarea id="patient-message" name="message" rows="1" maxlength="5000" placeholder="Mô tả triệu chứng của bạn..."${busy}></textarea>
+            <button class="voice-input-button" type="button" data-speech-to-text aria-pressed="false" aria-label="Nhập bằng giọng nói" title="Nhập bằng giọng nói"${busy}><svg class="ico" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M6.4 11.2a5.6 5.6 0 0 0 11.2 0M12 16.8v3.7M8.7 20.5h6.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            <textarea id="patient-message" name="message" rows="1" maxlength="5000" placeholder="Mô tả triệu chứng của bạn..." aria-describedby="voice-input-hint"${busy}></textarea>
             <button class="primary-button" type="submit"${busy}>${icon("send", 18)}<span>${state.patientBusy ? "Đang gửi…" : "Gửi"}</span></button>
+            <span class="voice-input-hint" id="voice-input-hint" role="status" aria-live="polite">Bấm micro để nhập bằng giọng nói; hãy kiểm tra nội dung trước khi gửi.</span>
             <p class="form-error" id="chat-error" role="alert"></p>
           </form>
           <button class="secondary-button btn-sm" type="button" id="declare-done-button"${busy}>${icon("check", 16)}<span>Tôi đã khai báo hết triệu chứng, không còn bất thường nào khác</span></button>`}
@@ -1096,7 +1100,11 @@ export function renderPatientChat(root, { navigate, logout }) {
     input.focus();
   }));
   const form = root.querySelector("#chat-form");
-  form?.addEventListener("submit", (event) => submitMessage(event, root, { navigate, logout }));
+  const stopSpeechToText = bindSpeechToText(form);
+  form?.addEventListener("submit", (event) => {
+    stopSpeechToText();
+    submitMessage(event, root, { navigate, logout });
+  });
   // Enter gửi, Shift+Enter xuống dòng — đúng hành vi bản thiết kế mô tả cho ô nhập.
   root.querySelector("#patient-message")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); }
@@ -1115,6 +1123,83 @@ function detectedGroup(current) {
   const group = current?.structured_data?.symptom_group;
   if (group && group !== "general") return symptomGroupLabels[group] || group;
   return current?.summary?.chief_complaint || "Đang xác định";
+}
+
+/** SpeechRecognition chỉ tạo văn bản nháp trong ô chat; người bệnh vẫn phải tự kiểm tra rồi bấm
+ * Gửi. Không thu hoặc lưu audio ở ứng dụng. */
+function bindSpeechToText(form) {
+  const button = form?.querySelector("[data-speech-to-text]");
+  const input = form?.querySelector("#patient-message");
+  const status = form?.querySelector("#voice-input-hint");
+  if (!button || !input || !status) return () => {};
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    button.disabled = true;
+    button.title = "Trình duyệt này chưa hỗ trợ nhập bằng giọng nói";
+    status.textContent = "Trình duyệt này chưa hỗ trợ nhập bằng giọng nói. Bạn vẫn có thể gõ nội dung.";
+    return () => {};
+  }
+
+  let recognition;
+  let listening = false;
+  let baseText = "";
+  let receivedSpeech = false;
+
+  const setListening = (isListening) => {
+    listening = isListening;
+    button.classList.toggle("is-listening", isListening);
+    button.setAttribute("aria-pressed", String(isListening));
+    button.setAttribute("aria-label", isListening ? "Dừng nhập bằng giọng nói" : "Nhập bằng giọng nói");
+    button.title = isListening ? "Dừng ghi âm" : "Nhập bằng giọng nói";
+  };
+
+  const stop = () => {
+    if (recognition && listening) recognition.stop();
+  };
+
+  button.addEventListener("click", () => {
+    if (listening) {
+      stop();
+      return;
+    }
+
+    baseText = input.value.trim();
+    receivedSpeech = false;
+    recognition = new SpeechRecognition();
+    recognition.lang = "vi-VN";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = () => {
+      setListening(true);
+      status.textContent = "Đang nghe… Bấm lại micro để dừng.";
+    };
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript || "")
+        .join(" ")
+        .trim();
+      receivedSpeech = Boolean(transcript);
+      input.value = [baseText, transcript].filter(Boolean).join(" ");
+      status.textContent = "Đang chuyển giọng nói thành văn bản…";
+    };
+    recognition.onerror = (event) => {
+      const errorMessages = {
+        "not-allowed": "Bạn chưa cho phép dùng micro. Hãy cấp quyền micro rồi thử lại.",
+        "no-speech": "Không nghe thấy giọng nói. Vui lòng thử lại.",
+        network: "Không thể kết nối dịch vụ nhận diện giọng nói. Vui lòng thử lại.",
+      };
+      status.textContent = errorMessages[event.error] || "Không thể nhận diện giọng nói. Vui lòng thử lại.";
+    };
+    recognition.onend = () => {
+      setListening(false);
+      if (receivedSpeech) status.textContent = "Đã chuyển thành văn bản. Hãy kiểm tra nội dung trước khi gửi.";
+    };
+    recognition.start();
+  });
+
+  return stop;
 }
 
 /**
