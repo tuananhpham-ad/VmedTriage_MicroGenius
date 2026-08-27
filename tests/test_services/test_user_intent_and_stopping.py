@@ -382,7 +382,9 @@ def test_session_asks_once_then_stops_as_uncooperative(fake_llm):
     assert session.stop_reason is None
 
     store.submit_message(session.session_id, "kệ đi ông ơi")
-    assert session.last_question == user_intent.UNCOOPERATIVE_PROMPT
+    # So theo TẬP: câu hỏi dừng phiên giờ có mười bản diễn đạt. Khẳng định bằng một chuỗi cụ thể
+    # sẽ đỏ ngẫu nhiên theo seed của phiên, mà điều bài này cần là "đã hỏi câu dừng chưa".
+    assert user_intent.is_uncooperative_prompt(session.last_question)
     assert session.stop_reason is None, "mới hỏi lại, chưa được dừng"
 
     store.submit_message(session.session_id, "chán chả buồn nói")
@@ -395,7 +397,9 @@ def test_yes_to_the_stop_prompt_closes_the_session(fake_llm):
 
     store.submit_message(session.session_id, "hôm nay trời mưa to quá")
     store.submit_message(session.session_id, "kệ đi ông ơi")
-    assert session.last_question == user_intent.UNCOOPERATIVE_PROMPT
+    # So theo TẬP: câu hỏi dừng phiên giờ có mười bản diễn đạt. Khẳng định bằng một chuỗi cụ thể
+    # sẽ đỏ ngẫu nhiên theo seed của phiên, mà điều bài này cần là "đã hỏi câu dừng chưa".
+    assert user_intent.is_uncooperative_prompt(session.last_question)
 
     store.submit_message(session.session_id, "có")
 

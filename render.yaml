@@ -100,8 +100,11 @@ services:
       # ---- RAG: source_support (trích nguồn y văn cho nhãn đã chốt, src/source_support/) ----
       - key: SOURCE_SUPPORT_ENABLED
         value: "true"
+      # auto = thu gemini -> tavily -> pubmed, dung o backend DAU TIEN tra ve URL (rong hoac loi
+      # deu rot tiep). Chain bat dau bang gemini nhung key free tier khong dung duoc grounding
+      # (429), nen moi lan index-miss dot mot call hong truoc khi rot xuong Tavily.
       - key: SOURCE_SUPPORT_SEARCH_PROVIDER
-        value: tavily
+        value: auto
       - key: SOURCE_SUPPORT_THRESHOLD
         value: "0.55"
       - key: SOURCE_SUPPORT_MAX_CLAIMS

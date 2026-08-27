@@ -58,6 +58,49 @@ class FieldSummary:
             if items
         )
 
+    def as_narrative_text(self) -> str:
+        """Dữ kiện được phép đưa vào văn xuôi: chỉ field dương tính đã xác định.
+
+        Các field `false` có khối "Người bệnh phủ nhận" riêng trên phiếu. Không đưa chúng cho model
+        để tránh tạo một đoạn văn phủ định rất dài và khó đọc. `unknown`, `none`, `None` và chuỗi rỗng
+        vốn không thuộc `reported`, nên cũng không thể lọt vào đầu vào này.
+        """
+        if not self.reported:
+            return ""
+        return "\n".join(["Triệu chứng ghi nhận:", *(f"- {item}" for item in self.reported)])
+
+
+_DENIAL_LABELS: dict[str, str] = {
+    "fever_reported": "Sốt",
+    "seizure_occurred": "Co giật trong đợt bệnh này",
+    "rash_present": "Ban",
+    "known_neutropenia": "Giảm bạch cầu hạt đã biết",
+    "recent_surgery_30d": "Phẫu thuật/thủ thuật trong 30 ngày gần đây",
+    "non_weight_bearing": "Tình trạng không chịu đi/không dùng chi",
+    "current_medications": "Việc sử dụng thuốc điều trị",
+    "nsaid_use": "Việc sử dụng NSAID/aspirin",
+    "antibiotic_current": "Việc sử dụng kháng sinh",
+    "stridor_or_drooling": "Thở rít, chảy dãi hoặc khó nuốt",
+}
+
+
+def _denial_label(key: str, label: str) -> str:
+    """Đổi nhãn câu hỏi khẳng định/phủ định kép thành danh từ đọc tự nhiên dưới tiêu đề phủ nhận."""
+    return _DENIAL_LABELS.get(key, label)
+
+
+def _tri_state_value(value: object) -> str | None:
+    """Chuẩn hóa bool/chuỗi tri-state; không coi enum `none` là một lời phủ nhận chung."""
+    if value is True:
+        return _TRUE
+    if value is False:
+        return _FALSE
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {_TRUE, _FALSE, _UNKNOWN}:
+            return normalized
+    return None
+
 
 def field_summary(protocol: SymptomProtocol, answers: dict[str, object]) -> FieldSummary:
     """Snapshot -> field summary. THUẦN: không model, không I/O.
@@ -69,11 +112,12 @@ def field_summary(protocol: SymptomProtocol, answers: dict[str, object]) -> Fiel
     result = FieldSummary()
     for key, spec in protocol.fields_by_key.items():
         value = answers.get(key)
-        if value == _TRUE:
+        tri_state = _tri_state_value(value)
+        if tri_state == _TRUE:
             result.reported.append(spec.label)
-        elif value == _FALSE:
-            result.denied.append(spec.label)
-        elif key in safety and value in (None, "", _UNKNOWN):
+        elif tri_state == _FALSE:
+            result.denied.append(_denial_label(key, spec.label))
+        elif key in safety and (value is None or value == "" or tri_state == _UNKNOWN):
             result.unknown_safety.append(spec.label)
     return result
 

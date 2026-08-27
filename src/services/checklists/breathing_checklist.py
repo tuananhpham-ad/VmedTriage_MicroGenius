@@ -24,10 +24,14 @@ BREATHING_FIELDS: tuple[FieldSpec, ...] = (
 BREATHING_ALL_FIELDS: tuple[FieldSpec, ...] = (
     common_fields.DEMOGRAPHIC_FIELDS
     + common_fields.SAFETY_NETTING_FIELDS
+    + common_fields.COMPLAINT_ONSET_FIELDS
     + BREATHING_FIELDS
     + common_fields.FEVER_SIGNAL_FIELDS
     + common_fields.GENERAL_FIELDS
     + common_fields.RESPIRATORY_FIELDS
+    # `BR-03` dung `clusters.chest_dyspnea_cluster` - cum PHU CHEO voi chest_pain, nen phai nap
+    # ca field cua cum do. Thieu no = KeyError giua luot (su co 2026-08-26).
+    + common_fields.CHEST_DYSPNEA_FIELDS
     + common_fields.CIRCULATION_FIELDS
     + common_fields.NEUROLOGICAL_FIELDS
     + common_fields.SKIN_BLEEDING_FIELDS

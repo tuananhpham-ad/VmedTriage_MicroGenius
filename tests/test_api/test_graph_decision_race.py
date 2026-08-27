@@ -40,9 +40,10 @@ async def test_concurrent_saves_do_not_drop_graph_decision(monkeypatch, client):
         call_order.append("second")
         return {"triage_label": "theo_doi_tai_nha", "decision_summary": "ổn định, theo dõi tại nhà"}
 
-    def fake_decide_for_case(triage_case):
+    def fake_decide_for_case(triage_case, **kwargs):
         # `decide_for_case` chạy đồng bộ trong threadpool thật, ở test này chỉ cần trả kết quả khớp
-        # thứ tự gọi để mô phỏng agent chậm/nhanh.
+        # thứ tự gọi để mô phỏng agent chậm/nhanh. `**kwargs` nuốt hai callback báo tiến trình của
+        # part 3 - bài test này nói về thứ tự lưu case, không về chuyện ai đang nghe stream.
         return asyncio.run(fake_decide(triage_case))
 
     monkeypatch.setattr(routes.graph_triage_service, "decide_for_case", fake_decide_for_case)

@@ -58,6 +58,59 @@ def test_an_empty_block_is_not_rendered():
     assert "Người bệnh phủ nhận" not in text
 
 
+def test_narrative_input_excludes_false_unknown_none_and_blank_values():
+    answers = dict(
+        ADULT,
+        lives_alone="true",
+        fever_reported=False,
+        neck_stiffness="unknown",
+        fever_status="none",
+        current_medications="",
+    )
+
+    result = summary_render.field_summary(FEVER_PROTOCOL, answers)
+    text = result.as_narrative_text()
+
+    assert "Sống một mình" in text
+    assert "Sốt" not in text
+    assert "Cứng gáy" not in text
+    assert "none" not in text.casefold()
+    assert "Người bệnh phủ nhận" not in text
+    assert "Sốt" in result.denied
+
+
+def test_denied_labels_are_natural_under_the_denial_heading():
+    result = summary_render.field_summary(
+        FEVER_PROTOCOL,
+        dict(ADULT, fever_reported="false", non_weight_bearing="false", nsaid_use="false"),
+    )
+
+    assert "Sốt" in result.denied
+    assert "Người dùng khai có sốt" not in result.denied
+    assert "Tình trạng không chịu đi/không dùng chi" in result.denied
+    assert "Việc sử dụng NSAID/aspirin" in result.denied
+
+
+def test_narrative_provider_never_receives_denied_values(monkeypatch):
+    complete = Mock(
+        return_value=provider_router.CompletionResult(
+            text="Người bệnh cho biết hiện đang sống một mình.", provider="f", model="f",
+        ),
+    )
+    monkeypatch.setattr(provider_router, "complete", complete)
+    summary = summary_render.field_summary(
+        FEVER_PROTOCOL,
+        dict(ADULT, lives_alone=True, fever_reported=False, neck_stiffness="unknown"),
+    )
+
+    narrative.build_narrative(summary)
+
+    prompt = complete.call_args.args[0][1]["content"]
+    assert "Sống một mình" in prompt
+    assert "Sốt" not in prompt
+    assert "Cứng gáy" not in prompt
+
+
 # --- chế độ (b) là BẢN ĐỐI CHỨNG của chế độ (a) --------------------------------------------------
 
 
@@ -102,7 +155,7 @@ def test_a_dead_model_falls_back_to_the_deterministic_text(monkeypatch):
     text, source = narrative.build_narrative(summary)
 
     assert source == "provider_unavailable"
-    assert text == summary.as_text(), "phiếu vẫn phải đọc được khi provider hỏng"
+    assert text == summary.as_narrative_text(), "fallback chỉ được chứa dữ kiện dương tính"
 
 
 def test_a_fabricated_narrative_is_replaced_by_the_deterministic_text(monkeypatch):
@@ -117,7 +170,7 @@ def test_a_fabricated_narrative_is_replaced_by_the_deterministic_text(monkeypatc
     text, source = narrative.build_narrative(summary)
 
     assert output_guard.VIOLATION_UNGROUNDED in source
-    assert text == summary.as_text()
+    assert text == summary.as_narrative_text()
 
 
 def test_an_empty_record_produces_no_narrative_at_all():

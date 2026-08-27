@@ -711,6 +711,11 @@ FEVER_PROTOCOL = SymptomProtocol(
     contradiction_rules=CONTRADICTION_RULES,
     confirm_before_retract=CONFIRM_BEFORE_RETRACT,
     derive_fields=derive_duration,
+    # `fever_duration_days` được `derive_duration` TÍNH ra và được 3 rule đọc, nhưng trước
+    # 2026-08-26 nó không có `FieldSpec` nào và không được khai là dẫn xuất - nên `field_dependencies`
+    # trỏ vào nó là cấu hình chết, và nó vô hình với phiếu bàn giao lẫn `_symptom_field_values`.
+    # Khai đúng như generic làm với `complaint_duration_days`.
+    derived_field_keys=("fever_duration_days",),
     reason_code_labels=REASON_CODE_LABELS,
     # Protocol sốt biết trước than phiền là gì nên không có field `chief_complaint` để hỏi.
     default_chief_complaint="Sốt",
