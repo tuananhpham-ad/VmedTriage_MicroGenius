@@ -837,7 +837,10 @@ button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:v
 .polling-chip .ico { animation:vmt-spin 4s linear infinite; }
 .queue-table { display:flex; flex-direction:column; gap:8px; padding-top:8px; }
 .queue-head-row, .queue-row { display:grid; grid-template-columns:16px 136px minmax(0, 1fr) 176px 132px 112px; gap:16px; align-items:center; }
-.queue-head-row { position:sticky; top:0; z-index:1; padding:10px 18px 6px; background:var(--surface-soft); }
+/* KHÔNG sticky: `.queue-table` cuộn theo `.nurse-main` (toàn trang), không có khung cuộn riêng, nên
+   một header dính-đỉnh ở đây chỉ đứng yên giữa các dòng khi cuộn dài (Ca đã duyệt) - nhìn như dòng bị
+   chồng/lặp. Hàng đợi ít ca hơn nên chưa lộ. Bỏ sticky để hai màn cuộn giống hệt nhau. */
+.queue-head-row { padding:10px 18px 6px; background:var(--surface-soft); }
 .queue-head-row .align-right { text-align:right; }
 .queue-row { border:1px solid var(--line); border-radius:12px; padding:17px 18px; color:var(--ink); background:var(--surface); text-align:left; }
 .queue-row:hover { background:var(--surface-soft); }
