@@ -230,7 +230,10 @@ def test_c6_passes_its_grounded_decision_to_source_support(safety_gate_on, monke
     assert result["source_support"]["method"]["can_change_label"] is False
 
 
-def test_c6_passes_the_effective_rule_or_c6_label_to_source_support(safety_gate_on, monkeypatch):
+def test_c6_ignores_rule_baseline_outside_the_emergency_range(safety_gate_on, monkeypatch):
+    """ADR-011: rule engine là sàn CHỈ cho cấp cứu. Direct nói "tự theo dõi" trong khi rule baseline
+    (`triage_proposal`) đã đề xuất "khám sớm" (URGENT, không phải EMERGENCY) - nhãn hiệu lực phải là
+    của C6 (`theo_doi_tai_nha`), KHÔNG bị kéo lên `kham_som` như hành vi `max(rule, C6)` cũ."""
     from src.source_support import pipeline as source_support_pipeline
     from src.source_support.schemas import SourceSupport
 
@@ -254,9 +257,38 @@ def test_c6_passes_the_effective_rule_or_c6_label_to_source_support(safety_gate_
 
     result = service.decide_for_case(case)
 
-    assert captured["triage_label"] == "kham_som"
-    assert result["triage_label"] == "kham_som"
+    assert captured["triage_label"] == "theo_doi_tai_nha"
+    assert result["triage_label"] == "theo_doi_tai_nha"
     assert result["safety_gate"]["direct"]["triage_label"] == "theo_doi_tai_nha"
+
+
+def test_c6_still_cannot_lower_a_rule_engine_emergency(safety_gate_on, monkeypatch):
+    """Sàn cấp cứu vẫn đứng: rule baseline đã EMERGENCY thì direct nói gì cũng phải thành cấp cứu."""
+    from src.source_support import pipeline as source_support_pipeline
+    from src.source_support.schemas import SourceSupport
+
+    monkeypatch.setattr(get_settings(), "source_support_enabled", True)
+    monkeypatch.setattr(service, "_get_agent", lambda: pytest.fail("C6 không được nạp ensemble"))
+    monkeypatch.setattr(service, "_direct_decision_for", lambda text: _direct_decision("theo_doi_tai_nha"))
+    monkeypatch.setattr(service, "_fusion_label_for", lambda text: "theo_doi_tai_nha")
+    monkeypatch.setattr(
+        service,
+        "_documented_rule_for",
+        lambda text: {"available": True, "emergency": False, "protocol": "general"},
+    )
+    captured = {}
+    monkeypatch.setattr(
+        source_support_pipeline,
+        "run",
+        lambda decision, *, triage_label: (captured.update({"triage_label": triage_label}) or SourceSupport()),
+    )
+    case = _ready_case()
+    case.triage_proposal = TriageProposal(priority=TriagePriority.EMERGENCY, reason="rule baseline")
+
+    result = service.decide_for_case(case)
+
+    assert captured["triage_label"] == "cap_cuu"
+    assert result["triage_label"] == "cap_cuu"
 
 
 def test_source_support_adds_only_display_fields(feature_on, monkeypatch):
