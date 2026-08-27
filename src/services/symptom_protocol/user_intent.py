@@ -26,6 +26,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from src.services.symptom_protocol import phrasing
+
 _WANTS_TO_STOP_PHRASES: tuple[str, ...] = (
     "khong muon tra loi nua",
     "khong tra loi nua",
@@ -242,9 +244,65 @@ class UncooperativeTracker:
         return self.prompted and self.streak > UNCOOPERATIVE_STREAK_LIMIT
 
 
-UNCOOPERATIVE_PROMPT = (
+UNCOOPERATIVE_PROMPTS: tuple[str, ...] = (
     "Nếu bạn không muốn bổ sung thêm, mình có thể tổng hợp những gì đã có. "
-    "Bạn muốn dừng ở đây không?"
+    "Bạn muốn dừng ở đây không?",
+
+    "Nếu bạn thấy không còn gì để kể thêm, mình tổng hợp lại phần đã có nhé. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Mình có thể chốt lại với những gì bạn đã kể, nếu bạn không muốn nói thêm. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Phần bạn kể tới giờ là đủ để mình tổng hợp rồi, nếu bạn không muốn bổ sung. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Nếu bạn muốn nghỉ, mình gói lại những thông tin đã có cũng được. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Mình có thể dừng và tổng hợp lại phần đã trao đổi, nếu bạn thấy vậy là đủ. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Không sao nếu bạn không muốn kể thêm - mình tổng hợp phần đã có là được. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Nếu giờ chưa tiện trả lời tiếp, mình chốt lại với những gì đang có nhé. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Mình tổng hợp lại những điều bạn vừa kể cũng đủ, nếu bạn không muốn bổ sung. "
+    "Bạn muốn dừng ở đây không?",
+
+    "Nếu bạn thấy đã kể hết rồi, mình sẽ gói lại phần thông tin này. "
+    "Bạn muốn dừng ở đây không?",
 )
-"""Câu hỏi TĨNH, không qua LLM - cùng lý do với `session.CATCH_ALL_QUESTION`: đây là câu quyết định
-phiên còn chạy hay không, nên nó không được diễn đạt lại khác nhau giữa các lượt."""
+"""Mười bản của câu hỏi dừng phiên. Khác NHỊP, giống hệt nhau về việc phải làm.
+
+BẢN GỐC CÓ MỘT DÒNG DOCSTRING NÓI KHÔNG ĐƯỢC ĐỔI CÁCH DIỄN ĐẠT, và lý do nó đưa ra là "đây là câu
+quyết định phiên còn chạy hay không". Lý do đó đúng ở phần quan trọng nhưng suy ra hơi rộng: thứ
+quyết định phiên còn chạy hay không là CÂU TRẢ LỜI của người bệnh, mà `stop_prompt_confirmation` đọc
+câu trả lời chứ không đọc câu hỏi. Đổi cách hỏi không đụng gì tới bộ đọc đó.
+
+Cái ràng buộc thật sự nằm ở chỗ khác, và nó là ràng buộc CỨNG: mọi bản phải kết thúc bằng đúng một
+câu hỏi có/không rõ ràng, để `stop_prompt_confirmation` có cái mà phân giải. Vì thế cả mười bản dùng
+CHUNG câu chốt "Bạn muốn dừng ở đây không?" - phần đổi chỉ là vế mở đầu.
+
+`session` nhận diện lượt này bằng cách so `last_question` với TẬP hợp, không so với một chuỗi -
+xem `is_uncooperative_prompt`. So bằng một chuỗi mà tập có mười bản là hỏng ngầm 9/10 số lần."""
+
+UNCOOPERATIVE_PROMPT = UNCOOPERATIVE_PROMPTS[0]
+"""Bản mặc định. Giữ lại vì đây là tên đã có người gọi, và vì một seed rỗng phải cho ra đúng nó."""
+
+
+def uncooperative_prompt(seed: object = "") -> str:
+    """Một bản của câu hỏi dừng phiên, chọn tất định theo `seed`."""
+    return phrasing.pick(UNCOOPERATIVE_PROMPTS, seed)
+
+
+def is_uncooperative_prompt(text: str) -> bool:
+    """Câu vừa hỏi có phải câu hỏi dừng phiên không.
+
+    Đây là hàm thay cho phép so `== UNCOOPERATIVE_PROMPT` mà `session` dùng trước đây. Tách thành
+    hàm chứ không để chỗ gọi tự viết `in UNCOOPERATIVE_PROMPTS`: chỗ gọi quyết định một việc rất
+    nặng - coi tin nhắn kế tiếp là câu trả lời có/không cho việc DỪNG PHIÊN - nên phép nhận diện đó
+    phải nằm cạnh chính tập câu, để thêm một bản mới không bao giờ làm nó lệch."""
+    return text in UNCOOPERATIVE_PROMPTS

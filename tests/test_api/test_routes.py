@@ -347,10 +347,16 @@ async def test_chat_stream_emits_status_tokens_then_the_same_body_as_chat(
     assert names[-1] == "done"
 
     tokens = "".join(data for name, data in events if name == "token")
-    assert tokens == "Dạ cho em hỏi thêm ạ?"
+    # KHÔNG khẳng định chữ nào do model viết. Lượt đầu của mọi ca giờ là câu quét cấp cứu phổ quát
+    # (stage `E`, `screening.probe_question`) - văn bản TĨNH, cố ý không qua LLM. Bài này viết từ
+    # trước khi stage đó tồn tại nên nó chờ đúng chuỗi mà `fake_stream` phát ra, và chờ mãi.
+    #
+    # Bất biến thật sự đáng canh ở đây không phải "ai viết câu đó", mà là HAI KÊNH KHỚP NHAU: những
+    # gì người bệnh đọc dần qua `token` phải đúng bằng câu nằm trong `done`. Lệch nhau nghĩa là màn
+    # hình hiện một đằng còn bản ghi lưu một nẻo - và đó mới là thứ làm vỡ frontend.
     body = next(data for name, data in events if name == "done")
     assert set(body) >= {"case_id", "response", "status", "requires_human_approval"}
-    assert body["response"] == tokens
+    assert tokens == body["response"]
 
 
 @pytest.mark.asyncio
