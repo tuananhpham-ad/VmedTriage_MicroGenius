@@ -131,8 +131,10 @@ def test_ask_more_does_not_create_an_approval_record():
 
     _review(HITLAction.ASK_MORE, ask_more_question="Bạn sốt mấy ngày rồi?")
 
-    assert case_store.get("case-1").status is CaseStatus.COLLECTING_INFORMATION
+    updated_case = case_store.get("case-1")
+    assert updated_case.status is CaseStatus.COLLECTING_INFORMATION
     assert approval_store.get("case-1") is None
+    assert updated_case.conversation[-1].author_name == "DD A"
 
 
 def test_reject_does_not_create_an_approval_record():

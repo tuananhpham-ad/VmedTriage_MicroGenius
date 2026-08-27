@@ -1,5 +1,6 @@
 import re
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -198,6 +199,45 @@ class UserResponse(BaseModel):
     email_verified: bool
     is_active: bool
     created_at: datetime
+
+
+HealthProfileStatus = Literal["unknown", "none", "yes"]
+HealthProfileCondition = Literal[
+    "tim_mach", "ho_hap", "tieu_duong", "than", "gan", "ung_thu", "suy_giam_mien_dich", "khac"
+]
+
+
+class HealthProfileUpdateRequest(BaseModel):
+    """Dữ liệu tự khai, dùng làm bối cảnh chứ không phải chẩn đoán hay chỉ định."""
+
+    allergy_status: HealthProfileStatus = "unknown"
+    allergies: str | None = Field(default=None, max_length=1000)
+    chronic_conditions: list[HealthProfileCondition] = Field(default_factory=list, max_length=8)
+    conditions_note: str | None = Field(default=None, max_length=1000)
+    current_medications: str | None = Field(default=None, max_length=1000)
+    recent_care_status: HealthProfileStatus = "unknown"
+    pregnancy_status: HealthProfileStatus = "unknown"
+    recent_note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("allergies", "conditions_note", "current_medications", "recent_note")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def validate_allergy_detail(self):
+        if self.allergy_status != "yes":
+            self.allergies = None
+        return self
+
+
+class HealthProfileResponse(HealthProfileUpdateRequest):
+    model_config = ConfigDict(from_attributes=True)
+
+    confirmed_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class MessageResponse(BaseModel):
