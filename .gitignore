@@ -91,3 +91,6 @@ deploy/azure/env*
 
 render.yaml
 .firecrawl/
+
+docs/planning/test_plan.md
+CLAUDE.md
