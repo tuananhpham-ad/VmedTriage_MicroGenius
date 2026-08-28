@@ -103,6 +103,10 @@ const listScopes = {
 const SIDEBAR_KEY = "vmed_nurse_sidebar";
 let queueFilter = "all";
 let queueSubnavOpen = true;
+// "Ca đã duyệt" có menu con riêng (Tất cả/Cấp cứu/Khám sớm/Tự theo dõi) y hệt Hàng đợi, nhưng là một
+// bộ lọc và một trạng thái đóng/mở ĐỘC LẬP - hai màn phải nhớ lựa chọn của nhau khi qua lại.
+let doneFilter = "all";
+let doneSubnavOpen = true;
 
 /** Cột điều hướng đang thu gọn hay không. Nhớ trong `localStorage` vì mỗi lần đổi màn là một lần
  *  render lại từ đầu - không nhớ thì thanh này bung ra lại sau mỗi cú bấm. */
@@ -118,8 +122,9 @@ function sidebarCollapsed() {
  *  đây là đường duy nhất đi giữa các màn - nên nó phải giống hệt nhau ở mọi màn, và cách duy nhất
  *  bảo đảm điều đó là chỉ có một chỗ dựng ra nó.
  *
- *  Chỉ hiển thị icon, nhãn và số ca. Riêng các mức ưu tiên là menu con của Hàng đợi để điều dưỡng
- *  mở đúng danh sách công việc ngay từ sidebar; các chi tiết ca vẫn nằm ở vùng nội dung. */
+ *  Chỉ hiển thị icon, nhãn và số ca. Riêng các mức ưu tiên là menu con của Hàng đợi VÀ Ca đã duyệt để
+ *  điều dưỡng mở đúng danh sách cần xem ngay từ sidebar (hai bộ lọc độc lập); các chi tiết ca vẫn nằm
+ *  ở vùng nội dung. */
 export function nurseSideNav(activeKey) {
   const theme = readAppTheme();
   const collapsed = sidebarCollapsed();
@@ -133,6 +138,11 @@ export function nurseSideNav(activeKey) {
     ${priority ? `<span class="priority-dot is-${priority}"></span>` : ""}
     <span>${label}</span>
     <b id="overview-filter-${filter}">0</b>
+  </button>`;
+  const doneFilterItem = (filter, label, priority = "") => `<button class="nav-subnav-item${activeKey === "done" && doneFilter === filter ? " is-active" : ""}${priority ? ` is-${priority}` : ""}" type="button" data-done-filter="${filter}">
+    ${priority ? `<span class="priority-dot is-${priority}"></span>` : ""}
+    <span>${label}</span>
+    <b id="overview-done-filter-${filter}">0</b>
   </button>`;
   return `<aside class="queue-side${collapsed ? " is-collapsed" : ""}" data-sidebar>
     <div class="nurse-side-top">
@@ -151,7 +161,15 @@ export function nurseSideNav(activeKey) {
           ${queueFilterItem("Self-care", "Tự theo dõi", "self-care")}
         </div>
       </div>
-      ${item("done", "Ca đã duyệt", "shieldCheck", "overview-done")}
+      <div class="nav-parent">
+        ${item("done", "Ca đã duyệt", "shieldCheck", "overview-done")}
+        <div class="nav-subnav" ${activeKey === "done" && doneSubnavOpen ? "" : "hidden"}>
+          ${doneFilterItem("all", "Tất cả")}
+          ${doneFilterItem("Emergency", "Cấp cứu", "emergency")}
+          ${doneFilterItem("Urgent", "Khám sớm", "urgent")}
+          ${doneFilterItem("Self-care", "Tự theo dõi", "self-care")}
+        </div>
+      </div>
 
       <p class="nav-group">Ca làm việc</p>
       ${item("shift", "Ca trực", "clock", "")}
@@ -232,19 +250,38 @@ export function bindSideNav(root, { navigate, logout }, activeKey) {
       paintQueue(root, { navigate, logout });
     }),
   );
-  root.querySelectorAll("[data-nav]").forEach((button) =>
+  root.querySelectorAll("[data-done-filter]").forEach((button) =>
     button.addEventListener("click", () => {
-      // Bấm vào chính màn đang mở thì không render lại: render dựng lại toàn bộ innerHTML nên bộ lọc
-      // và ô tìm kiếm đang gõ dở sẽ bị xoá sạch.
-      if (button.dataset.nav === activeKey) {
-        if (button.dataset.nav !== "queue") return;
-        queueSubnavOpen = !queueSubnavOpen;
-        root.querySelector(".nav-subnav").hidden = !queueSubnavOpen;
+      doneFilter = button.dataset.doneFilter;
+      if (activeKey !== "done") {
+        navigate("nurse-done");
         return;
       }
-      // Lần sau quay lại Hàng đợi, menu con luôn mở để thấy ngay danh sách công việc.
-      if (button.dataset.nav !== "queue") queueSubnavOpen = true;
-      navigate(navTargets[button.dataset.nav] || "nurse-queue");
+      root.dataset.filter = doneFilter;
+      root.querySelectorAll("[data-done-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
+      paintQueue(root, { navigate, logout });
+    }),
+  );
+  root.querySelectorAll("[data-nav]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const nav = button.dataset.nav;
+      // Bấm vào chính màn đang mở thì không render lại: render dựng lại toàn bộ innerHTML nên bộ lọc
+      // và ô tìm kiếm đang gõ dở sẽ bị xoá sạch. Riêng "queue"/"done" có menu con thì bấm lại chỉ
+      // đóng/mở menu đó, KHÔNG render lại (còn navTargets khác không có menu con nên bỏ qua).
+      if (nav === activeKey) {
+        if (nav === "queue") {
+          queueSubnavOpen = !queueSubnavOpen;
+          button.closest(".nav-parent").querySelector(".nav-subnav").hidden = !queueSubnavOpen;
+        } else if (nav === "done") {
+          doneSubnavOpen = !doneSubnavOpen;
+          button.closest(".nav-parent").querySelector(".nav-subnav").hidden = !doneSubnavOpen;
+        }
+        return;
+      }
+      // Lần sau quay lại Hàng đợi/Ca đã duyệt, menu con luôn mở để thấy ngay danh sách tương ứng.
+      if (nav !== "queue") queueSubnavOpen = true;
+      if (nav !== "done") doneSubnavOpen = true;
+      navigate(navTargets[nav] || "nurse-queue");
     }),
   );
   root.querySelectorAll("[data-nurse-info]").forEach((button) =>
@@ -808,7 +845,7 @@ function renderNurseList(root, { navigate, logout }, scopeKey) {
   bindSideNav(root, { navigate, logout }, scopeKey);
   root.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", () => refreshQueue(root, { navigate, logout })));
   root.querySelector("#queue-search").addEventListener("input", () => paintQueue(root, { navigate, logout }));
-  root.dataset.filter = scopeKey === "queue" ? queueFilter : "all";
+  root.dataset.filter = scopeKey === "queue" ? queueFilter : doneFilter;
   root.dataset.scope = scopeKey;
   refreshQueue(root, { navigate, logout });
   polling = window.setInterval(() => refreshQueue(root, { navigate, logout, silent: true }), 15000);
@@ -863,21 +900,30 @@ function paintQueue(root, { navigate, logout }) {
  *  của một thanh điều hướng: đứng ở đâu cũng thấy đủ. */
 export function paintOverview(root) {
   const pending = state.queue.filter((item) => !completedStatuses.has(item.status));
-  const done = state.queue.length - pending.length;
+  const done = state.queue.filter((item) => completedStatuses.has(item.status));
   // Chưa có trạng thái "đã đọc" bền vững cho điều dưỡng, vì vậy badge đỏ biểu thị chính xác điều
   // cần hành động: cuộc trò chuyện mà lượt nhắn trực tiếp mới nhất là của bệnh nhân.
   const waitingReplies = state.queue.filter((item) => item.status === "needs_more_info" && lastDirectMessage(item)?.role === "patient").length;
-  const counts = { Emergency: 0, Urgent: 0, "Self-care": 0 };
-  for (const item of pending) {
-    const level = displayLevel(item);
-    if (level in counts) counts[level] += 1;
-  }
+  const countByLevel = (items) => {
+    const counts = { Emergency: 0, Urgent: 0, "Self-care": 0 };
+    for (const item of items) {
+      const level = displayLevel(item);
+      if (level in counts) counts[level] += 1;
+    }
+    return counts;
+  };
+  const counts = countByLevel(pending);
+  const doneCounts = countByLevel(done);
   root.querySelector("#overview-queue").textContent = pending.length;
-  root.querySelector("#overview-done").textContent = done;
+  root.querySelector("#overview-done").textContent = done.length;
   root.querySelector("#overview-filter-all").textContent = pending.length;
   root.querySelector("#overview-filter-Emergency").textContent = counts.Emergency;
   root.querySelector("#overview-filter-Urgent").textContent = counts.Urgent;
   root.querySelector("#overview-filter-Self-care").textContent = counts["Self-care"];
+  root.querySelector("#overview-done-filter-all").textContent = done.length;
+  root.querySelector("#overview-done-filter-Emergency").textContent = doneCounts.Emergency;
+  root.querySelector("#overview-done-filter-Urgent").textContent = doneCounts.Urgent;
+  root.querySelector("#overview-done-filter-Self-care").textContent = doneCounts["Self-care"];
   const messageBadge = root.querySelector("#overview-messages");
   if (messageBadge) {
     messageBadge.textContent = waitingReplies;
