@@ -128,7 +128,7 @@ _DETAIL_TIERS = frozenset({"M0", "M1"})
 """Tier được đưa vào `details`. Cùng bộ lọc `symptom_case_bridge._SUMMARY_TIERS` dùng cho phiếu: tier
 C/O/H là thông tin bổ trợ, đưa hết vào đây thì điều dưỡng lại phải đọc 101 dòng."""
 
-_ALWAYS_DETAIL_KEYS = frozenset({"other_conditions"})
+_ALWAYS_DETAIL_KEYS = frozenset({"other_conditions", "reporter_type"})
 """Field lên phiếu BẤT KỂ tier - cửa duy nhất để đưa một field mới vào summary mà không phải nâng
 tier của nó.
 

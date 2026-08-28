@@ -316,13 +316,26 @@ _MIN_QUESTION_ALLOWANCE = 2
 ("...phải không ạ?"). Ép trần về 1 làm guard chặn những câu hoàn toàn hợp lệ, và mỗi lần chặn là một
 lượt người bệnh nhận `script_hint` khô - tức là mất đúng thứ P3 vừa làm ra."""
 
-_DISTINCTIVE_LABEL_WORDS = 3
+_DISTINCTIVE_LABEL_WORDS = 2
 """Nhãn phải có ít nhất chừng này từ mới được dùng để dò.
 
-Ngưỡng 2 đã thử và BỎ: nhãn hai từ như "Loại sốt" xuất hiện tự nhiên trong câu hỏi hợp lệ, đo được
-tỉ lệ chặn nhầm đáng kể trên transcript thật với `deepseek-chat`. Kiểm tra này vốn là lưới an toàn
-PHỤ - lưới chính là `missing_fields` trong prompt và việc reducer không cho `unknown` ghi đè giá trị
-đã có - nên nó phải nghiêng về BỎ SÓT hơn là chặn nhầm."""
+Lần quay lại ngưỡng 2 này (F10 Fix D) có một căn cứ mà lần thử trước không có: sau khi lên 5 nhóm
+triệu chứng, nhãn của những field ĐẶC TRƯNG NHẤT lại đúng là nhãn hai từ - "Đau ngực", "Khó thở",
+"Đau đầu". Ngưỡng 3 làm chính chúng VÔ HÌNH với lưới cuối cùng, tức lưới tắt đúng ở các field hay bị
+hỏi lại nhất (`chest_pain` nằm trong cả `CP-01` lẫn `CP-03`, nên nó là field bị hỏi lại nhiều nhất).
+
+Lý do bỏ ngưỡng 2 lần trước - "Loại sốt" chặn nhầm - vẫn có thật, nên nó được xử lý riêng bằng
+`_GENERIC_LABEL_WORDS` thay vì bằng một ngưỡng đếm từ quét đều. Kiểm tra này vẫn là lưới an toàn PHỤ
+(lưới chính là `missing_fields` trong prompt và việc reducer không cho `unknown` ghi đè giá trị đã
+có), nhưng "nghiêng về bỏ sót" không được phép có nghĩa là bỏ sót đúng năm field trung tâm."""
+
+_GENERIC_LABEL_WORDS: frozenset[str] = frozenset({"loại", "mức", "kiểu", "tình", "thông", "diễn"})
+"""Từ mở đầu khiến một nhãn hai từ mất tính đặc trưng.
+
+"Loại sốt", "Kiểu đau" mô tả một THUỘC TÍNH của triệu chứng, nên chúng xuất hiện tự nhiên trong câu
+hỏi hợp lệ về chính thuộc tính đó ("cơn sốt của bạn thuộc loại sốt nào") - đó là ca chặn nhầm đo
+được với `deepseek-chat`. "Đau ngực" thì gọi tên chính TRIỆU CHỨNG: nhắc tới nó khi field đã có căn
+cứ và không nằm trong `missing_fields` gần như luôn là hỏi lại."""
 
 
 def _asks_a_known_field(
@@ -338,7 +351,10 @@ def _asks_a_known_field(
         if not stage_machine.is_filled(value):
             continue
         label = protocol.fields_by_key[key].label.casefold()
-        if len(label.split()) < _DISTINCTIVE_LABEL_WORDS:
+        words = label.split()
+        if len(words) < _DISTINCTIVE_LABEL_WORDS:
+            continue
+        if len(words) == _DISTINCTIVE_LABEL_WORDS and words[0] in _GENERIC_LABEL_WORDS:
             continue
         if label in lowered:
             return True

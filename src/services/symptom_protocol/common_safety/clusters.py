@@ -31,7 +31,10 @@ def demographic_clusters(stage: str = "0") -> tuple[QuestionCluster, ...]:
     return (
         QuestionCluster(
             "Q0-01", stage, ("age_value", "age_unit", "reporter_type", "sex"),
-            script_hint="Người đang cần tư vấn là bé hay người lớn, bao nhiêu tuổi/tháng, nam hay nữ",
+            # Câu hỏi phải chạm ĐỦ 4 field của cụm. Bản cũ chỉ hỏi tuổi/giới nên `reporter_type` -
+            # field nằm ngay trong cụm này - không bao giờ được hỏi tường minh, và cả phiên trôi
+            # theo giả định ngầm "người nhắn chính là người bệnh".
+            script_hint="Người đang cần tư vấn là chính bạn hay bạn đang hỏi giúp ai đó, là bé hay người lớn, bao nhiêu tuổi/tháng, nam hay nữ",
         ),
     )
 

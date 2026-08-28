@@ -34,6 +34,7 @@ from src.services.checklists.generic_checklist import (
     QUESTION_CLUSTERS,
     STAGE_ORDER,
 )
+from src.services.symptom_protocol.common_safety import fields as common_fields
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
@@ -210,6 +211,7 @@ GENERIC_PROTOCOL = SymptomProtocol(
     screening_groups=SCREENING_GROUPS,
     field_dependencies=FIELD_DEPENDENCIES,
     derive_fields=derive_duration,
+    confirm_before_retract=common_fields.CONFIRM_BEFORE_RETRACT,
     reason_code_labels=REASON_CODE_LABELS,
     chief_complaint_field="chief_complaint",
     default_chief_complaint="Chưa rõ triệu chứng chính",

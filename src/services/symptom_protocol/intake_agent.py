@@ -34,6 +34,7 @@ from src.services.symptom_protocol import (
     dialogue,
     flags,
     output_guard,
+    phrasing,
     ranking,
     reducer,
     rule_engine,
@@ -127,13 +128,6 @@ def _known_facts(protocol: SymptomProtocol, answers: dict[str, TriState]) -> str
         if key in protocol.fields_by_key and stage_machine.is_filled(value)
     ]
     return "\n".join(lines) if lines else "(chưa biết gì - đây là lượt đầu)"
-
-
-def _missing_in_cluster(
-    protocol: SymptomProtocol, cluster: QuestionCluster, answers: dict[str, TriState],
-) -> tuple[str, ...]:
-    """Field của cụm còn thiếu. Cụm điền dở phải hỏi tiếp ĐÚNG phần thiếu, không hỏi lại cả cụm."""
-    return tuple(key for key in cluster.fields if not stage_machine.is_filled(answers.get(key)))
 
 
 def _field_specs(protocol: SymptomProtocol, field_keys: tuple[str, ...]) -> str:
@@ -1038,9 +1032,9 @@ Hãy tự soạn MỘT tin nhắn tiếng Việt tự nhiên, ấm áp, ngắn g
 ĐIỀU CẦN BIẾT (mỗi gạch đầu dòng là MỘT thông tin phải thu được - tự chọn cách hỏi):
 {field_brief}
 
-Cách diễn đạt tham khảo của điều dưỡng (KHÔNG bắt buộc chép, PHẢI viết khác đi cho tự nhiên hơn):
-"{script_hint}"{focus}
+{script_block}{focus}
 
+{subject_note}
 ĐÃ BIẾT VỀ NGƯỜI BỆNH (TUYỆT ĐỐI không hỏi lại những điều này):
 {known_facts}
 {acknowledgement}{dialogue_note}{transition_note}
@@ -1052,6 +1046,7 @@ QUY TẮC BẮT BUỘC:
 - KHÔNG khuyên dùng thuốc, KHÔNG nêu liều, KHÔNG đưa hướng xử trí.
 - {scope_rule}
 - {instruction}
+- {persona_rule}
 - Hỏi thân mật nhưng đi thẳng vào ý cần hỏi. Tránh mẫu câu lặp lại như "mình đã ghi nhận",
   "để mình nắm rõ hơn", "để mình yên tâm hơn" nếu không thật sự cần.
 - Nếu không có dữ kiện cần công nhận, bắt đầu thẳng bằng câu hỏi.
@@ -1072,6 +1067,21 @@ QUY TẮC BẮT BUỘC:
 
 # Hai biến thể của cùng một prompt. Lượt gộp phải nói RÕ số ý: bỏ dòng này thì model quen tay rút về
 # một câu hỏi duy nhất, các ý còn lại không bao giờ được hỏi mà cụm tương ứng vẫn bị đánh dấu đã hỏi.
+_SCRIPT_HINT_BLOCK = """Cách diễn đạt tham khảo của điều dưỡng (KHÔNG bắt buộc chép, PHẢI viết khác đi cho tự nhiên hơn):
+"{script_hint}"
+"""
+"""Câu viết sẵn của CẢ cụm - chỉ được đưa vào prompt khi cụm còn thiếu TRỌN VẸN.
+
+Cụm điền dở mà vẫn kèm khối này thì prompt chứa ba tín hiệu chọi nhau: (i) một câu tiếng Việt viết
+sẵn hỏi CẢ cụm, (ii) dòng `CHỈ CÒN THIẾU` bảo đừng hỏi phần đã biết, (iii) `ĐÃ BIẾT VỀ NGƯỜI BỆNH`.
+Model bám vào cái CỤ THỂ nhất - câu viết sẵn - nên nó hỏi lại đúng thứ người bệnh vừa khai.
+
+Ca đo được (F10 lỗi 2): `CP-03` có `script_hint` = "Có kèm đau ngực, khó thở, ho ra máu..." mà
+`chest_pain` đã "true" từ lượt mở, vì `chest_pain` nằm trong CẢ HAI cụm `CP-01` và `CP-03`. Đường rơi
+về `script_hint` khi guard chặn hoặc `synthesis_enabled()` tắt KHÔNG bị ảnh hưởng - nó lấy
+`cluster.script_hint` trực tiếp, không đi qua prompt."""
+
+
 _SINGLE_SCOPE = ("Ý CẦN HỎI", "KHÔNG hỏi thêm ý nào ngoài Ý CẦN HỎI ở trên (tối đa 2 ý).")
 
 
@@ -1102,6 +1112,34 @@ def _field_brief(protocol: SymptomProtocol, keys: tuple[str, ...]) -> str:
         hint = (spec.hint or "").strip()
         lines.append(f"- {spec.label}" + (f" ({hint})" if hint else ""))
     return "\n".join(lines) if lines else "(không có ý nào)"
+
+
+_SUBJECT_NOTES: dict[str, str] = {
+    "self": 'Người có triệu chứng CHÍNH LÀ người bạn đang nhắn tin - hỏi thẳng "bạn".',
+    "parent_caregiver": (
+        "Người có triệu chứng là NGƯỜI NHÀ mà người nhắn đang chăm sóc, KHÔNG phải người nhắn. Hỏi "
+        'về "bé"/"người nhà của bạn", đừng hỏi như thể người nhắn đang có triệu chứng đó.'
+    ),
+    "other": (
+        "Người có triệu chứng là NGƯỜI KHÁC, không phải người đang nhắn tin. Hỏi về \"người bệnh\" "
+        '("người bệnh có thấy...", "bạn của bạn có..."), TUYỆT ĐỐI đừng hỏi "bạn có bị... không".'
+    ),
+}
+"""Chủ ngữ của câu hỏi, theo `reporter_type`.
+
+Đây là chỗ Fix E và Fix F gặp nhau: Fix E chốt agent tự xưng "mình" và gọi người NHẮN là "bạn", còn
+chỗ này chốt người nhắn có phải người BỆNH hay không. Thiếu nó thì persona nhất quán lại làm lỗi nặng
+thêm - agent hỏi "bạn có đau ngực không" một cách rất kiên định với người vừa nói rõ là đang hỏi hộ
+bạn mình."""
+
+
+def _subject_note(answers: dict[str, TriState]) -> str:
+    """Dòng chủ ngữ cho prompt, rỗng khi chưa biết ai là người bệnh.
+
+    Rỗng chứ không mặc định `"self"`: chưa hỏi thì chưa biết, và đoán "người nhắn là bệnh nhân" chính
+    là giả định ngầm sinh ra lỗi 4 của F10."""
+    note = _SUBJECT_NOTES.get(str(answers.get("reporter_type") or ""))
+    return f"\nCHỦ NGỮ CỦA CÂU HỎI: {note}\n" if note else ""
 
 
 def _format_history(conversation: list[dict[str, str]], limit: int | None = None) -> str:
@@ -1222,8 +1260,9 @@ def _generate_question(
         return cluster.script_hint, False
 
     missing = plan.missing_fields if plan is not None else missing_keys
+    partial = bool(missing) and len(missing) < len(cluster.fields)
     focus = ""
-    if missing and len(missing) < len(cluster.fields):
+    if partial:
         labels = ", ".join(
             protocol.fields_by_key[key].label for key in missing if key in protocol.fields_by_key
         )
@@ -1232,10 +1271,15 @@ def _generate_question(
 
     wants_rephrase = rephrase or (plan.rephrase if plan is not None else False)
     instruction = (
-        "Người bệnh vừa KHÔNG trả lời được ý này. Hãy diễn đạt KHÁC HẲN lần trước và nói ngắn gọn vì "
-        "sao cần biết điều đó."
+        "Người bệnh vừa KHÔNG trả lời được ý này. Hãy đổi CẤU TRÚC CÂU và cách dẫn dắt so với lần "
+        "trước, nói ngắn gọn vì sao cần biết điều đó. Đại từ xưng hô giữ NGUYÊN."
         if wants_rephrase
-        else "Diễn đạt KHÁC đi so với các câu hỏi trước đó của trợ lý (đổi từ ngữ/cấu trúc câu)."
+        # "Viết khác đi" bị thu về đúng CẤU TRÚC CÂU: chỉ thị cũ nói trống "đổi từ ngữ", mà đại từ
+        # cũng là từ ngữ - đó là đường model hợp lý hoá việc đổi "mình" thành "em" giữa phiên.
+        else (
+            "Diễn đạt KHÁC đi so với các câu hỏi trước đó của trợ lý: đổi CẤU TRÚC CÂU và cách dẫn "
+            "dắt. KHÔNG đổi đại từ xưng hô."
+        )
     )
 
     scope_intro, scope_rule = _batch_scope(parts) if parts > 1 else _SINGLE_SCOPE
@@ -1246,7 +1290,9 @@ def _generate_question(
         field_brief=_field_brief(protocol, brief_keys),
         scope_intro=scope_intro,
         scope_rule=scope_rule,
-        script_hint=cluster.script_hint,
+        # Cụm điền dở: dựng câu từ `_field_brief` của riêng phần còn thiếu, KHÔNG kèm câu viết sẵn
+        # hỏi cả cụm - xem `_SCRIPT_HINT_BLOCK`.
+        script_block="" if partial else _SCRIPT_HINT_BLOCK.format(script_hint=cluster.script_hint),
         focus=focus,
         known_facts=_known_facts(protocol, answers),
         # Hướng dẫn và DỮ KIỆN đi riêng: gộp chúng vào một chuỗi thì model chép nguyên văn phần
@@ -1260,6 +1306,8 @@ def _generate_question(
         dialogue_note=f"\n{plan.answer_user_question}" if plan is not None and plan.answer_user_question else "",
         transition_note=f"\n{plan.transition_note}" if plan is not None and plan.transition_note else "",
         instruction=instruction,
+        persona_rule=phrasing.PERSONA_RULE,
+        subject_note=_subject_note(answers),
         history=_format_history(conversation or []),
         max_questions=plan.max_questions if plan is not None else max(parts, 1),
     )
@@ -2012,4 +2060,14 @@ def scan_opportunistic_fields(protocol: SymptomProtocol, message: str) -> dict[s
     for key, keywords in protocol.opportunistic_keywords:
         if _contains_any(normalized, keywords) and not text_safety_signals.all_mentions_negated(message, keywords):
             found[key] = "true"
+    # `reporter_type` thuộc về đây chứ không phải một móc riêng ở `run_turn`: nó đúng là thứ người
+    # bệnh nói tình cờ, ở lượt mà không cụm nào hỏi tới. Quan trọng hơn, đây là hàm DUY NHẤT mà cả
+    # lượt MỞ lẫn lượt giữa phiên đều gọi - mà "bạn tôi bị đau ngực" gần như luôn là câu ĐẦU TIÊN.
+    #
+    # Không đi qua `protocol.opportunistic_keywords`: bộ đó ánh xạ từ khoá -> `"true"` cho field
+    # tri-state, còn field này là enum. Bảng cue nằm ở `text_safety_signals` để dùng CHUNG với guard
+    # `GUARD_OTHER_SUBJECT`, chứ không chép ra bản thứ hai.
+    reported_by = text_safety_signals.reporter_type_from_text(message)
+    if reported_by:
+        found["reporter_type"] = reported_by
     return found

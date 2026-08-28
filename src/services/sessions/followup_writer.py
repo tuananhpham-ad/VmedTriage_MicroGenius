@@ -30,6 +30,7 @@ import re
 from src.config import get_settings
 from src.services.infra import provider_router
 from src.services.stores.conversation_store import PastConversation
+from src.services.symptom_protocol import phrasing
 
 logger = logging.getLogger("vmedtriage.followup_writer")
 
@@ -53,8 +54,8 @@ QUY TẮC BẮT BUỘC:
 - TUYỆT ĐỐI không thêm bất kỳ chi tiết y khoa nào: không nhiệt độ, không số ngày, không tên bệnh,
   không tên thuốc, không mức độ nặng nhẹ, không lời khuyên xử trí, không nhắc tới cấp cứu hay đi khám.
 - Không dùng chữ số.
-- Xưng hô: gọi người đọc là "bạn", tự xưng "mình". Giọng quan tâm, ngắn, tự nhiên như người quen hỏi
-  thăm - không trang trọng kiểu bệnh viện, không hỏi dồn.
+- """ + phrasing.PERSONA_RULE + """ Giọng quan tâm, ngắn, tự nhiên như người quen hỏi thăm - không
+  trang trọng kiểu bệnh viện, không hỏi dồn.
 - Không đặt kỳ vọng bắt buộc trả lời: người bệnh bỏ qua câu này để kể chuyện hôm nay là bình thường."""
 
 
