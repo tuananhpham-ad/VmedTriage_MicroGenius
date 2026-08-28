@@ -1,0 +1,770 @@
+[
+  {
+    "name": "root",
+    "input": "Nam 33 tuổi. Đau đầu âm ỉ hai bên do stress công việc, giống các lần đau đầu trước đây, đỡ khi nghỉ ngơi.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 4
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883930.1681466,
+      "end": 1787883952.8789017,
+      "duration": 22.710755109786987,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-SC-02",
+      "judge_text": null,
+      "latency_ms": 22708.092854001734,
+      "manual_run_note": "pass ",
+      "protocol_reference": "không dấu hiệu SNOOP, giống lần trước",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883952877,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 28 tuổi. Đau đầu kiểu nửa đầu quen thuộc như mọi lần, uống paracetamol đỡ hẳn, không dấu hiệu bất thường nào khác.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 12
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883795.2433112,
+      "end": 1787883930.1681466,
+      "duration": 134.9248354434967,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-SC-01",
+      "judge_text": null,
+      "latency_ms": 134921.28111000056,
+      "manual_run_note": "pass  ",
+      "protocol_reference": " không có dấu hiệu nguy hiểm, giống các lần trước, đáp ứng thuốc giảm đau",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883930167,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 68 tuổi. Khó thở khi nằm và khi nghỉ mấy ngày nay, kèm phù hai chân.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883115.3863227,
+      "end": 1787883123.6712987,
+      "duration": 8.2849760055542,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "KT-EV-02",
+      "judge_text": null,
+      "latency_ms": 8283.158530997753,
+      "manual_run_note": "pass",
+      "protocol_reference": "khó thở khi nghỉ + phù chân (nghi suy tim)",
+      "source": "protocol",
+      "symptom_group": "Khó thở"
+    },
+    "comments": null,
+    "created": 1787883123670,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 55 tuổi. Khó thở ngay cả khi ngồi nghỉ 2 ngày nay, kèm sốt 38.8°C và ho đờm vàng. Không có bệnh nền và triệu chứng nào khác.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883106.3404331,
+      "end": 1787883115.3863227,
+      "duration": 9.045889616012573,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "KT-EV-01",
+      "judge_text": null,
+      "latency_ms": 9044.250397004362,
+      "manual_run_note": "- bị đoán nhầm thành \"cấp cứu\"",
+      "protocol_reference": "khó thở khi nghỉ (câu 3) + sốt (nghi viêm phổi)",
+      "source": "protocol",
+      "symptom_group": "Khó thở"
+    },
+    "comments": null,
+    "created": 1787883115384,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Bé gái 6 tuổi. Sốt 38°C từ hôm qua, vẫn chơi đùa ăn uống bình thường, không ho/phát ban/đau bụng, mẹ ở nhà theo dõi được, có thể tái khám.",
+    "output": {
+      "actual_priority": "Self-care",
+      "status": "needs_nurse_review",
+      "turns": 14
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787884427.8439777,
+      "end": 1787884548.9297736,
+      "duration": 121.08579587936401,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-SC-02",
+      "judge_text": null,
+      "latency_ms": 121080.73574400623,
+      "manual_run_note": "pass ",
+      "protocol_reference": "Không có dấu hiệu nguy hiểm, có người chăm sóc",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787884548928,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 30 tuổi. Sốt 37.8°C từ hôm qua (<5 ngày), hoàn toàn tỉnh táo, ăn uống/đi tiểu bình thường, không red flag nào, sống cùng chồng, có thể tái khám nếu cần.",
+    "output": {
+      "actual_priority": "Self-care",
+      "status": "needs_nurse_review",
+      "turns": 18
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787884234.6053162,
+      "end": 1787884427.8439777,
+      "duration": 193.23866152763367,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-SC-01",
+      "judge_text": null,
+      "latency_ms": 193235.92983699928,
+      "manual_run_note": "đoán nhầm thành khám sớm ",
+      "protocol_reference": "Không có dấu hiệu nguy hiểm, có người chăm sóc",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787884427842,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 78 tuổi. Sốt 38.3°C 1 ngày nay, tỉnh táo, ăn uống giảm nhẹ, không dấu hiệu nguy hiểm nào khác.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 19
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787884087.2405107,
+      "end": 1787884234.6053162,
+      "duration": 147.3648054599762,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-EV-02",
+      "judge_text": null,
+      "latency_ms": 147361.79854199872,
+      "manual_run_note": "pass",
+      "protocol_reference": "Thuộc đối tượng > 75 tuổi",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787884234604,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 35 tuổi. Sốt liên tục 7 ngày nay, hoàn toàn tỉnh táo, ăn uống bình thường, không co giật, không dấu hiệu nguy hiểm khác.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 19
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883961.2069821,
+      "end": 1787884087.2405107,
+      "duration": 126.03352856636047,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-EV-01",
+      "judge_text": null,
+      "latency_ms": 126031.96647200093,
+      "manual_run_note": "pass",
+      "protocol_reference": "Thời gian sốt kéo dài > 5 ngày",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787884087239,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 45 tuổi. Sốt cao 40°C từ hôm qua, rét run nhiều và ngày càng mệt. Hiện tại bệnh nhân lơ mơ, khó đánh thức, thở nhanh và cảm thấy khó thở. Da lạnh, vã mồ hôi, không thể tự đi lại do quá yếu.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883961.149356,
+      "end": 1787883961.2069821,
+      "duration": 0.05762624740600586,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-EMG-02",
+      "judge_text": null,
+      "latency_ms": 55.51381099940045,
+      "manual_run_note": "pass",
+      "protocol_reference": "tình trạng nhiễm trùng nặng, thậm chí có thể nghi nhiễm khuẩn huyết",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787883961205,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 24 tuổi. Sốt cao 39.5°C 1 ngày nay, kèm cứng gáy (khó cúi cổ chạm cằm ngực) và sợ ánh sáng.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883952.8789017,
+      "end": 1787883961.149356,
+      "duration": 8.270454168319702,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "ST-EMG-01",
+      "judge_text": null,
+      "latency_ms": 8266.94637399487,
+      "manual_run_note": "pass",
+      "protocol_reference": "red-flag: neck_stiffness + photophobia - nghi nhiễm khuẩn TKTW",
+      "source": "protocol",
+      "symptom_group": "Sốt"
+    },
+    "comments": null,
+    "created": 1787883961148,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 55 tuổi. Đau đầu kiểu mới, lần đầu tiên trong đời, nặng dần qua từng ngày trong tuần qua.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 16
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883665.444445,
+      "end": 1787883795.2433112,
+      "duration": 129.79886627197266,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-EV-02",
+      "judge_text": null,
+      "latency_ms": 129792.20854199957,
+      "manual_run_note": "pass",
+      "protocol_reference": "khởi phát mới sau 50 tuổi + tiến triển nặng dần",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883795237,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 20 tuổi. Đau đầu sau khi va đầu vào cửa xe 2 ngày trước, đau tăng dần, không yếu liệt, không rối loạn ý thức.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 14
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883509.5643234,
+      "end": 1787883665.444445,
+      "duration": 155.88012146949768,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-EV-01",
+      "judge_text": null,
+      "latency_ms": 155877.8916789961,
+      "manual_run_note": "pass",
+      "protocol_reference": "Có chấn thương đầu gần đây, cần đi khám",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883665443,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 60 tuổi. Đau đầu xuất hiện đột ngột, kèm yếu nửa người bên trái và nói khó.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883471.2741802,
+      "end": 1787883509.5643234,
+      "duration": 38.29014325141907,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-EMG-02",
+      "judge_text": null,
+      "latency_ms": 38286.649784000474,
+      "manual_run_note": "pass",
+      "protocol_reference": "red-flag: có dấu hiệu thần kinh khu trú mới",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883509563,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 38 tuổi. Đau đầu đột ngột, đạt mức dữ dội nhất chỉ trong vài giây, chưa từng đau kiểu này bao giờ.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883456.3337746,
+      "end": 1787883471.2741802,
+      "duration": 14.94040560722351,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "DD-EMG-01",
+      "judge_text": null,
+      "latency_ms": 14937.034545000643,
+      "manual_run_note": "pass",
+      "protocol_reference": "red-flag: Đau đầu khởi phát đột ngột, đạt đỉnh trong vài giây và có tính chất hoàn toàn mới (thunderclap headache)",
+      "source": "protocol",
+      "symptom_group": "Đau đầu"
+    },
+    "comments": null,
+    "created": 1787883471273,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 30 tuổi. Hơi hụt hơi khi đi bộ nhanh do đang bị cảm nhẹ, không khó thở khi nghỉ, sinh hoạt bình thường.",
+    "output": {
+      "actual_priority": "Self-care",
+      "status": "needs_nurse_review",
+      "turns": 16
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883320.8221664,
+      "end": 1787883456.3337746,
+      "duration": 135.5116081237793,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "KT-SC-02",
+      "judge_text": null,
+      "latency_ms": 135508.01605400193,
+      "manual_run_note": "pass",
+      "protocol_reference": "khó thở nhẹ gắng sức, ít ảnh hưởng sinh hoạt",
+      "source": "protocol",
+      "symptom_group": "Khó thở"
+    },
+    "comments": null,
+    "created": 1787883456332,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 25 tuổi, khỏe mạnh. Hơi khó thở khi leo cầu thang nhanh, không khó thở khi nghỉ, không triệu chứng khác.",
+    "output": {
+      "actual_priority": "Self-care",
+      "status": "needs_nurse_review",
+      "turns": 17
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787883123.6712987,
+      "end": 1787883320.8221664,
+      "duration": 197.15086770057678,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "KT-SC-01",
+      "judge_text": null,
+      "latency_ms": 197148.59195399913,
+      "manual_run_note": "pass ",
+      "protocol_reference": "chỉ khó thở nhẹ khi gắng sức, không khó thở khi nghỉ, không triệu chứng đi kèm",
+      "source": "protocol",
+      "symptom_group": "Khó thở"
+    },
+    "comments": null,
+    "created": 1787883320820,
+    "__bt_assignments": null
+  }
+]

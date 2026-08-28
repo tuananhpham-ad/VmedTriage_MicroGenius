@@ -80,8 +80,8 @@ eval/scripts/*
 /eval_result.txt
 /eval_result_probabilities.txt
 /result_model
-docs/eval/
-tests/eval/
+docs/eval/0*_
+# tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
