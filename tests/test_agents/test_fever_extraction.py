@@ -510,3 +510,55 @@ def test_field_whose_parent_was_denied_is_left_out_of_the_schema():
 
     assert "immunocompromise_cause" not in keys
     assert "known_neutropenia" not in keys
+
+
+# --- Hallucination: "sốt có rét" KHÔNG phải "rét run dữ dội" -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "span",
+    ["sốt có rét", "ớn lạnh", "thấy lạnh trong người", "gai rét", "sốt kèm rét"],
+)
+def test_a_plain_chill_is_never_promoted_to_rigors(span: str):
+    """Lỗi thật: model trích đúng chữ "rét" trong "sốt có rét" rồi trả `rigors="true"`.
+
+    `rigors` là M0 amber NICE gợi ý nhiễm khuẩn huyết, nên một true bịa ở đây đẩy thẳng mức ưu tiên.
+    Trong tiếng Việt "rét" một mình là LẠNH, "rét run" mới là rét run - cách nhau một chữ, khác nhau
+    một mức triage."""
+    message = f"Em bị {span} từ tối qua ạ"
+    parsed = {"rigors": {"value": "true", "evidence_span": span}}
+
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, ("rigors",), parsed, message=message, evidence="unasked",
+    )
+
+    assert collected["rigors"] == "unknown", f"'{span}' không phải rét run"
+
+
+@pytest.mark.parametrize(
+    "span",
+    ["rét run cầm cập", "run bần bật", "rét run, đắp chăn không đỡ", "lạnh run người"],
+)
+def test_real_rigors_still_gets_through(span: str):
+    """Guard phải HẸP: chặn được ớn lạnh mà vẫn cho rét run thật đi qua, nếu không nó tự tạo ra lỗi
+    bỏ sót - đúng chiều nguy hiểm hơn."""
+    message = f"Bệnh nhân {span} suốt đêm"
+    parsed = {"rigors": {"value": "true", "evidence_span": span}}
+
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, ("rigors",), parsed, message=message, evidence="unasked",
+    )
+
+    assert collected["rigors"] == "true"
+
+
+def test_a_direct_answer_to_the_rigors_question_is_not_second_guessed():
+    """Người bệnh trả lời thẳng câu Q2-02 thì trích dẫn không chứa từ lạnh nào - guard không có quyền
+    phủ quyết, nếu không cụm không bao giờ đủ dữ kiện và agent hỏi lại tới hết hạn mức."""
+    parsed = {"rigors": {"value": "true", "evidence_span": "dạ có ạ"}}
+
+    collected = _engine._collect_fields(
+        FEVER_PROTOCOL, ("rigors",), parsed, message="dạ có ạ", evidence="asked",
+    )
+
+    assert collected["rigors"] == "true"

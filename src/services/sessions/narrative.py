@@ -35,7 +35,8 @@ _SYSTEM_PROMPT = """Bạn viết lại lời khai của người bệnh thành M
 QUY TẮC BẮT BUỘC:
 - CHỈ dùng dữ kiện có trong danh sách bên dưới. TUYỆT ĐỐI không thêm chi tiết y khoa nào khác.
 - KHÔNG nêu tên bệnh, KHÔNG chẩn đoán, KHÔNG khuyên xử trí, KHÔNG nhắc tới thuốc hay việc đi khám.
-- Chỉ viết các dữ kiện dương tính trong mục "Triệu chứng ghi nhận".
+- Chỉ viết các dữ kiện dương tính trong mục "Triệu chứng ghi nhận" và "Thông tin đã ghi nhận".
+- Phải dùng HẾT các dòng đó, không bỏ dòng nào: tuổi, giới, bệnh nền, tính chất/hướng lan/thời lượng cơn đau đều là dữ kiện quyết định phân loại.
 - Không viết lời phủ nhận trong đoạn văn; các câu trả lời `false` được hiển thị ở một khối riêng trên phiếu.
 - Không viết về field chưa xác định/chưa hỏi tới. Không dùng chữ "unknown" trong đoạn tóm tắt.
 - Viết ở ngôi thứ ba ("Người bệnh..."), 3-5 câu, không gạch đầu dòng, không markdown.

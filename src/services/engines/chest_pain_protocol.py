@@ -368,7 +368,14 @@ FIELD_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "immunocompromised": ("immunocompromise_cause", "known_neutropenia"),
     "recent_surgery_30d": ("surgical_site_signs",),
     "rash_present": ("rash_type",),
-    "chest_pain": ("chest_pain_character", "chest_pain_radiation", "chest_pain_location"),
+    # `chest_pain_duration_min` PHẢI có mặt: `registry._has_chest_pain_evidence` đọc chính field này
+    # làm bằng chứng nhóm. Thiếu nó thì người bệnh rút lời "tôi không đau ngực" xoá được tính chất và
+    # hướng lan, nhưng thời lượng sống sót - và bằng chứng đau ngực KHÔNG BAO GIỜ tắt, nên phiên bị
+    # kéo về lại protocol này ở mọi lượt sau.
+    "chest_pain": (
+        "chest_pain_character", "chest_pain_radiation", "chest_pain_location",
+        "chest_pain_duration_min",
+    ),
 }
 
 

@@ -40,6 +40,14 @@ class FieldSummary:
 
     reported: list[str] = field(default_factory=list)
     """Field = `true` - triệu chứng ghi nhận."""
+    details: list[str] = field(default_factory=list)
+    """Field KHÔNG phải tri-state đã có giá trị, dạng `"<nhãn>: <giá trị>"` (M0/M1).
+
+    **Đây là khối phải có, không phải khối trang trí.** Trước 2026-08-28 `FieldSummary` chỉ nhặt
+    `true`/`false`, nên mọi field enum/số/tự do bị bỏ im lặng: tuổi, giới, bệnh nền, tính chất cơn
+    đau, hướng lan, thời lượng. Ca 62 tuổi, THA, đau ngực đè ép lan tay trái 20 phút cho ra đúng một
+    dòng - `chest_pain=true` - và văn xuôi tổng hợp được từ đó chỉ nói được "người bệnh ghi nhận
+    tình trạng đau ngực". Toàn bộ discriminator của ca đã rơi trước khi model nhìn thấy hồ sơ."""
     denied: list[str] = field(default_factory=list)
     """Field = `false` - người bệnh PHỦ NHẬN. Đây là dữ kiện lâm sàng có giá trị, không phải chỗ trống."""
     unknown_safety: list[str] = field(default_factory=list)
@@ -47,9 +55,10 @@ class FieldSummary:
     phải đọc 80 dòng để tìm 3 dòng có nghĩa, và như vậy là làm hỏng chính mục đích của khối này."""
 
     def as_text(self) -> str:
-        """Bản chữ cho phiếu. Chỉ render field `true`/`false`; `unknown` không dùng để viết summary."""
+        """Bản chữ cho phiếu. Chỉ render field đã có dữ kiện; `unknown` không dùng để viết summary."""
         blocks = [
             ("Triệu chứng ghi nhận:", self.reported),
+            ("Thông tin đã ghi nhận:", self.details),
             ("Người bệnh phủ nhận:", self.denied),
         ]
         return "\n\n".join(
@@ -65,9 +74,22 @@ class FieldSummary:
         để tránh tạo một đoạn văn phủ định rất dài và khó đọc. `unknown`, `none`, `None` và chuỗi rỗng
         vốn không thuộc `reported`, nên cũng không thể lọt vào đầu vào này.
         """
-        if not self.reported:
-            return ""
-        return "\n".join(["Triệu chứng ghi nhận:", *(f"- {item}" for item in self.reported)])
+        blocks = [
+            ("Triệu chứng ghi nhận:", self.reported),
+            ("Thông tin đã ghi nhận:", self.details),
+        ]
+        return "\n\n".join(
+            "\n".join([heading, *(f"- {item}" for item in items)])
+            for heading, items in blocks
+            if items
+        )
+
+    def grounding_labels(self) -> list[str]:
+        """Nhãn mà một câu trong văn xuôi có thể bám vào - đầu vào của `narrative_is_grounded`.
+
+        `details` mang dạng `"<nhãn>: <giá trị>"`; guard phải so theo NHÃN, nếu so cả dòng thì không
+        câu văn xuôi nào khớp nổi và mọi phiếu có dữ kiện enum đều bị báo bịa."""
+        return [*self.reported, *self.denied, *(item.split(":", 1)[0] for item in self.details)]
 
 
 _DENIAL_LABELS: dict[str, str] = {
@@ -102,11 +124,76 @@ def _tri_state_value(value: object) -> str | None:
     return None
 
 
+_DETAIL_TIERS = frozenset({"M0", "M1"})
+"""Tier được đưa vào `details`. Cùng bộ lọc `symptom_case_bridge._SUMMARY_TIERS` dùng cho phiếu: tier
+C/O/H là thông tin bổ trợ, đưa hết vào đây thì điều dưỡng lại phải đọc 101 dòng."""
+
+_ALWAYS_DETAIL_KEYS = frozenset({"other_conditions"})
+"""Field lên phiếu BẤT KỂ tier - cửa duy nhất để đưa một field mới vào summary mà không phải nâng
+tier của nó.
+
+Cần một cửa riêng vì hai thứ này không còn trùng nhau: tier trả lời "field này có bắt buộc phải hỏi
+trước khi kết luận không" (`stage_machine.MANDATORY_TIERS`), còn ở đây ta hỏi "field này có đáng cho
+điều dưỡng đọc không". Nâng tier để field lên được phiếu là đổi luôn cả điều kiện dừng của phiên -
+đúng cái bẫy `other_conditions` đã sập vào: tier M1 làm `mandatory_fields_covered` không bao giờ xanh
+vì không cụm nào hỏi nó.
+
+Thêm field vào đây thì việc nó lên phiếu là XONG. Không phải sửa `field_summary`."""
+
+_EMPTY_DETAIL_VALUES = frozenset({"", "unknown", "none", "not_applicable"})
+"""Giá trị enum KHÔNG mang dữ kiện dương tính. `none` bị loại vì nó là một lời phủ định
+(`breathing_difficulty="none"`), mà văn xuôi không được viết phủ định - đúng quy tắc của
+`as_narrative_text`."""
+
+_VALUE_LABELS: dict[str, str] = {
+    # nhân khẩu
+    "male": "nam", "female": "nữ", "self": "người bệnh tự khai",
+    "parent_caregiver": "người nhà khai", "other": "người khác khai",
+    "day": "ngày tuổi", "month": "tháng tuổi", "year": "tuổi",
+    # đau ngực - ba discriminator của `chest_pain_protocol`
+    "pressure": "đè ép", "crushing": "bóp nghẹt", "tightness": "nặng ngực",
+    "sharp": "nhói như dao đâm", "burning": "nóng rát",
+    "shoulder": "lan ra vai", "arm": "lan ra cánh tay", "jaw": "lan ra hàm",
+    "back": "lan ra lưng",
+    "continuous": "liên tục", "intermittent": "từng cơn",
+    # toàn trạng / hô hấp / tuần hoàn
+    "alert": "tỉnh táo", "drowsy_but_rousable": "lơ mơ nhưng đánh thức được",
+    "difficult_to_rouse": "khó đánh thức", "unresponsive": "không đáp ứng",
+    "mild": "nhẹ", "moderate": "vừa", "severe": "nặng",
+    "normal": "bình thường", "reduced": "giảm", "unable": "không được",
+    "none_gt_6h": "không có trên 6 giờ", "markedly_reduced": "giảm rõ rệt",
+    "occasional": "thỉnh thoảng", "frequent": "nhiều lần",
+    "unable_to_keep_fluids": "uống vào là nôn", "no_response": "không đáp ứng",
+    "sudden": "đột ngột", "gradual": "tăng dần",
+    "objective": "đo được bằng nhiệt kế", "subjective": "cảm giác chủ quan",
+}
+"""Mã enum -> chữ tiếng Việt. Mã không có trong bảng đi nguyên văn ra ngoài.
+
+Cần thiết vì `details` đi thẳng vào prompt của agent tổng hợp VÀ vào phiếu điều dưỡng đọc. Để nguyên
+mã thì phiếu ghi "Giới tính sinh học: male", "Tính chất cơn đau ngực: pressure" - đúng dữ liệu nhưng
+sai người đọc, và nó bắt model tự dịch, tức tự suy diễn, đúng thứ nguyên tắc 3 của `CLAUDE.md` cấm."""
+
+
+def _detail_value(value: object) -> str | None:
+    """Giá trị enum/số/tự do -> chữ đọc được. `None` nghĩa là không có dữ kiện dương tính nào."""
+    parts = value if isinstance(value, (list, tuple)) else [value]
+    rendered = []
+    for part in parts:
+        text = " ".join(str(part).split())
+        if text.casefold() in _EMPTY_DETAIL_VALUES:
+            continue
+        rendered.append(_VALUE_LABELS.get(text.casefold(), text))
+    return ", ".join(rendered) or None
+
+
 def field_summary(protocol: SymptomProtocol, answers: dict[str, object]) -> FieldSummary:
     """Snapshot -> field summary. THUẦN: không model, không I/O.
 
-    `reported`/`denied` là nguồn để viết summary. `unknown_safety` chỉ là dữ liệu guard nội bộ, không
-    xuất hiện trong `as_text()` hay prompt narrative.
+    `reported`/`details`/`denied` là nguồn để viết summary. `unknown_safety` chỉ là dữ liệu guard nội
+    bộ, không xuất hiện trong `as_text()` hay prompt narrative.
+
+    Ba nhóm chứ không phải hai: một field chỉ vào được `reported`/`denied` khi nó là tri-state, nên
+    bản hai nhóm cũ vứt lặng lẽ mọi field enum/số/tự do - xem docstring của `FieldSummary.details`.
     """
     safety = frozenset(protocol.safety_signal_fields)
     result = FieldSummary()
@@ -115,9 +202,19 @@ def field_summary(protocol: SymptomProtocol, answers: dict[str, object]) -> Fiel
         tri_state = _tri_state_value(value)
         if tri_state == _TRUE:
             result.reported.append(spec.label)
-        elif tri_state == _FALSE:
+            continue
+        if tri_state == _FALSE:
             result.denied.append(_denial_label(key, spec.label))
-        elif key in safety and (value is None or value == "" or tri_state == _UNKNOWN):
+            continue
+        # Field enum/số/tự do. `_detail_value` trả `None` cho cả giá trị rỗng lẫn giá trị phủ định
+        # (`"none"`), nên field đó vẫn rơi xuống nhánh `unknown_safety` bên dưới như trước.
+        if tri_state is None and value is not None:
+            detail = _detail_value(value)
+            if detail is not None:
+                if spec.tier in _DETAIL_TIERS or key in _ALWAYS_DETAIL_KEYS:
+                    result.details.append(f"{spec.label}: {detail}")
+                continue
+        if key in safety and (value is None or value == "" or tri_state == _UNKNOWN):
             result.unknown_safety.append(spec.label)
     return result
 
@@ -203,7 +300,7 @@ def narrative_is_grounded(narrative: str, summary: FieldSummary) -> bool:
 
     Phiếu KHÔNG có field nào (phiên đóng ngay lượt đầu) thì không có gì để đối chứng - trả `True`,
     vì báo "bịa" ở đó là báo sai."""
-    labels = [*summary.reported, *summary.denied]
+    labels = summary.grounding_labels()
     if not labels or not narrative.strip():
         return True
     folded = narrative.casefold()
