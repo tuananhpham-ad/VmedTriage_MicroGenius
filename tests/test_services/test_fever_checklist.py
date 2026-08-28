@@ -14,7 +14,12 @@ from __future__ import annotations
 
 from src.services.checklists import fever_checklist as fc
 
-EXPECTED_FIELD_COUNT = 103
+EXPECTED_FIELD_COUNT = 104
+"""103 field của knowledge model + `other_conditions` (lưới hứng, 2026-08-28).
+
+`other_conditions` KHÔNG đến từ tài liệu lâm sàng và không rule nào đọc nó - nó là chỗ hạ cánh cho
+thứ người bệnh kể mà schema không có ô nào đỡ. Đếm riêng ở đây để con số vẫn nói được nó gồm những
+gì; xem docstring của field trong `common_safety/fields.py`."""
 """102 -> 103 ngày 2026-08-26: thêm `fever_duration_days`.
 
 Nó KHÔNG phải một field mới của knowledge model - nó đã được `fever_protocol.derive_duration`

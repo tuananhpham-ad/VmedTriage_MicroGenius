@@ -121,7 +121,34 @@ RISK_CONTEXT_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("surgical_site_signs", "Vết mổ sưng đỏ/chảy dịch/hở", "C", "Ổ nhiễm khuẩn rõ (RF-33)"),
     FieldSpec("indwelling_device", "Thiết bị lưu trong cơ thể", "M1", "Đường vào nhiễm khuẩn (RF-34)", tri_state=False),
     FieldSpec("recent_wound_or_bite", "Vết thương hở/bỏng/động vật cắn", "O", "Nhiễm khuẩn mô mềm, uốn ván"),
+    FieldSpec(
+        "other_conditions", "Bệnh/triệu chứng khác người bệnh tự kể", "O",
+        "DANH SÁCH mở, phân tách bằng dấu phẩy. Ghi những gì người bệnh NÓI RA mà không trường nào "
+        "khác trong danh sách này đỡ được (bệnh, triệu chứng, tình trạng). CHỈ chép lại nguyên ý lời "
+        "họ nói - KHÔNG đặt tên bệnh thay họ, KHÔNG suy diễn, KHÔNG chép lại thứ đã ghi ở trường khác",
+        tri_state=False,
+    ),
 )
+"""`other_conditions` là LƯỚI HỨNG, không phải một field lâm sàng.
+
+Vì sao cần: schema trích xuất là tập ĐÓNG - người bệnh kể một thứ không có ô nào đỡ thì thứ đó biến
+mất không dấu vết, và không ai biết là nó đã mất. Đây là chế độ hỏng chung của mọi bộ trích xuất theo
+schema; bug đau ngực 2026-08-28 chỉ là một trường hợp riêng của nó, và lần đó ta may vì phát hiện ra.
+Có lưới hứng thì dữ kiện lạ hạ cánh ở một chỗ điều dưỡng ĐỌC ĐƯỢC thay vì rơi mất.
+
+**KHÔNG rule nào được đọc field này, và không rule nào đang đọc.** Nó là văn bản tự do model viết,
+nên để nó lái mức ưu tiên là mở đúng cánh cửa mà `allowed_values` sinh ra để đóng. Đường đi của nó
+chỉ có một: vào `FieldSummary.details` -> phiếu bàn giao -> mắt điều dưỡng.
+
+**Tier "O", KHÔNG phải M0/M1** - và đây là chỗ dễ sai nhất. Tier M0/M1 là tập
+`stage_machine.MANDATORY_TIERS`, mà `mandatory_fields_covered` đòi MỌI field trong tập đó phải có căn
+cứ trước khi phiên được dừng sớm. Không cụm câu hỏi nào hỏi `other_conditions` (đúng thiết kế - nó là
+lưới hứng, không phải câu hỏi), nên để nó M1 thì điều kiện đó không bao giờ xanh: mọi ca lành tính bị
+ép đi hết bộ câu hỏi, đúng cảnh ~24 lượt mà `stage_machine.can_conclude_early` sinh ra để chấm dứt.
+
+Tier "O" khiến nó rơi khỏi hai bộ lọc `M0/M1` khác, nên hai chỗ phải khai tường minh:
+`registry.OPENING_HARVEST_EXTRA_FIELDS` (để có ô ghi ngay lượt mở) và
+`summary_render._ALWAYS_DETAIL_KEYS` (để lên phiếu điều dưỡng)."""
 
 # --- Thuốc (KM §3.11) ---------------------------------------------------------------------------
 MEDICATION_FIELDS: tuple[FieldSpec, ...] = (

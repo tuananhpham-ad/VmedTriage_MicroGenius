@@ -65,7 +65,13 @@ _FEVER_FIELDS: tuple[FeverField, ...] = common_fields.FEVER_SIGNAL_FIELDS + (
     FeverField("fever_onset_at", "Thời điểm bắt đầu sốt", "M0", "Tính fever_duration_days - mốc 5/7 ngày", tri_state=False),
     FeverField("fever_duration_days", "Số ngày đã sốt", "M1", "Tính TỰ ĐỘNG từ fever_onset_at - không hỏi trực tiếp", tri_state=False),
     FeverField("fever_pattern", "Kiểu sốt", "O", "continuous/intermittent/relapsing - giá trị hạn chế", tri_state=False, allowed_values=("continuous", "intermittent", "relapsing", "unknown",)),
-    FeverField("rigors", "Rét run dữ dội", "M0", "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét"),
+    FeverField(
+        "rigors", "Rét run dữ dội", "M0",
+        "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét. CHỈ \"true\" khi lời khai nói rõ RUN NGƯỜI "
+        "không kiểm soát được: rét run, run cầm cập, run bần bật, lập cập, đắp chăn/mặc ấm vẫn không "
+        "đỡ. \"Ớn lạnh\", \"gai rét\", \"thấy lạnh\", \"sốt kèm rét\" là cảm giác lạnh THÔNG THƯỜNG "
+        "của mọi cơn sốt - để \"unknown\", KHÔNG nâng thành rét run",
+    ),
     FeverField("hypothermia_reported", "Nhiệt độ < 36°C", "C", "Red flag ở nhóm nguy cơ, kích hoạt theo tuổi/miễn dịch"),
     FeverField("antipyretic_taken", "Đã dùng thuốc hạ sốt", "M0", "Nhiệt độ hiện tại có thể bị che"),
     FeverField("antipyretic_drug", "Tên hoạt chất hạ sốt", "C", "Sàng lọc NSAID trong bối cảnh SXHD", tri_state=False, allowed_values=("paracetamol", "ibuprofen", "aspirin", "other", "unknown",)),

@@ -37,13 +37,13 @@ from __future__ import annotations
 
 import logging
 import re
-import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 
 from src.config import get_settings
 from src.services.infra import hf_zero_shot, provider_router
 from src.services.infra.json_output import parse_json_object
+from src.services.text_norm import fold_diacritics
 
 logger = logging.getLogger("vmedtriage.non_clinical")
 
@@ -69,9 +69,7 @@ class NonClinicalLane(str, Enum):
 def _fold(text: str) -> str:
     """Bỏ dấu + hạ chữ thường - cùng cách chuẩn hoá với `user_intent`, vì người bệnh gõ điện thoại
     rất hay không bỏ dấu."""
-    lowered = (text or "").casefold().replace("đ", "d")
-    stripped = unicodedata.normalize("NFD", lowered)
-    return "".join(char for char in stripped if unicodedata.category(char) != "Mn")
+    return fold_diacritics(text)
 
 
 # ⚠️ **CHITCHAT trước đây cố ý KHÔNG có lane riêng — 2026-08-23 đã đảo lại.** Ghi lại cả hai vế để

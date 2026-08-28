@@ -27,11 +27,11 @@ và (b) khi có SLM thì điều kiện gọi đã là bốn trigger ĐÓNG củ
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 from src.services.symptom_protocol.dialogue import DialogueAct
 from src.services.symptom_protocol.models import QuestionCluster
+from src.services.text_norm import fold_diacritics
 
 FAIL_CLOSED_NO_CLUSTER = "no_current_cluster"
 FAIL_CLOSED_NO_PROTOCOL = "no_protocol"
@@ -72,9 +72,7 @@ _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 
 
 def _normalize(text: str) -> str:
-    lowered = (text or "").casefold().replace("đ", "d")
-    decomposed = unicodedata.normalize("NFD", lowered)
-    without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
+    without_marks = fold_diacritics(text)
     return re.sub(r"\s+", " ", _PUNCTUATION.sub(" ", without_marks)).strip()
 
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -45,6 +44,7 @@ from src.services.symptom_protocol.common_safety import screening_groups as comm
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
+from src.services.text_norm import fold_diacritics
 
 logger = logging.getLogger("vmedtriage.symptom_intake")
 
@@ -571,11 +571,8 @@ def _normalize_for_evidence(text: str) -> str:
 
 
 def _fold_bare_reply(text: str) -> str:
-    folded = unicodedata.normalize("NFD", text or "")
-    folded = "".join(char for char in folded if unicodedata.category(char) != "Mn")
-    folded = folded.replace("đ", "d").replace("Đ", "D")
-    folded = _EDGE_PUNCT_RE.sub("", folded)
-    return _WHITESPACE_RE.sub(" ", folded.strip()).casefold()
+    folded = _EDGE_PUNCT_RE.sub("", fold_diacritics(text))
+    return _WHITESPACE_RE.sub(" ", folded.strip())
 
 
 _BARE_CLUSTER_NEGATIVE_REPLIES: frozenset[str] = frozenset({
@@ -736,6 +733,57 @@ def _vomiting_value_supported(value: object, evidence_span: object, message: str
     return False
 
 
+_RIGORS_MARKERS = (
+    "ret run", "run cam cap", "run ban bat", "run lap cap", "run bat ban", "lanh run",
+    "run nguoi", "run toan than", "rung minh", "co giat vi lanh",
+    "dap chan khong do", "dap chan van khong do", "mac am van khong do", "u am van khong do",
+)
+"""Cụm cho thấy RUN NGƯỜI không kiểm soát được - đúng thứ `rigors` định nghĩa."""
+
+_CHILL_ONLY_MARKERS = (
+    "on lanh", "gai ret", "gai lanh", "gai nguoi", "hoi lanh", "thay lanh", "cam giac lanh",
+    "lanh", "ret", "so lanh",
+)
+"""Cụm chỉ nói tới CẢM GIÁC LẠNH. Gần như mọi cơn sốt đều có, và bản thân nó không phải rét run."""
+
+
+def _rigors_value_supported(value: object, evidence_span: object, message: str) -> bool:
+    """Chặn nâng ``ớn lạnh``/``sốt có rét`` thành ``rigors=true``.
+
+    Cùng lỗi và cùng khuôn chữa với `_vomiting_value_supported`: evidence khớp nguyên văn chỉ chứng
+    minh model đã chép một đoạn CÓ THẬT, chưa chứng minh đoạn đó *hàm ý đúng field*. Lỗi thật đo
+    được: người bệnh nói "sốt có rét", model trả `rigors="true"` trích dẫn đúng chữ "rét" - và
+    `rigors` là M0 amber NICE gợi ý nhiễm khuẩn huyết, nên một true bịa ở đây đẩy thẳng mức ưu tiên.
+
+    Trong tiếng Việt "rét" một mình nghĩa là LẠNH, còn "rét RUN" mới là rét run; hai thứ cách nhau
+    đúng một chữ mà khác nhau cả một mức triage. Nhắc prompt là cần nhưng không đủ - cùng lý do đã
+    ghi ở `_vomiting_value_supported`.
+
+    Chỉ xét khi model CÓ trích dẫn và trích dẫn đó nói về cảm giác lạnh. Người bệnh trả lời thẳng
+    câu hỏi Q2-02 ("có ạ") thì evidence không chứa từ lạnh nào - đó là câu trả lời trực tiếp cho
+    đúng câu vừa hỏi, guard không có quyền phủ quyết nó (nếu không thì cụm không bao giờ đủ dữ kiện
+    và agent hỏi lại tới hết hạn mức - đúng cái bẫy `_collect_fields` mô tả)."""
+    if value != "true":
+        return True
+    if not _evidence_in_message(evidence_span, message):
+        return True
+    folded = _fold_bare_reply(str(evidence_span))
+    if any(marker in folded for marker in _RIGORS_MARKERS):
+        return True
+    return not any(marker in folded for marker in _CHILL_ONLY_MARKERS)
+
+
+_TRI_STATE_ENTAILMENT_GUARDS: dict[str, object] = {
+    "rigors": _rigors_value_supported,
+}
+"""Field tri-state có guard entailment riêng: `key -> (value, evidence_span, message) -> bool`.
+
+Bảng chứ không phải một chuỗi `if`: đây là chỗ đăng ký khi phát hiện một field bị model nâng cực sai
+một cách CÓ HỆ THỐNG. Giữ nó NGẮN - mỗi mục là một luật tiếng Việt viết tay, và một bảng dài là dấu
+hiệu nên sửa ở tầng khác (hint của field, hoặc tách field). Nhánh enum có bảng riêng của nó
+(`vomiting_severity`) vì hai nhánh kiểm giá trị khác nhau."""
+
+
 def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     """Giá trị này có bắt buộc phải kèm `evidence_span` khớp tin nhắn không?
 
@@ -840,6 +888,11 @@ def _collect_fields(
             continue
 
         value = _tri_state_value(raw)
+        guard = _TRI_STATE_ENTAILMENT_GUARDS.get(key)
+        if guard is not None and not guard(value, evidence_span, message):
+            # Trích dẫn có thật nhưng KHÔNG hàm ý field này - giữ ngỏ để còn được hỏi lại đúng cách,
+            # thay vì ghi một dữ kiện sai cực vào hồ sơ.
+            value = "unknown"
         if _needs_evidence(evidence, spec, value) and not _evidence_in_message(evidence_span, message):
             # Model khẳng định "không" nhưng không trích được câu nào trong tin nhắn -> giữ ngỏ để
             # còn được hỏi lại, thay vì đóng vĩnh viễn một field an toàn (lỗi C1).
@@ -1572,8 +1625,14 @@ def run_turn(
                 common_screening.routing_disambiguation_cluster(route_candidates), stage, None,
             )
         elif protocol_switched:
+            # `asked_ids` RỖNG là đúng (mã cụm dùng chung giữa các protocol), nhưng `asked_count`
+            # thì KHÔNG được rỗng theo. Bỏ trống nó khiến `advance` tính `len(asked_ids) = 0`, tức
+            # phiên được cấp lại TRỌN VẸN 13-16 cụm mỗi lần đổi protocol - đo được: một phiên trôi
+            # nhóm giữa chừng hỏi tới 26-30 cụm. Ngân sách là ngân sách KIÊN NHẪN CỦA NGƯỜI BỆNH,
+            # không phải của protocol; đổi protocol không làm họ có thêm kiên nhẫn.
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
+                asked_count=len(closed_now - (screened_ids | screened_closed)),
                 context=ranking_context, stop_signals=stop_signals,
             )
         elif retry_this_cluster and not _stop_requested(stop_signals):
