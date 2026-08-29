@@ -80,8 +80,8 @@ eval/scripts/*
 /eval_result.txt
 /eval_result_probabilities.txt
 /result_model
-docs/eval/0*_
-# tests/eval/
+docs/eval/
+tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
@@ -94,3 +94,4 @@ render.yaml
 
 docs/planning/test_plan.md
 CLAUDE.md
+.gitignore
