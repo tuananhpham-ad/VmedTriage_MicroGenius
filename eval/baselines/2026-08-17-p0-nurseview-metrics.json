@@ -1,0 +1,304 @@
+{
+  "metadata": {
+    "version": "baseline_p0_nurseview",
+    "mode": "api",
+    "cases_path": "data\\golden_cases_v1.jsonl",
+    "started_at": "2026-08-17T04:00:48.315925+00:00",
+    "generated_at": "2026-08-17T04:17:49.546898+00:00",
+    "duration_seconds": 1021.223,
+    "input_cases": 120,
+    "log_path": ".eval_run\\results\\baseline_p0_nurseview\\eval.log"
+  },
+  "metrics": {
+    "total_cases": 120,
+    "failed_runs": 0,
+    "triage_accuracy": 0.3333,
+    "handoff_accuracy": 1.0,
+    "red_flag_exact_match_accuracy": 0.4667,
+    "red_flag_macro_recall": 0.0,
+    "red_flag_macro_precision": 0.0,
+    "emergency_recall": 0.4889,
+    "latency_ms": {
+      "avg": 8509.78,
+      "p50": 9977.7,
+      "p95": 11402.31,
+      "max": 13340.55
+    },
+    "role_usage": {},
+    "expected_priority_distribution": {
+      "Emergency": 45,
+      "Urgent": 25,
+      "Routine": 20,
+      "Self-care": 15,
+      "Manual review": 15
+    },
+    "actual_priority_distribution": {
+      "Emergency": 35,
+      "Urgent": 85
+    },
+    "expected_red_flag_distribution": {
+      "RF-ACUTE-SEVERE-PAIN-001": 7,
+      "RF-AIRWAY-BREATHING-001": 6,
+      "RF-ALLERGY-001": 3,
+      "RF-BLEEDING-SHOCK-001": 8,
+      "RF-CHEST-PAIN-001": 4,
+      "RF-NEURO-FAST-001": 3,
+      "RF-SELF-HARM-001": 1,
+      "RF-SEVERE-INFECTION-001": 10,
+      "RF-TRAUMA-POISONING-001": 16
+    },
+    "actual_red_flag_distribution": {
+      "RF-04": 2,
+      "RF-06": 6,
+      "RF-07": 8,
+      "RF-10": 1,
+      "RF-12": 6,
+      "RF-16": 1,
+      "RF-19": 3,
+      "RF-20": 3,
+      "RF-28": 1,
+      "RF-33": 2,
+      "RF-39": 1,
+      "RF-40": 1,
+      "TEXT_SIGNAL_CARDIAC_ARREST_REPORT": 1,
+      "TEXT_SIGNAL_LOSS_OF_CONSCIOUSNESS": 1,
+      "TEXT_SIGNAL_NOT_BREATHING": 1,
+      "TEXT_SIGNAL_SEIZURE": 3,
+      "TEXT_SIGNAL_SEVERE_CHEST_PAIN": 2,
+      "TEXT_SIGNAL_VOMITING_BLOOD": 4
+    },
+    "red_flag_code_metrics": {
+      "RF-04": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-06": {
+        "true_positive": 0,
+        "false_positive": 6,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-07": {
+        "true_positive": 0,
+        "false_positive": 8,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-10": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-12": {
+        "true_positive": 0,
+        "false_positive": 6,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-16": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-19": {
+        "true_positive": 0,
+        "false_positive": 3,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-20": {
+        "true_positive": 0,
+        "false_positive": 3,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-28": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-33": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-39": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-40": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "RF-ACUTE-SEVERE-PAIN-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 7,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-AIRWAY-BREATHING-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 6,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-ALLERGY-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-BLEEDING-SHOCK-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 8,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-CHEST-PAIN-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 4,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-NEURO-FAST-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-SELF-HARM-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-SEVERE-INFECTION-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 10,
+        "precision": null,
+        "recall": 0.0
+      },
+      "RF-TRAUMA-POISONING-001": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 16,
+        "precision": null,
+        "recall": 0.0
+      },
+      "TEXT_SIGNAL_CARDIAC_ARREST_REPORT": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "TEXT_SIGNAL_LOSS_OF_CONSCIOUSNESS": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "TEXT_SIGNAL_NOT_BREATHING": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "TEXT_SIGNAL_SEIZURE": {
+        "true_positive": 0,
+        "false_positive": 3,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "TEXT_SIGNAL_SEVERE_CHEST_PAIN": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "TEXT_SIGNAL_VOMITING_BLOOD": {
+        "true_positive": 0,
+        "false_positive": 4,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": null
+      }
+    },
+    "confusion_matrix": {
+      "Emergency": {
+        "Emergency": 22,
+        "Urgent": 23
+      },
+      "Manual review": {
+        "Urgent": 13,
+        "Emergency": 2
+      },
+      "Routine": {
+        "Urgent": 18,
+        "Emergency": 2
+      },
+      "Self-care": {
+        "Urgent": 13,
+        "Emergency": 2
+      },
+      "Urgent": {
+        "Urgent": 18,
+        "Emergency": 7
+      }
+    },
+    "scenario_metrics": {
+      "source_grounded_insufficient_information": {
+        "total_cases": 15,
+        "triage_accuracy": 0.0,
+        "handoff_accuracy": 1.0,
+        "red_flag_macro_recall": null
+      },
+      "source_grounded_non_emergency": {
+        "total_cases": 60,
+        "triage_accuracy": 0.3,
+        "handoff_accuracy": 1.0,
+        "red_flag_macro_recall": null
+      },
+      "source_grounded_red_flag": {
+        "total_cases": 45,
+        "triage_accuracy": 0.4889,
+        "handoff_accuracy": 1.0,
+        "red_flag_macro_recall": 0.0
+      }
+    }
+  }
+}
