@@ -202,7 +202,6 @@ async def run_case_direct(case: dict[str, Any]) -> dict[str, Any]:
     pipeline không ai dùng - và mọi so sánh "trước/sau" sau đó đều vô nghĩa.
     """
     from src.services.stores.case_store import InMemoryCaseStore
-
     from src.services.triage_pipeline import TriagePipeline
 
     logger.warning(
