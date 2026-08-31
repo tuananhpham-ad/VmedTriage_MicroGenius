@@ -53,17 +53,25 @@ _PATIENT_FIELDS: tuple[FeverField, ...] = (
 # ---------------------------------------------------------------------------------------------
 # KM §3.3 — Nhóm FEVER
 # ---------------------------------------------------------------------------------------------
-_FEVER_FIELDS: tuple[FeverField, ...] = (
-    FeverField("fever_reported", "Người dùng khai có sốt", "M0", "Cổng vào toàn bộ protocol sốt"),
-    FeverField("fever_status", "Loại sốt", "M0", "objective/subjective/none - điều hướng nhánh dữ liệu thiếu", tri_state=False, allowed_values=("objective", "subjective", "none",)),
-    FeverField("temp_c", "Nhiệt độ đo được (°C)", "M0", "Đầu vào rule ngưỡng theo tuổi; M0 khi fever_status=objective", tri_state=False),
+_FEVER_FIELDS: tuple[FeverField, ...] = common_fields.FEVER_SIGNAL_FIELDS + (
+    # `fever_reported` / `fever_status` / `temp_c` đã chuyển sang `common_safety/fields.py`
+    # (`FEVER_SIGNAL_FIELDS`) ngày 2026-08-26 - nguyên văn, không sửa một ký tự. Lý do ở docstring của
+    # tuple đó: cả 4 protocol mới đều dùng ngưỡng sốt, và chúng là `SWITCH_DETECTION_FIELDS`.
+    # Phần dưới ở lại vì chỉ có nghĩa trong một ca đang sốt.
     FeverField("temp_site", "Vị trí đo", "M0", "axillary/oral/rectal/tympanic/temporal - quyết định ngưỡng áp dụng", tri_state=False, allowed_values=("axillary", "oral", "rectal", "tympanic", "temporal", "unknown",)),
     FeverField("temp_measured_at", "Thời điểm đo", "C", "Số đo cũ -> độ tin cậy thấp hơn", tri_state=False),
     FeverField("temp_device_type", "Loại nhiệt kế", "O", "Gán measurement_confidence", tri_state=False, allowed_values=("digital", "infrared_ear", "infrared_forehead", "mercury_glass", "chemical_dot", "unknown",)),
     FeverField("temp_max_24h_c", "Nhiệt độ cao nhất 24h qua (°C)", "O", "Bắt đỉnh sốt bị thuốc che", tri_state=False),
     FeverField("fever_onset_at", "Thời điểm bắt đầu sốt", "M0", "Tính fever_duration_days - mốc 5/7 ngày", tri_state=False),
+    FeverField("fever_duration_days", "Số ngày đã sốt", "M1", "Tính TỰ ĐỘNG từ fever_onset_at - không hỏi trực tiếp", tri_state=False),
     FeverField("fever_pattern", "Kiểu sốt", "O", "continuous/intermittent/relapsing - giá trị hạn chế", tri_state=False, allowed_values=("continuous", "intermittent", "relapsing", "unknown",)),
-    FeverField("rigors", "Rét run dữ dội", "M0", "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét"),
+    FeverField(
+        "rigors", "Rét run dữ dội", "M0",
+        "Amber NICE; gợi ý nhiễm khuẩn huyết/sốt rét. CHỈ \"true\" khi lời khai nói rõ RUN NGƯỜI "
+        "không kiểm soát được: rét run, run cầm cập, run bần bật, lập cập, đắp chăn/mặc ấm vẫn không "
+        "đỡ. \"Ớn lạnh\", \"gai rét\", \"thấy lạnh\", \"sốt kèm rét\" là cảm giác lạnh THÔNG THƯỜNG "
+        "của mọi cơn sốt - để \"unknown\", KHÔNG nâng thành rét run",
+    ),
     FeverField("hypothermia_reported", "Nhiệt độ < 36°C", "C", "Red flag ở nhóm nguy cơ, kích hoạt theo tuổi/miễn dịch"),
     FeverField("antipyretic_taken", "Đã dùng thuốc hạ sốt", "M0", "Nhiệt độ hiện tại có thể bị che"),
     FeverField("antipyretic_drug", "Tên hoạt chất hạ sốt", "C", "Sàng lọc NSAID trong bối cảnh SXHD", tri_state=False, allowed_values=("paracetamol", "ibuprofen", "aspirin", "other", "unknown",)),
@@ -97,7 +105,7 @@ _ASSOCIATED_FIELDS: tuple[FeverField, ...] = common_fields.ASSOCIATED_FIELDS + (
     FeverField("sore_throat", "Đau họng", "O", "Định hướng ổ nhiễm khuẩn lành tính hơn"),
     FeverField("ear_pain", "Đau tai", "O", "Định hướng ổ nhiễm khuẩn lành tính hơn"),
     FeverField("cough", "Ho", "O", "Định hướng ổ nhiễm khuẩn lành tính hơn"),
-    FeverField("myalgia_retroorbital_pain", "Đau cơ, đau hốc mắt", "O", "Bộ triệu chứng gợi ý bệnh virus lưu hành VN"),
+    FeverField("myalgia_retroorbital_pain", "Đau nhức cơ/xương khớp hoặc đau hốc mắt", "O", "Ghi nhận khi người bệnh nói đau nhức người, đau cơ, đau nhức xương khớp hoặc đau phía sau hốc mắt; không yêu cầu phải có sưng khớp"),
 )
 
 # ---------------------------------------------------------------------------------------------
@@ -186,7 +194,7 @@ QUESTION_CLUSTERS: tuple[QuestionCluster, ...] = (
     QuestionCluster("Q5-04", "5", ("diarrhea", "bloody_stool"), script_hint="Có tiêu chảy không - phân có lẫn máu không"),
     *common_clusters.medication_clusters("5"),
     QuestionCluster("Q5-06", "5", ("immunization_status", "recent_vaccination_48h"), script_hint="Đã tiêm chủng đầy đủ theo lịch chưa, có tiêm vắc-xin trong 48 giờ gần đây không"),
-    QuestionCluster("Q5-07", "5", ("myalgia_retroorbital_pain",), script_hint="Có đau nhức người, đau cơ, đau phía sau hốc mắt không"),
+    QuestionCluster("Q5-07", "5", ("myalgia_retroorbital_pain",), script_hint="Có đau nhức người, đau cơ/xương khớp hoặc đau phía sau hốc mắt không"),
 )
 
 CLUSTERS_BY_ID: dict[str, QuestionCluster] = {cluster.id: cluster for cluster in QUESTION_CLUSTERS}

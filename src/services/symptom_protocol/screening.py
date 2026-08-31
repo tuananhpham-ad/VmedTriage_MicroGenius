@@ -71,6 +71,10 @@ class ScreeningOutcome:
     """Giá trị âm tính ghi thêm vào `answers`. CHỈ gồm field đang `unknown` - một nhóm bị phủ định
     KHÔNG được ghi đè điều người bệnh đã khẳng định trước đó."""
 
+    positives: dict[str, object]
+    """Giá trị `"true"` suy ra từ verdict `positive` khi nhóm chỉ còn ĐÚNG MỘT ứng viên - xem
+    `_single_open_field`. Rỗng trong mọi trường hợp khác."""
+
     closed_cluster_ids: frozenset[str]
     negative_group_ids: tuple[str, ...]
     positive_group_ids: tuple[str, ...]
@@ -80,7 +84,9 @@ class ScreeningOutcome:
 
     @property
     def changed(self) -> bool:
-        return bool(self.negatives or self.closed_cluster_ids or self.positive_group_ids)
+        return bool(
+            self.negatives or self.positives or self.closed_cluster_ids or self.positive_group_ids
+        )
 
 
 def groups_for_stage(protocol: SymptomProtocol, stage: str) -> tuple[ScreeningGroup, ...]:
@@ -214,8 +220,49 @@ def probe_fields(protocol: SymptomProtocol, groups: tuple[ScreeningGroup, ...]) 
     return tuple(ordered)
 
 
-PROBE_INTRO = "Mình hỏi nhanh một loạt dấu hiệu quan trọng để loại trừ, bạn xem có dấu hiệu nào không nhé:"
-PROBE_OUTRO = 'Nếu không có dấu hiệu nào trong số trên, bạn chỉ cần trả lời "không có dấu hiệu nào" là được ạ.'
+PROBE_INTRO = "Trước khi đi tiếp, mình cần loại trừ vài dấu hiệu nặng. Bạn xem có cái nào đang xảy ra không nhé:"
+PROBE_OUTRO = 'Nếu không có cái nào, bạn chỉ cần trả lời "không có dấu hiệu nào" là được ạ.'
+
+_HINT_SEPARATOR = ";"
+"""`probe_hint` gộp nhiều dấu hiệu bằng dấu chấm phẩy. Đây là ranh giới TÁCH DÒNG khi hiển thị."""
+
+_LEADING_CONJUNCTIONS = ("hoặc ", "hay ")
+"""Liên từ nối các vế trong `probe_hint`. Khi một vế được tách thành dòng riêng thì liên từ đứng đầu
+dòng không còn nối gì cả - bỏ nó đi là sửa CÁCH DIỄN ĐẠT, không đụng tới dấu hiệu nào."""
+
+
+def hint_items(group: ScreeningGroup) -> tuple[str, ...]:
+    """Tách `probe_hint` thành các dấu hiệu RỜI để mỗi cái đứng một dòng.
+
+    VÌ SAO KHÔNG ĐỌC NGUYÊN CẢ CHUỖI. `probe_hint` của nhóm quét cấp cứu gộp ba dấu hiệu thuộc ba cụm
+    khác nhau (Q3-06 hô hấp, Q3-07 đường thở, Q3-12 chảy máu) vào một câu dài nối bằng chấm phẩy. Đọc
+    liền một mạch thì người bệnh phải tự tách ba ý trong đầu giữa lúc đang khó chịu - và vì stage đó
+    chỉ có ĐÚNG MỘT nhóm, cả câu còn hiện ra dưới dạng một danh sách đánh số một mục, vô nghĩa.
+
+    KHÔNG MẤT CHỮ NÀO, và đó là ràng buộc cứng: hàm chỉ cắt ở dấu chấm phẩy rồi bỏ liên từ nối ở đầu
+    vế - không rút gọn, không diễn đạt lại, không bỏ vế nào. `test_probe_lines_never_lose_a_signal`
+    giữ đúng chỗ này, vì mất một dấu hiệu ở đây là mất một cơ hội phát hiện ca cấp cứu."""
+    items: list[str] = []
+    for part in group.probe_hint.split(_HINT_SEPARATOR):
+        text = part.strip()
+        for conjunction in _LEADING_CONJUNCTIONS:
+            if text.casefold().startswith(conjunction):
+                text = text[len(conjunction):].lstrip()
+                break
+        if text:
+            items.append(text[0].upper() + text[1:])
+    return tuple(items)
+
+
+def probe_lines(groups: tuple[ScreeningGroup, ...]) -> tuple[str, ...]:
+    """Các dòng dấu hiệu của câu sàng lọc, đã tách rời và đánh số nếu cần.
+
+    ĐÁNH SỐ CÓ ĐIỀU KIỆN: một danh sách đánh số đúng một mục không phải danh sách, nó là một câu bị
+    gắn thừa "1)" ở đầu. Dưới hai mục thì dùng gạch đầu dòng."""
+    items = [item for group in groups for item in hint_items(group)]
+    if len(items) < 2:
+        return tuple(f"- {item}" for item in items)
+    return tuple(f"{index}) {item}" for index, item in enumerate(items, start=1))
 
 
 def probe_question(groups: tuple[ScreeningGroup, ...]) -> str:
@@ -224,9 +271,11 @@ def probe_question(groups: tuple[ScreeningGroup, ...]) -> str:
     Đây là ràng buộc an toàn, không phải tiết kiệm một call: cả cơ chế này dựa trên tiền đề "nhóm chỉ
     được đóng khi người bệnh đã thực sự nhìn thấy danh sách dấu hiệu của nó". LLM diễn đạt lại một
     danh sách 5 nhóm rất dễ gộp/lược vài ý cho gọn, và khi đó một câu "không có gì cả" sẽ đóng cả
-    những dấu hiệu chưa bao giờ được đọc lên - đúng lỗi C1 ở quy mô lớn nhất."""
-    lines = [f"{index}) {group.probe_hint}" for index, group in enumerate(groups, start=1)]
-    return "\n".join([PROBE_INTRO, *lines, PROBE_OUTRO])
+    những dấu hiệu chưa bao giờ được đọc lên - đúng lỗi C1 ở quy mô lớn nhất.
+
+    Việc TÁCH DÒNG (`hint_items`) không phá ràng buộc đó: nó chạy bằng code, tất định, và không bỏ
+    chữ nào - khác hẳn một lần nhờ model viết lại cho gọn."""
+    return "\n".join([PROBE_INTRO, *probe_lines(groups), PROBE_OUTRO])
 
 
 def probe_cluster(protocol: SymptomProtocol, stage: str, groups: tuple[ScreeningGroup, ...]) -> QuestionCluster:
@@ -267,6 +316,33 @@ def parse_verdicts(parsed: dict) -> dict[str, tuple[Verdict, object]]:
     return {str(key): _verdict_and_evidence(value) for key, value in groups.items()}
 
 
+def _single_open_field(
+    protocol: SymptomProtocol,
+    stage: str,
+    group: ScreeningGroup,
+    answers: dict[str, object],
+) -> str | None:
+    """Field tri-state DUY NHẤT còn bỏ ngỏ trong nhóm, hoặc `None` nếu có 0 hay ≥2 ứng viên.
+
+    Đây là toàn bộ điều kiện để một verdict `positive` được phép ghi giá trị. Nó hẹp có chủ đích:
+    khi nhóm chỉ còn đúng một dấu hiệu chưa biết, câu "có" của người bệnh **không thể** trỏ vào thứ
+    gì khác - nên ghi `"true"` ở đây là ĐỌC lời khai, không phải suy diễn. Còn ≥2 ứng viên thì "có"
+    thật sự mơ hồ, và bịa ra một trong hai là dựng dấu hiệu đỏ không ai khai (đúng lỗi C2).
+
+    Field enum/số KHÔNG bao giờ được suy: "có" xác nhận sự TỒN TẠI của một dấu hiệu, nó không mang
+    giá trị nào cho `temp_c` hay `urine_output`."""
+    candidates = [
+        key
+        for cluster in clusters_of(protocol, group)
+        if not stage_machine.cluster_is_skipped(protocol, stage, cluster, answers)
+        for key in cluster.fields
+        if (spec := protocol.fields_by_key.get(key)) is not None
+        and spec.tri_state
+        and not stage_machine.is_filled(answers.get(key))
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def apply_verdicts(
     protocol: SymptomProtocol,
     stage: str,
@@ -282,15 +358,27 @@ def apply_verdicts(
     |---|---|
     | `negative` + trích dẫn verify được | Ghi giá trị âm tính + đóng mọi cụm trong nhóm |
     | `negative` + trích dẫn hỏng/thiếu | BỎ verdict - nhóm vẫn phải hỏi (`rejected_group_ids`) |
-    | `positive` | Không ghi gì. Các cụm giữ `unknown` ⇒ `next_cluster` hỏi từng cụm đúng script chuẩn |
+    | `positive` | Ghi `"true"` CHỈ KHI nhóm còn đúng một ứng viên; còn lại giữ `unknown` và hỏi tiếp |
     | `unknown` | Không ghi gì. Vòng sàng lọc sau gộp lại hỏi phần còn dư |
 
-    `positive` cố ý KHÔNG ghi `"true"` cho field nào: người bệnh mới xác nhận "nhóm này có vấn đề",
-    chưa nói dấu hiệu cụ thể nào trong nhóm. Ghi bừa `"true"` là dựng một dấu hiệu đỏ không ai khai -
-    và vì `true` là chiều LÀM NẶNG ca, nó sẽ chốt cấp cứu trên dữ liệu bịa."""
+    **Vì sao `positive` chỉ ghi được trong trường hợp một-ứng-viên.** Verdict `positive` nói "nhóm này
+    có vấn đề", không nói dấu hiệu nào. Với ≥2 dấu hiệu chưa biết, ghi `"true"` cho một cái là dựng
+    một dấu hiệu đỏ không ai khai. Nhưng khi nhóm chỉ còn ĐÚNG MỘT dấu hiệu bỏ ngỏ thì câu "có" không
+    thể trỏ vào đâu khác - lúc đó KHÔNG ghi mới là bỏ mất lời khai.
+
+    Bản trước không ghi gì trong mọi trường hợp, và đó là một lỗi an toàn thật: người bệnh trả lời
+    "có" cho câu sàng lọc đọc lên `thở rít / chảy dãi / khó nuốt` thì `stridor_or_drooling` vẫn ở
+    `unknown`, `rule_engine` không có gì để khớp, và `R-E-06` (tắc nghẽn đường thở) không bao giờ nổ
+    - hội thoại đi tiếp như một ca thường. Đường `_collect_fields` chạy song song CÓ thể cứu ca này,
+    nhưng chỉ khi model tự nguyện điền field; nó không phải một bảo đảm, còn đây thì là.
+
+    Chiều rủi ro của việc suy sai ở đây là chiều AN TOÀN, đúng cân nhắc `_needs_evidence` đã ghi:
+    thừa một `"true"` chỉ đẩy ca lên mức thận trọng hơn (P0-6 chấp nhận), thiếu một `"true"` thật là
+    bỏ sót cấp cứu (P0-5)."""
     verdicts = parse_verdicts(parsed)
 
     negatives: dict[str, object] = {}
+    positives: dict[str, object] = {}
     closed: set[str] = set()
     negative_ids: list[str] = []
     positive_ids: list[str] = []
@@ -300,6 +388,10 @@ def apply_verdicts(
         verdict, evidence = verdicts.get(group.id, (_DEFAULT_VERDICT, None))
         if verdict == "positive":
             positive_ids.append(group.id)
+            # Nhóm KHÔNG bị đóng dù có ghi được field: các cụm còn lại vẫn phải hỏi đúng script.
+            only = _single_open_field(protocol, stage, group, answers)
+            if only is not None:
+                positives[only] = "true"
             continue
         if verdict != "negative":
             continue
@@ -325,6 +417,7 @@ def apply_verdicts(
 
     return ScreeningOutcome(
         negatives=negatives,
+        positives=positives,
         closed_cluster_ids=frozenset(closed),
         negative_group_ids=tuple(negative_ids),
         positive_group_ids=tuple(positive_ids),

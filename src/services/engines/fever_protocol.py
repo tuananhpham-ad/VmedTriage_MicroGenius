@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Literal
 
 from src.services.checklists.fever_checklist import FIELDS_BY_KEY, QUESTION_CLUSTERS
+from src.services.symptom_protocol.common_safety import fields as common_fields
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
@@ -681,7 +682,9 @@ SCREENING_GROUPS: tuple = (
 
 # Xoá nhầm 2 field này là đắt nhất: chúng kéo theo TOÀN BỘ phần đặc điểm sốt (12 field) và làm câu
 # chuyện lâm sàng đổi hẳn. Giữ đúng 2 field - mỗi field ở đây tốn của người bệnh một lượt xác nhận.
-CONFIRM_BEFORE_RETRACT: frozenset[str] = frozenset({"fever_reported", "fever_status"})
+CONFIRM_BEFORE_RETRACT: frozenset[str] = common_fields.CONFIRM_BEFORE_RETRACT | {
+    "fever_reported", "fever_status",
+}
 
 
 FEVER_PROTOCOL = SymptomProtocol(
@@ -711,6 +714,11 @@ FEVER_PROTOCOL = SymptomProtocol(
     contradiction_rules=CONTRADICTION_RULES,
     confirm_before_retract=CONFIRM_BEFORE_RETRACT,
     derive_fields=derive_duration,
+    # `fever_duration_days` được `derive_duration` TÍNH ra và được 3 rule đọc, nhưng trước
+    # 2026-08-26 nó không có `FieldSpec` nào và không được khai là dẫn xuất - nên `field_dependencies`
+    # trỏ vào nó là cấu hình chết, và nó vô hình với phiếu bàn giao lẫn `_symptom_field_values`.
+    # Khai đúng như generic làm với `complaint_duration_days`.
+    derived_field_keys=("fever_duration_days",),
     reason_code_labels=REASON_CODE_LABELS,
     # Protocol sốt biết trước than phiền là gì nên không có field `chief_complaint` để hỏi.
     default_chief_complaint="Sốt",

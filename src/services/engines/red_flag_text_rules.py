@@ -16,8 +16,9 @@ Rules require clinical governance review before a production deployment.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
+
+from src.services.text_norm import expand_chat_shorthand, fold_diacritics
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,21 +181,54 @@ TEXT_RED_FLAG_RULES: tuple[TextRedFlagRule, ...] = (
 
 
 def normalize_red_flag_text(text: str) -> str:
-    lowered = (text or "").casefold().replace("đ", "d")
-    decomposed = unicodedata.normalize("NFD", lowered)
-    without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
-    return re.sub(r"\s+", " ", without_marks).strip()
+    """Bỏ dấu + gộp khoảng trắng. Dùng cho CỤM RULE.
+
+    KHÔNG mở viết tắt kiểu chat ở đây - xem `_patient_haystack`."""
+    return re.sub(r"\s+", " ", fold_diacritics(text)).strip()
+
+
+def _patient_haystack(*texts: str) -> str:
+    """Chuẩn hoá phía NGƯỜI BỆNH: thêm bước mở viết tắt so với `normalize_red_flag_text`.
+
+    ÁP MỘT PHÍA LÀ CỐ Ý. Cụm rule do người viết ra và đã đúng chính tả; mở viết tắt trên chúng không
+    được gì mà lại mở đường cho một cụm bị biến dạng âm thầm. Nhiễu chỉ đến từ phía người bệnh, nên
+    chỉ phía đó cần chuẩn hoá thêm."""
+    return expand_chat_shorthand(normalize_red_flag_text(" ".join(text for text in texts if text)))
+
+
+_FOLDED_RULES: tuple[tuple[TextRedFlagRule, tuple[tuple[str, str], ...]], ...] = tuple(
+    (
+        text_rule,
+        tuple((phrase, normalize_red_flag_text(phrase)) for phrase in text_rule.phrases),
+    )
+    for text_rule in TEXT_RED_FLAG_RULES
+)
+"""Cụm rule đã bỏ dấu sẵn, tính MỘT LẦN lúc import.
+
+Bộ cụm là hằng số của module, nhưng bản trước fold lại toàn bộ ≈300 cụm ở MỖI lần gọi
+`detect_text_red_flags` - và hàm đó chạy trên mọi lượt tin nhắn của mọi ca. Giữ cả cụm gốc lẫn cụm đã
+fold vì giá trị trả về phải là cụm GỐC (có dấu), thứ điều dưỡng đọc được."""
 
 
 def detect_text_red_flags(*texts: str) -> list[tuple[TextRedFlagRule, str]]:
-    """Return every matching text rule and its first matching phrase."""
-    haystack = normalize_red_flag_text(" ".join(text for text in texts if text))
+    """Return every matching text rule and its first matching phrase.
+
+    KHỚP CHÍNH XÁC, KHÔNG KHỚP MỜ. Bản 2026-08-27 có thêm một vòng khớp gần-đúng (`difflib`) để bắt
+    lỗi gõ; đã bỏ. Lý do không phải vì nó không chạy - đo được 0 dương tính giả ở ngưỡng 0.92 - mà vì
+    nó đặt sai chỗ:
+
+    * Tầng này KHÔNG có guard phủ định. `text_safety_signals` (L0) mới là chỗ có guard phủ định/thời
+      gian/chủ thể, và nó tự so khớp chứ không gọi hàm này. Thêm khớp gần-đúng vào đây là nới rộng
+      đúng cái matcher đã không phân biệt được "bé khó thở" với "bé không khó thở".
+    * Lỗi gõ đã có chỗ xử lý tốt hơn: LLM ở tầng trên vốn đã đọc câu đó rồi, không tốn thêm gì.
+      Việc của tầng tất định là bắt CHÍNH XÁC khi LLM chết, không phải đoán rộng hơn.
+
+    Cái GIỮ LẠI từ lần đó là `_patient_haystack` (mở viết tắt kiểu chat): đó là ánh xạ chính xác
+    một-một, kiểm được bằng mắt, khác hẳn về bản chất với khớp gần-đúng xác suất."""
+    haystack = _patient_haystack(*texts)
     findings: list[tuple[TextRedFlagRule, str]] = []
-    for text_rule in TEXT_RED_FLAG_RULES:
-        matched = next(
-            (phrase for phrase in text_rule.phrases if normalize_red_flag_text(phrase) in haystack),
-            None,
-        )
+    for text_rule, phrases in _FOLDED_RULES:
+        matched = next((phrase for phrase, folded in phrases if folded in haystack), None)
         if matched:
             findings.append((text_rule, matched))
     return findings

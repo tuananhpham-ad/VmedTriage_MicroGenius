@@ -18,11 +18,25 @@ from src.services.symptom_protocol.models import FieldSpec
 
 # --- Nhân khẩu (KM §3.2) ------------------------------------------------------------------------
 DEMOGRAPHIC_FIELDS: tuple[FieldSpec, ...] = (
-    FieldSpec("reporter_type", "Người khai là ai", "H", "self/parent_caregiver/other - độ tin cậy thông tin", tri_state=False, allowed_values=("self", "parent_caregiver", "other",)),
+    # `hint` cũ đóng khung field này là "độ tin cậy thông tin", nên extractor không thấy nó liên quan
+    # gì tới câu "bạn tôi bị đau ngực" - và người bệnh của phiên bị ghi nhầm thành chính người nhắn.
+    # Ai ĐANG CÓ triệu chứng mới là thứ field này trả lời; độ tin cậy chỉ là hệ quả.
+    FieldSpec("reporter_type", "Người khai là ai", "H", "AI LÀ NGƯỜI ĐANG CÓ TRIỆU CHỨNG so với người nhắn tin: self = chính người nhắn; parent_caregiver = con/người thân được người nhắn chăm sóc; other = một người khác (\"bạn tôi\", \"đồng nghiệp\"). Người được kể hộ VẪN là bệnh nhân của phiên", tri_state=False, allowed_values=("self", "parent_caregiver", "other",)),
     FieldSpec("age_value", "Tuổi (số)", "M0", "Biến phân tầng nguy cơ chính, quyết định toàn bộ ngưỡng/nhánh hỏi", tri_state=False),
     FieldSpec("age_unit", "Đơn vị tuổi", "M0", "day/month/year - đi kèm age_value", tri_state=False, allowed_values=("day", "month", "year",)),
     FieldSpec("sex", "Giới tính sinh học", "M0", "male/female/unknown - điều hướng nhánh sản khoa/tiết niệu", tri_state=False, allowed_values=("male", "female", "unknown",)),
 )
+
+CONFIRM_BEFORE_RETRACT: frozenset[str] = frozenset({"reporter_type"})
+"""Tập nền `confirm_before_retract` dùng chung cho MỌI protocol (`protocol.py` giải thích cơ chế).
+
+`reporter_type` vào đây vì `_safety_extra_keys` loại khỏi schema trích xuất mọi field ĐÃ điền trừ
+tập này. Điền nhầm một lần rồi thì người bệnh nói "không, là bạn tôi chứ không phải tôi" cũng không
+còn ô nào để ghi - đó chính là "bảo sửa mà vẫn nhầm" ở F10 lỗi 4. Và nó khớp đúng định nghĩa của tập
+này: xoá/ghi nhầm ai là bệnh nhân thì cả phiếu gửi điều dưỡng nói về nhầm người.
+
+Trước 2026-08-29 chỉ `fever` khai tập này; 5 protocol còn lại để rỗng, nên cơ chế đính chính chỉ tồn
+tại ở đúng một nhóm triệu chứng."""
 
 # --- An toàn tại nhà / safety-netting (KM §3.2) --------------------------------------------------
 SAFETY_NETTING_FIELDS: tuple[FieldSpec, ...] = (
@@ -63,7 +77,7 @@ CIRCULATION_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("dizziness_on_standing", "Choáng khi đứng dậy", "M1", "Giảm thể tích tuần hoàn - tiền sốc"),
     FieldSpec("urine_output", "Lượng nước tiểu", "M0", "normal/reduced/none_gt_6h - tưới máu thận (RF-14)", tri_state=False, allowed_values=("normal", "reduced", "none_gt_6h", "unknown",)),
     FieldSpec("dehydration_signs", "Dấu mất nước", "O", "Đa dấu hiệu: khô môi, mắt trũng, thóp lõm...", tri_state=False),
-    FieldSpec("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40)", tri_state=False, allowed_values=("none", "occasional", "frequent", "unable_to_keep_fluids", "unknown",)),
+    FieldSpec("vomiting_severity", "Mức độ nôn", "M0", "none/occasional/frequent/unable_to_keep_fluids (RF-15,40). Buồn nôn KHÔNG phải là nôn; không được suy từ 'buồn nôn' thành bất kỳ mức độ nôn nào. Chỉ frequent khi lời khai nói rõ nôn nhiều/lặp lại hoặc có số lần; chỉ unable_to_keep_fluids khi nói rõ uống vào nôn/không giữ được nước", tri_state=False, allowed_values=("none", "occasional", "frequent", "unable_to_keep_fluids", "unknown",)),
 )
 
 # --- Thần kinh (KM §3.7) ------------------------------------------------------------------------
@@ -91,6 +105,7 @@ SKIN_BLEEDING_FIELDS: tuple[FieldSpec, ...] = (
 
 # --- Triệu chứng đi kèm hay gặp ở mọi than phiền (KM §3.9) ---------------------------------------
 ASSOCIATED_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("nausea_present", "Buồn nôn", "O", "Cảm giác buồn nôn/nao nao muốn ói. KHÔNG đồng nghĩa với đã nôn và KHÔNG mô tả tần suất nôn"),
     FieldSpec("abdominal_pain_severity", "Mức độ đau bụng", "M0", "none/mild/moderate/severe - cảnh báo SXHD (RF-39)", tri_state=False, allowed_values=("none", "mild", "moderate", "severe", "unknown",)),
     FieldSpec("abdominal_pain_location", "Vị trí đau bụng", "C", "Định hướng cho người duyệt", tri_state=False, allowed_values=("diffuse", "ruq", "rlq", "epigastric", "other", "unknown",)),
     FieldSpec("abdominal_guarding", "Bụng cứng/ấn rất đau", "C", "Nghi bụng ngoại khoa (RF-39)"),
@@ -120,7 +135,34 @@ RISK_CONTEXT_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("surgical_site_signs", "Vết mổ sưng đỏ/chảy dịch/hở", "C", "Ổ nhiễm khuẩn rõ (RF-33)"),
     FieldSpec("indwelling_device", "Thiết bị lưu trong cơ thể", "M1", "Đường vào nhiễm khuẩn (RF-34)", tri_state=False),
     FieldSpec("recent_wound_or_bite", "Vết thương hở/bỏng/động vật cắn", "O", "Nhiễm khuẩn mô mềm, uốn ván"),
+    FieldSpec(
+        "other_conditions", "Bệnh/triệu chứng khác người bệnh tự kể", "O",
+        "DANH SÁCH mở, phân tách bằng dấu phẩy. Ghi những gì người bệnh NÓI RA mà không trường nào "
+        "khác trong danh sách này đỡ được (bệnh, triệu chứng, tình trạng). CHỈ chép lại nguyên ý lời "
+        "họ nói - KHÔNG đặt tên bệnh thay họ, KHÔNG suy diễn, KHÔNG chép lại thứ đã ghi ở trường khác",
+        tri_state=False,
+    ),
 )
+"""`other_conditions` là LƯỚI HỨNG, không phải một field lâm sàng.
+
+Vì sao cần: schema trích xuất là tập ĐÓNG - người bệnh kể một thứ không có ô nào đỡ thì thứ đó biến
+mất không dấu vết, và không ai biết là nó đã mất. Đây là chế độ hỏng chung của mọi bộ trích xuất theo
+schema; bug đau ngực 2026-08-28 chỉ là một trường hợp riêng của nó, và lần đó ta may vì phát hiện ra.
+Có lưới hứng thì dữ kiện lạ hạ cánh ở một chỗ điều dưỡng ĐỌC ĐƯỢC thay vì rơi mất.
+
+**KHÔNG rule nào được đọc field này, và không rule nào đang đọc.** Nó là văn bản tự do model viết,
+nên để nó lái mức ưu tiên là mở đúng cánh cửa mà `allowed_values` sinh ra để đóng. Đường đi của nó
+chỉ có một: vào `FieldSummary.details` -> phiếu bàn giao -> mắt điều dưỡng.
+
+**Tier "O", KHÔNG phải M0/M1** - và đây là chỗ dễ sai nhất. Tier M0/M1 là tập
+`stage_machine.MANDATORY_TIERS`, mà `mandatory_fields_covered` đòi MỌI field trong tập đó phải có căn
+cứ trước khi phiên được dừng sớm. Không cụm câu hỏi nào hỏi `other_conditions` (đúng thiết kế - nó là
+lưới hứng, không phải câu hỏi), nên để nó M1 thì điều kiện đó không bao giờ xanh: mọi ca lành tính bị
+ép đi hết bộ câu hỏi, đúng cảnh ~24 lượt mà `stage_machine.can_conclude_early` sinh ra để chấm dứt.
+
+Tier "O" khiến nó rơi khỏi hai bộ lọc `M0/M1` khác, nên hai chỗ phải khai tường minh:
+`registry.OPENING_HARVEST_EXTRA_FIELDS` (để có ô ghi ngay lượt mở) và
+`summary_render._ALWAYS_DETAIL_KEYS` (để lên phiếu điều dưỡng)."""
 
 # --- Thuốc (KM §3.11) ---------------------------------------------------------------------------
 MEDICATION_FIELDS: tuple[FieldSpec, ...] = (
@@ -146,3 +188,73 @@ COMMON_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 COMMON_FIELDS_BY_KEY: dict[str, FieldSpec] = {field.key: field for field in COMMON_FIELDS}
+
+
+# --- Thời điểm khởi phát DÙNG CHUNG -------------------------------------------------------------
+COMPLAINT_ONSET_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("complaint_onset_at", "Thời điểm bắt đầu", "M0", "YYYY-MM-DD; quy đổi từ 'hôm qua', '3 ngày nay' theo ngày hiện tại", tri_state=False),
+)
+"""Chuyển từ `generic_checklist.py` sang ngày 2026-08-26, nguyên văn.
+
+"Bắt đầu từ khi nào" không phải kiến thức về bệnh nào - nó là câu hỏi của MỌI than phiền, và
+`SymptomProtocol.onset_field` của `abdominal`/`breathing`/`general` đều trỏ vào đúng field này.
+
+Để nó ở riêng `generic_checklist` là nguyên nhân trực tiếp của sự cố 2026-08-26: `abdominal` cụm
+`AB-02` và `breathing` cụm `BR-01` khai `complaint_onset_at` trong `fields` nhưng không có
+`FieldSpec` nào, nên `intake_agent._field_specs` ném `KeyError` NGAY lượt người bệnh trả lời câu đó,
+và `routes.py` trả 500 "Không xử lý được tin nhắn." - lặp lại mọi lần vì lỗi là tất định."""
+
+
+# --- Field của cụm phủ chéo đau ngực × khó thở (F09 §3.10b) --------------------------------------
+CHEST_DYSPNEA_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("diaphoresis", "Vã mồ hôi lạnh", "M0", "Diaphoresis kèm đau ngực - dấu hiệu hội chứng vành cấp"),
+    FieldSpec("palpitations", "Tim đập nhanh / không đều", "M0", "Rối loạn nhịp kèm đau ngực - tiêu chí Cấp cứu"),
+)
+"""Hai field mà `clusters.chest_dyspnea_cluster` hỏi tới, ngoài phần đã có trong `RESPIRATORY_FIELDS`.
+
+**Cụm dùng chung thì field của nó cũng phải dùng chung.** Bản đầu khai hai field này trong
+`chest_pain_checklist.py` rồi cho `breathing` mượn cụm - `breathing` vỡ ngay lượt hỏi `BR-03`. Đây là
+cùng một lỗi với `complaint_onset_at` ở trên, và cùng một cách sửa: field đi theo cụm, không đi theo
+protocol nào."""
+
+
+# --- Tín hiệu sốt DÙNG CHUNG (F09 §3.8) -----------------------------------------------------------
+FEVER_SIGNAL_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("fever_reported", "Người dùng khai có sốt", "M0", "Cổng vào toàn bộ protocol sốt"),
+    FieldSpec("fever_status", "Loại sốt", "M0", "objective/subjective/none - điều hướng nhánh dữ liệu thiếu", tri_state=False, allowed_values=("objective", "subjective", "none",)),
+    FieldSpec("temp_c", "Nhiệt độ đo được (°C)", "M0", "Đầu vào rule ngưỡng theo tuổi; M0 khi fever_status=objective", tri_state=False),
+)
+"""Ba field này **chuyển từ `fever_checklist.py` sang** ngày 2026-08-26, không sửa một ký tự nào.
+
+Vì sao chúng phải ở đây dù mang chữ "sốt": chúng không còn là tài sản riêng của protocol sốt nữa.
+
+1. **Cả 4 bảng mapping mới đều dùng ngưỡng sốt.** Đau ngực chốt "khám sớm" khi `>38.1°C` kèm đau
+   ngực; đau bụng có bậc `>39.4 / >38.3 nếu >60 tuổi / >38.1 nếu suy giảm miễn dịch`; khó thở dùng
+   sốt để nghi viêm phổi. Không có `temp_c` thì bốn protocol đó không chốt được.
+2. **Chúng là `SWITCH_DETECTION_FIELDS`** - tập field để `select_protocol` NHẬN RA phiên nên đổi
+   nhóm. Field chỉ nằm trong registry của một protocol thì phiên đang chạy protocol khác không có
+   chỗ ghi, và router không bao giờ thấy bằng chứng (xem docstring của hằng số đó).
+
+Để lại trong `fever_checklist` thì protocol thứ hai hoặc phải import từ fever (sai chiều phụ thuộc),
+hoặc phải chép lại - và bản sao thứ hai sẽ phá vỡ điều `registry._merged_fields` đang dựa vào:
+*"các key trùng đều đến từ `common_safety` nên là CÙNG một object"*.
+
+Phần còn lại của nhóm FEVER (`temp_site`, `antipyretic_*`, `fever_pattern`, `rigors`...) **ở lại**
+`fever_checklist`: chúng thật sự chỉ có nghĩa trong một ca đang sốt."""
+
+
+# --- Câu chốt cuối pipeline (F09 §3.5) ------------------------------------------------------------
+CLOSING_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("other_symptoms", "Triệu chứng khác người bệnh tự nêu", "O", "Điều người bệnh kể thêm sau khi đã đi hết bộ câu hỏi - giữ NGUYÊN VĂN lời họ, không quy về tên bệnh", tri_state=False),
+)
+"""Tier `O`, KHÔNG phải `M1`. Hai lý do, và lý do thứ hai mới là lý do bắt buộc:
+
+1. Câu "còn gì nữa không" là lời mời, không phải một dữ kiện bắt buộc phải có. Người bệnh trả lời
+   "không còn gì" là kết thúc hợp lệ.
+2. Tier M0/M1 đi vào `mandatory_unasked`. Một field mà **mọi** phiên đều để trống (vì phần lớn ca
+   không có triệu chứng nào khác) sẽ kéo chỉ số đó khác 0 vĩnh viễn ở mọi protocol - đúng lỗi mà
+   `test_protocol_field_coverage.py` được viết ra để bắt, chỉ khác chiều.
+
+KHÔNG gộp vào `COMMON_FIELDS`: `fever` và `general` không có cụm nào hỏi nó, nên gộp vào sẽ thêm một
+field vĩnh viễn `unknown` cho hai protocol đang chạy tốt. Protocol nào muốn dùng thì cộng vào tuple
+field của mình - tường minh, không lan."""

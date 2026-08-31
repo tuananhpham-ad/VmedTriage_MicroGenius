@@ -7,7 +7,7 @@
 **VMedTriage** — AI Agent hỗ trợ điều dưỡng phân loại mức độ ưu tiên ban đầu cho bệnh nhân tư vấn online, thông qua hội thoại có cấu trúc thu thập triệu chứng, phát hiện red-flag, và đề xuất mức ưu tiên — **luôn cần điều dưỡng xác nhận trước khi gửi cho bệnh nhân**.
 
 - **Team:** MicroGenius — Thương (PM/PO/QA), Tuấn Anh (Agent Lead), Đức Anh (Data Lead), Dũng (Fullstack AI Engineer)
-- **Timeline:** 6 tuần (29/07–05/09/2026), đang ở Sprint 2 (W2–W3)
+- **Timeline:** 6 tuần (29/07–05/09/2026), đang ở Sprint 3 Week 5
 - **Nền tảng:** Web app responsive, 2 role: Bệnh nhân / Nhân viên y tế
 - Tài liệu gốc: `docs/brief.md`, `docs/prd.md`, `docs/wireframe/`, `docs/planning/Feature_Specification_VMedTriage.md`
 
@@ -41,6 +41,14 @@
 
 ## Trạng thái hiện tại
 
-Xem chi tiết cập nhật mới nhất tại `docs/context/sessions/`. Tóm tắt nhanh: Sprint 2 (W2–W3) đang triển khai 5 đặc tả tính năng đã hoàn thành trong `Feature_Specification_VMedTriage.md`. Mục tiêu Demo V1 cuối Sprint 2.
+Cập nhật 26/08/2026 (Sprint 3, W5). Xem thêm ADR tại `docs/context/decisions.md`.
 
-# M
+**Luồng end-to-end đã chạy được thật:**
+`POST /chat` (và `/chat/stream` qua SSE) → agent hội thoại `src/services/symptom_protocol/` → `symptom_case_bridge.to_triage_case` dựng `TriageCase` → `case_store` → hàng đợi điều dưỡng `GET /nurse/queue` → điều dưỡng duyệt `POST /cases/{id}/review` (`hitl_review.py`) → hiển thị cho bệnh nhân (`_patient_chat_response`/`_patient_case_view`, có redact nội dung chưa duyệt).
+
+- **Engine chính (đang dùng):** `src/services/symptom_protocol/` — `stage_machine.py` (duyệt stage/ngân sách câu hỏi), `intake_agent.py` (gọi LLM trích field theo schema cụm + sinh câu hỏi), `ranking.py` (xếp hạng câu hỏi), `red_flag_branches.py` (rule engine red-flag, chạy hết catalog rồi lấy mức cao nhất — escalate ngay, không chờ duyệt, đúng ADR-008).
+- **`src/graph_triage/` (C6):** lớp ML/LLM bổ trợ chạy song song, chỉ được phép **nâng** priority chứ không hạ/tự duyệt; bật/tắt qua feature flag `graph_triage_mode` (mặc định `off` theo ADR-009) — vẫn ở dạng thử nghiệm/benchmark.
+- **Dead code cần lưu ý:** `ProtocolTriageEngine`, `RedFlagSafetyLayer`, `TriagePipeline` (`src/services/triage_pipeline.py`, `src/services/engines/triage_engine.py`) không còn là nguồn priority thật cho `/chat` (đã bị thay bởi `symptom_protocol`, route rule-based cũ `src/agents/graph.py` đã xoá 16/08/2026).
+- **HITL/approval:** đã có khá đầy đủ — `hitl_review.py`, `approval_store.py` (audit log), `nurse_queue.py`, router `/cases/{id}/review`, `/nurse/queue`, `/cases/{id}/summary` (ISBAR). SLA breach cho ca red-flag chưa mở (`red_flag_sla.py`, mặc định 5 phút).
+- **UI (`src/ui/new/`):** đã nối backend thật qua `api.js` (REST + SSE), không phải mock — `patient.js` (W-00→W-05), `nurse.js` (W-06 hàng đợi, W-07 duyệt). Còn vài file `.dc.html`/`support.js` prototype chưa dọn nhưng không được `index.html` nạp.
+- **Còn dở/chưa xong:** checklist/protocol riêng cho các nhóm triệu chứng ngoài Sốt chưa đầy đủ hết cả 5 nhóm MVP; ADR-007 (chọn LLM provider) vẫn pending; thư mục `docs/context/sessions/` chưa tồn tại dù được trỏ tới trong tài liệu.

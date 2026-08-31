@@ -65,3 +65,74 @@ def test_a_declared_derived_field_is_never_also_asked_by_a_cluster(name: str, pr
     both = sorted(set(protocol.derived_field_keys) & asked)
 
     assert both == [], f"protocol {name!r}: {both} vừa được tính vừa được hỏi"
+
+
+# --- Chiều NGƯỢC LẠI: cụm/nhóm trỏ tới field có thật không (2026-08-26) ----------------------------
+#
+# Các bài trên kiểm chiều `field -> cụm` ("field M0/M1 có ai hỏi tới không"). Chiều còn lại KHÔNG có
+# ai canh, và chính nó mới là chiều làm SẬP request: `intake_agent._field_specs` tra
+# `protocol.fields_by_key[key]` cho từng field của cụm đang hỏi, nên một mã field gõ sai ném
+# `KeyError` giữa lượt, `routes.py` bắt lại thành 500 "Không xử lý được tin nhắn." và người bệnh
+# không bao giờ đi qua được cụm đó.
+#
+# Đã xảy ra thật ngày 2026-08-26: `abdominal` cụm `AB-02` khai `complaint_onset_at` (field riêng của
+# `general`), `breathing` cụm `BR-01`/`BR-03` khai `complaint_onset_at`/`diaphoresis`/`palpitations`.
+# Cả ba lọt qua toàn bộ 804 test đang xanh.
+
+
+@pytest.mark.parametrize("name,protocol", PROTOCOLS, ids=[name for name, _ in PROTOCOLS])
+def test_every_cluster_field_exists_in_the_field_registry(name: str, protocol: SymptomProtocol):
+    """Mọi field mà một cụm hỏi phải có `FieldSpec`. Thiếu = `KeyError` giữa lượt hội thoại."""
+    unknown = sorted(
+        {
+            f"{cluster.id}.{key}"
+            for cluster in protocol.clusters
+            for key in cluster.fields
+            if key not in protocol.fields_by_key
+        }
+    )
+
+    assert unknown == [], (
+        f"protocol {name!r} có cụm hỏi field không tồn tại: {unknown}. "
+        "`_field_specs` sẽ ném KeyError và lượt đó trả 500 cho người bệnh."
+    )
+
+
+@pytest.mark.parametrize("name,protocol", PROTOCOLS, ids=[name for name, _ in PROTOCOLS])
+def test_safety_signal_fields_all_exist(name: str, protocol: SymptomProtocol):
+    """`safety_signal_fields` được nối thẳng vào schema trích xuất mỗi lượt - cùng đường vỡ như trên."""
+    unknown = sorted(key for key in protocol.safety_signal_fields if key not in protocol.fields_by_key)
+
+    assert unknown == [], f"protocol {name!r} khai `safety_signal_fields` không tồn tại: {unknown}"
+
+
+@pytest.mark.parametrize("name,protocol", PROTOCOLS, ids=[name for name, _ in PROTOCOLS])
+def test_field_dependencies_reference_real_fields(name: str, protocol: SymptomProtocol):
+    """Cả khoá lẫn field phụ thuộc phải có thật, nếu không phần phụ thuộc đó âm thầm không chạy."""
+    unknown = sorted(
+        {
+            key
+            for parent, children in (protocol.field_dependencies or {}).items()
+            for key in (parent, *children)
+            if key not in protocol.fields_by_key
+        }
+    )
+
+    assert unknown == [], f"protocol {name!r} khai `field_dependencies` trỏ tới field không tồn tại: {unknown}"
+
+
+@pytest.mark.parametrize("name,protocol", PROTOCOLS, ids=[name for name, _ in PROTOCOLS])
+def test_screening_groups_reference_real_clusters(name: str, protocol: SymptomProtocol):
+    """Mã cụm lạ trong `ScreeningGroup` bị `clusters_of` bỏ qua IM LẶNG - nhóm mất một cụm mà không
+    ai biết, và câu sàng lọc gộp đóng thiếu."""
+    cluster_ids = {cluster.id for cluster in protocol.clusters}
+    unknown = sorted(
+        {
+            f"{group.id}.{cluster_id}"
+            for group in protocol.screening_groups
+            for cluster_id in group.cluster_ids
+            if cluster_id not in cluster_ids
+        }
+    )
+
+    assert unknown == [], f"protocol {name!r} có `ScreeningGroup` trỏ tới cụm không tồn tại: {unknown}"

@@ -49,6 +49,7 @@ from src.services.engines.red_flag_text_rules import (
     TEXT_RED_FLAG_RULES,
     normalize_red_flag_text,
 )
+from src.services.symptom_protocol import phrasing
 
 
 class SignalStatus(str, Enum):
@@ -168,11 +169,38 @@ _UNCERTAIN_CUES = _cue_pattern(
     "không biết", "không rõ", "không chắc", "chưa rõ", "chưa biết", "hình như", "có vẻ", "chắc là",
     "hay là", "nghi", "sợ là", "không hiểu",
 )
-_OTHER_SUBJECT_CUES = _cue_pattern(
+_OTHER_PERSON_CUES: tuple[str, ...] = (
     # CỐ Ý không có "con tôi", "bé", "cháu": người nhà được tư vấn hộ CHÍNH LÀ bệnh nhân.
-    "bạn tôi", "bạn mình", "bạn em", "người quen", "hàng xóm", "đồng nghiệp", "người ta",
-    "trong phim", "trên mạng", "nghe nói", "đọc báo", "bệnh nhân khác", "sếp tôi", "thầy tôi",
+    "bạn tôi", "bạn mình", "bạn em", "người quen", "hàng xóm", "đồng nghiệp",
+    "bệnh nhân khác", "sếp tôi", "thầy tôi",
 )
+"""Cue chỉ MỘT NGƯỜI CÓ THẬT không phải người nhắn tin. Người đó chính là bệnh nhân của phiên."""
+
+_HEARSAY_CUES: tuple[str, ...] = ("người ta", "trong phim", "trên mạng", "nghe nói", "đọc báo")
+"""Cue chỉ một nguồn NGHE KỂ - không có bệnh nhân cụ thể nào ở đầu bên kia.
+
+Tách khỏi `_OTHER_PERSON_CUES` vì hai nhóm này dẫn tới hai kết luận khác nhau: cả hai đều hạ một tín
+hiệu đỏ xuống mức cần xác nhận (câu chuyện không phải của người nhắn), nhưng chỉ nhóm trên mới trả
+lời được câu "ai là bệnh nhân". "Nghe nói sốt cao là nguy hiểm" không có bệnh nhân nào cả."""
+
+_OTHER_SUBJECT_CUES = _cue_pattern(*_OTHER_PERSON_CUES, *_HEARSAY_CUES)
+_OTHER_PERSON_PATTERN = _cue_pattern(*_OTHER_PERSON_CUES)
+
+
+def reporter_type_from_text(message: str) -> str:
+    """`"other"` nếu lời khai nói rõ người có triệu chứng KHÔNG phải người nhắn; `""` nếu không rõ.
+
+    Tất định, KHÔNG model - đây là tầng L0 (`INVARIANTS.md` §1). Dùng lại đúng bộ cue mà guard
+    `GUARD_OTHER_SUBJECT` đang dùng, chứ không chép ra một danh sách thứ hai: hai bản sẽ lệch nhau,
+    và lệch ở đây nghĩa là guard hạ tín hiệu đỏ vì "chuyện của người khác" trong khi hồ sơ vẫn ghi
+    người nhắn là bệnh nhân.
+
+    Vì sao cần một đường TẤT ĐỊNH bên cạnh extractor: câu "bạn tôi bị đau ngực" là câu ĐẦU TIÊN của
+    phiên, và mọi thứ sau đó - xưng hô, phiếu gửi điều dưỡng - đều đọc `reporter_type`. Để một mình
+    model chịu trách nhiệm cho nó nghĩa là chấp nhận hỏng cả phiên khi model trả `unknown`.
+
+    KHÔNG bao giờ trả `"self"`: im lặng không phải bằng chứng người nhắn là bệnh nhân (P0-4)."""
+    return "other" if _OTHER_PERSON_PATTERN.search(normalize_red_flag_text(message or "")) else ""
 _HYPOTHETICAL_CUES = _cue_pattern(
     "nếu", "giả sử", "có phải", "liệu", "có nguy hiểm", "có sao không", "là bệnh gì",
     "dấu hiệu của", "triệu chứng của", "thế nào là", "tư vấn giúp", "hỏi về", "phòng ngừa",
@@ -283,19 +311,65 @@ def scan_text_safety_signals(*texts: str) -> TextSafetyScan:
     return TextSafetyScan(signals=ordered)
 
 
-def confirmation_question(codes: Sequence[str]) -> str:
+CONFIRMATION_TEMPLATES: tuple[str, ...] = (
+    "Trước khi hỏi tiếp, mình cần xác nhận một ý quan trọng: hiện tại có {labels} không? "
+    "Nếu đang xảy ra ngay lúc này, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Mình dừng một chút để hỏi cho chắc: ngay lúc này có {labels} không ạ? "
+    "Nếu đang có, bạn gọi 115 hoặc tới cơ sở y tế gần nhất ngay giúp mình.",
+
+    "Có một ý mình cần rõ trước đã: hiện giờ có {labels} không? "
+    "Nếu đang xảy ra, bạn đừng chờ ở đây - gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Cho mình hỏi lại một ý quan trọng nhé: lúc này có {labels} không ạ? "
+    "Nếu có, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay.",
+
+    "Mình cần chắc chắn về một điều trước khi đi tiếp: hiện tại có {labels} không? "
+    "Nếu đang xảy ra ngay bây giờ, bạn gọi 115 hoặc đến cơ sở y tế gần nhất nhé.",
+
+    "Xin phép hỏi nhanh một ý mình thấy quan trọng: bây giờ có {labels} không ạ? "
+    "Nếu đang có thì bạn gọi 115 hoặc đến cơ sở y tế gần nhất ngay giúp mình.",
+
+    "Mình muốn kiểm lại một điều trước khi hỏi thêm: hiện tại có {labels} không? "
+    "Nếu điều đó đang diễn ra, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất.",
+
+    "Có một dấu hiệu mình cần xác nhận ngay: lúc này có {labels} không ạ? "
+    "Nếu đang xảy ra, bạn gọi 115 hoặc đến cơ sở y tế gần nhất, đừng chờ.",
+
+    "Trước khi mình hỏi tiếp, bạn xác nhận giúp mình một ý: hiện có {labels} không? "
+    "Nếu đang có, hãy gọi 115 hoặc đến cơ sở y tế gần nhất ngay lúc này.",
+
+    "Mình hỏi cho rõ một ý quan trọng đã nhé: ngay bây giờ có {labels} không ạ? "
+    "Nếu đang xảy ra, bạn gọi 115 hoặc đến cơ sở y tế gần nhất giúp mình.",
+)
+"""Mười bản của câu xác nhận tín hiệu mơ hồ. Khác NHỊP và cách xưng hô, KHÔNG khác nội dung.
+
+HAI THỨ MỌI BẢN ĐỀU PHẢI CÓ, và `test_every_confirmation_variant_keeps_its_two_duties` canh đúng
+hai thứ đó:
+
+1. `{labels}` - nhãn dấu hiệu, nêu NGUYÊN VĂN như `rule_label` trả về. Câu này chỉ NHẮC LẠI điều
+   người bệnh vừa nói; một bản tự diễn giải thêm ("có khó thở nhiều không") là suy diễn mức độ mà
+   người bệnh chưa hề khai.
+2. Chỉ dẫn gọi 115 hoặc đến cơ sở y tế. Đây là câu chạy khi tầng model đã hỏng, tức là lúc hệ thống
+   còn ít khả năng nhất để bắt kịp một ca cấp cứu - bỏ sót nó ở một bản trong mười là mở một lỗ hổng
+   chỉ xuất hiện ở 1/10 số ca, đúng loại lỗi không ai tái hiện được.
+
+KHÔNG bản nào được hỏi thêm gì ngoài đúng một câu hỏi có/không: đây là lượt dự phòng, không phải chỗ
+thu thập thêm dữ kiện."""
+
+
+def confirmation_question(codes: Sequence[str], seed: object = "") -> str:
     """Câu hỏi xác nhận TĨNH cho tín hiệu mơ hồ — không đi qua model.
 
     Đây là đường dự phòng khi model không trả về gì: người bệnh vừa nhắc tới một dấu hiệu nguy hiểm
     mà hệ thống không được phép im lặng bỏ qua. Câu hỏi chỉ NHẮC LẠI nhãn dấu hiệu, không suy diễn
-    thêm chi tiết y khoa nào."""
+    thêm chi tiết y khoa nào.
+
+    `seed` chọn một trong mười bản diễn đạt. Vẫn TĨNH và vẫn không gọi model - xem `phrasing.pick`."""
     if not codes:
         return ""
     labels = ", ".join(dict.fromkeys(rule_label(code).lower() for code in codes[:3]))
-    return (
-        f"Trước khi hỏi tiếp, mình cần xác nhận một ý quan trọng: hiện tại có {labels} không? "
-        "Nếu đang xảy ra ngay lúc này, bạn hãy gọi 115 hoặc đến cơ sở y tế gần nhất."
-    )
+    return phrasing.pick(CONFIRMATION_TEMPLATES, seed).format(labels=labels)
 
 
 def _classify(normalized: str, start: int, end: int) -> tuple[SignalStatus, str]:

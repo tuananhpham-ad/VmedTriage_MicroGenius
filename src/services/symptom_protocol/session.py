@@ -38,6 +38,7 @@ from src.services.symptom_protocol import (
     dialogue,
     flags,
     non_clinical,
+    phrasing,
     red_flag_branches,
     registry,
     rule_engine,
@@ -281,6 +282,60 @@ def _unwrap_retry_prompt(text: str) -> str:
     return current
 
 
+RETRACTION_TEMPLATES: tuple[str, ...] = (
+    'Mình muốn xác nhận lại cho chắc: ý bạn là thông tin "{label}" trước đó không còn đúng nữa, '
+    'phải không? Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Cho mình hỏi lại cho rõ: thông tin "{label}" bạn kể lúc nãy giờ không còn đúng nữa, '
+    'phải không ạ? Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình kiểm lại một chút: có phải ý bạn là "{label}" trước đó không còn đúng nữa không? '
+    'Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình chưa chắc nên hỏi lại: thông tin "{label}" mình ghi trước đó không còn đúng nữa, '
+    'đúng không ạ? Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Xin phép xác nhận cho chắc: ý bạn là bỏ thông tin "{label}" đã kể trước đó, phải không? '
+    'Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình hỏi lại để khỏi ghi nhầm: "{label}" trước đó giờ không còn đúng nữa, phải không ạ? '
+    'Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Cho mình chắc chắn một chút: bạn muốn sửa lại thông tin "{label}" đã kể lúc trước, '
+    'phải không? Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình muốn nghe bạn xác nhận: thông tin "{label}" ghi trước đó không còn đúng nữa, '
+    'phải không ạ? Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình hỏi cho rõ kẻo hiểu nhầm: ý bạn là "{label}" trước đó không còn đúng nữa, phải không? '
+    'Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+
+    'Mình xác nhận lại một ý: bạn muốn bỏ phần "{label}" đã kể trước đó, đúng không ạ? '
+    'Bạn trả lời giúp mình "đúng" hoặc "không" nhé.',
+)
+"""Mười bản của câu xác nhận đính chính. Khác NHỊP, giữ nguyên hai việc phải làm.
+
+HAI RÀNG BUỘC, cả hai đều có test canh:
+
+1. **Nêu nguyên văn nhãn field trong ngoặc kép.** Câu này tồn tại để hỏi ĐÚNG cái hệ thống sắp xoá.
+   Một bản diễn đạt chung chung ("thông tin lúc nãy") sẽ khiến người bệnh gật đầu cho một field khác
+   với field thật sự bị xoá - và xoá nhầm lời khai là mất dữ kiện lâm sàng, không phải lỗi hiển thị.
+2. **Đòi trả lời "đúng"/"không".** Đây là câu có/không; bỏ phần hướng dẫn trả lời thì người bệnh kể
+   thêm một đoạn văn và bộ phân giải không có gì để đọc.
+
+KHÔNG bản nào được gợi ý câu trả lời nên là gì. "Chắc bạn nhầm rồi phải không" là câu dẫn - nó đẩy
+người bệnh về phía xoá, mà xoá là chiều mất thông tin."""
+
+
+def _phrase_seed(session: Session) -> str:
+    """Seed chọn bản diễn đạt cho các câu TĨNH của phiên này.
+
+    Kèm `turn_count` chứ không chỉ `session_id`: một phiên có thể gặp cùng loại câu tĩnh vài lượt
+    (người bệnh trả lời qua loa nhiều lần), và nếu seed chỉ theo phiên thì cả mấy lượt đó đọc ra
+    đúng một chuỗi - tức là không đổi gì so với trước khi có biến thể."""
+    return phrasing.turn_seed(session.session_id, session.turn_count)
+
+
 def _catch_all_cluster(protocol: SymptomProtocol, stage: str) -> QuestionCluster:
     """Cụm TỔNG HỢP dựng tại chỗ để đọc câu trả lời quét sót.
 
@@ -497,7 +552,10 @@ class ProtocolSessionStore:
         session.phase = SessionPhase.OPENING
         session.stage = ""
         session.current_cluster = None
-        session.last_question = self._with_recall(user_id, registry.OPENING_QUESTION)
+        # Seed là `session_id`: mỗi phiên một bản câu mở, nhưng cùng phiên thì luôn tái hiện được.
+        session.last_question = self._with_recall(
+            user_id, registry.opening_question(session.session_id),
+        )
         session.conversation.append({"role": "assistant", "content": session.last_question})
         stage_log.start(session.session_id, route=None, budget=0, namespace=registry.DEFAULT_PROTOCOL_NAME)
 
@@ -542,7 +600,10 @@ class ProtocolSessionStore:
             return self._escalate_from_text_signal(session, cleaned, scan)
         session.pending_safety_signals = tuple(signal.code for signal in scan.needs_confirmation)
 
-        if session.uncooperative.prompted and session.last_question == user_intent.UNCOOPERATIVE_PROMPT:
+        # So với TẬP câu, không so với một chuỗi: `UNCOOPERATIVE_PROMPTS` có mười bản diễn đạt,
+        # và một phép `==` sẽ trượt 9/10 số lần - khiến câu trả lời "có, dừng đi" của người bệnh
+        # bị đọc như một lời khai triệu chứng.
+        if session.uncooperative.prompted and user_intent.is_uncooperative_prompt(session.last_question):
             decision = user_intent.stop_prompt_confirmation(cleaned)
             if decision is True:
                 session.turn_count += 1
@@ -622,7 +683,7 @@ class ProtocolSessionStore:
         protocol = self._protocol(session)
         # Cụm sẽ được dùng cho lượt này, tính TRƯỚC khi lập kế hoạch: controller cần biết phiên có
         # thật sự đang hỏi cái gì không thì mới quyết được là fail closed hay chạy tiếp.
-        cluster = session.current_cluster
+        cluster = self._cluster_for_protocol(session, protocol)
         if session.awaiting_catch_all:
             # Trả lời câu quét sót: vẫn là một lượt hỏi-đáp đầy đủ (trích xuất → rule engine → chốt),
             # chỉ khác ở chỗ cụm đang hỏi là cụm TỔNG HỢP dựng tại chỗ chứ không nằm trong protocol.
@@ -675,6 +736,7 @@ class ProtocolSessionStore:
             # xử lý đúng trong protocol hiện tại: `skip_rule` bỏ qua nhánh không còn phù hợp.)
             select_protocol=None if session.protocol_pinned else registry.select_protocol,
             protocol_for=None if session.protocol_pinned else registry.protocol_for,
+            protocol_candidates=None if session.protocol_pinned else registry.protocol_candidates,
             probe=session.pending_probe,
             screened_ids=session.screened_ids_for_current_protocol(),
             screening_history=session.screening_history,
@@ -728,7 +790,7 @@ class ProtocolSessionStore:
         # Câu hỏi bất hợp tác đứng CUỐI hàng ưu tiên: nó chỉ hỏi "bạn có muốn dừng không", còn hai
         # câu trên là dấu hiệu nguy hiểm và lời đính chính - cả hai đều phải được làm rõ trước.
         uncooperative_hold = (
-            user_intent.UNCOOPERATIVE_PROMPT
+            user_intent.uncooperative_prompt(_phrase_seed(session))
             if not (result.emergency or safety_hold or retraction_hold)
             and session.uncooperative.should_prompt
             else ""
@@ -1057,8 +1119,11 @@ class ProtocolSessionStore:
 
         cluster = session.current_cluster
         if cluster is None:
-            # Lượt mở: chưa có cụm nào, hỏi lại đúng câu mở tĩnh.
-            session.last_question = registry.OPENING_QUESTION
+            # Lượt mở: chưa có cụm nào, mời kể lại - nhưng bằng một bản KHÁC câu vừa phát ra. Lặp
+            # nguyên văn câu người bệnh vừa đọc là thứ khiến lượt chào nghe như máy trả lời tự động.
+            session.last_question = registry.opening_question(
+                f"{session.session_id}:{session.turn_count}", avoid=session.last_question,
+            )
             session.conversation.append({"role": "assistant", "content": session.last_question})
             console_log.agent_question(session.session_id, session.last_question, llm_used=False)
             return session
@@ -1131,14 +1196,15 @@ class ProtocolSessionStore:
         if not pending:
             return ""
         session.asked_safety_signal_codes.update(pending)
-        return text_safety_signals.confirmation_question(pending)
+        return text_safety_signals.confirmation_question(pending, seed=_phrase_seed(session))
 
     def _retraction_confirmation(self, session: Session, result) -> str:
         """Câu xác nhận TĨNH cho một đính chính chưa đủ rõ (§5 quy tắc 5).
 
         Reducer đã giữ hồ sơ ở giá trị CŨ và trả về field bị giữ; việc còn lại là hỏi người bệnh cho
-        rõ. Câu này không qua LLM: nó phải nêu ĐÚNG cái hệ thống đang định xoá, còn một bản diễn đạt
-        lại có thể biến câu xác nhận thành câu gợi ý.
+        rõ. Câu này không qua LLM: nó phải nêu ĐÚNG cái hệ thống đang định xoá, còn một bản model tự
+        diễn đạt lại có thể biến câu xác nhận thành câu gợi ý. Mười bản viết SẴN (`RETRACTION_TEMPLATES`)
+        cho sự đa dạng mà không nhường quyền viết cho model.
 
         Hỏi ĐÚNG MỘT LẦN mỗi field. Lượt sau, `confirmed_retractions` cho phép đính chính đi qua dù
         model vẫn trả về bằng chứng mờ - nếu không, một phiên mà người bệnh diễn đạt kiểu khó trích
@@ -1151,10 +1217,7 @@ class ProtocolSessionStore:
         labels = [
             protocol.fields_by_key[key].label for key in pending if key in protocol.fields_by_key
         ] or list(pending)
-        return (
-            f"Mình muốn xác nhận lại cho chắc: ý bạn là thông tin \"{labels[0]}\" trước đó không còn "
-            "đúng nữa, phải không? Bạn trả lời giúp mình \"đúng\" hoặc \"không\" nhé."
-        )
+        return phrasing.pick(RETRACTION_TEMPLATES, _phrase_seed(session)).format(label=labels[0])
 
     def _record_cluster_outcome(self, session: Session, cluster: QuestionCluster, result) -> None:
         """Quyết định cụm vừa hỏi đã XONG chưa. Đây là chỗ vá bug C3.
@@ -1195,6 +1258,45 @@ class ProtocolSessionStore:
         # chọn lại chính nó ở lượt sau và hội thoại quay vòng.
         if not result.retried_same_cluster or retries > agent.MAX_RETRIES_PER_CLUSTER:
             session.unresolved_cluster_ids.add(key)
+
+    def _cluster_for_protocol(self, session: Session, protocol) -> QuestionCluster | None:
+        """Cụm của lượt này, ĐÃ đối chiếu với protocol đang chạy. Lệch thì chọn lại, không dùng bừa.
+
+        LỖI THẬT ĐÃ TÁI HIỆN ĐƯỢC (production, `KeyError: 'complaint_onset_at'`). Lượt phát hiện đổi
+        protocol chọn cụm kế tiếp bằng protocol CŨ - `run_turn` nhận protocol cũ, `result.next_cluster`
+        sinh ra từ đó - rồi mới gán `session.protocol_name` sang tên mới. Lượt SAU ghép cụm cũ với
+        protocol mới, và mọi chỗ tra `protocol.fields_by_key[key]` vỡ ngay lúc dựng prompt: cụm `AB-02`
+        của bụng mang `complaint_onset_at`, mà `fever`/`chest_pain`/`headache` không khai field đó.
+        Người bệnh nhận đúng một dòng "Không xử lý được tin nhắn." giữa lúc đang khai bệnh.
+
+        KIỂM THEO FIELD, KHÔNG THEO MÃ CỤM. Cụm sàng lọc (`SCREEN-*`) và cụm quét sót được dựng tại
+        chỗ nên không nằm trong `protocol.clusters`; lọc theo mã sẽ vứt oan chúng mỗi lượt. Điều thật
+        sự cần đúng là "mọi field của cụm này đều có trong protocol đang chạy" - đúng bằng điều kiện
+        làm vỡ prompt, không rộng hơn.
+
+        CHỌN LẠI CHỨ KHÔNG TRẢ `None`. `None` giữa phiên rơi vào `FAIL_CLOSED_NO_CLUSTER`, tức đẩy
+        người bệnh sang bàn giao điều dưỡng vì một lỗi định tuyến nội bộ - phản ứng nặng hơn hẳn sự
+        cố. `advance` chạy trên `answers` đã có nên nó bỏ qua các cụm đã trả lời xong, không hỏi lại
+        từ đầu."""
+        cluster = session.current_cluster
+        if cluster is None or all(key in protocol.fields_by_key for key in cluster.fields):
+            return cluster
+
+        foreign = [key for key in cluster.fields if key not in protocol.fields_by_key]
+        stage = session.stage if session.stage in protocol.stage_order else protocol.stage_order[0]
+        step = stage_machine.advance(
+            protocol, stage, session.answers,
+            asked_ids=session.closed_ids_for_current_protocol(),
+        )
+        logger.warning(
+            "symptom_session.cluster_protocol_mismatch session=%s protocol=%s cluster=%s "
+            "field_la=%s -> chon_lai=%s",
+            session.session_id, protocol.name, cluster.id, ",".join(foreign),
+            step.cluster.id if step.cluster is not None else None,
+        )
+        session.stage = step.stage
+        session.current_cluster = step.cluster
+        return step.cluster
 
     def _progress(self, session: Session, result) -> None:
         """Cập nhật `session.stage`/`session.current_cluster` cho lượt kế tiếp, hoặc kết thúc phiên.

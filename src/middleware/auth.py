@@ -30,15 +30,21 @@ ROUTE_POLICIES = (
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/force-complete/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
     RoutePolicy("PUT", re.compile(r"^/api/v1/me/?$"), AUTHENTICATED),
+    RoutePolicy("GET", re.compile(r"^/api/v1/me/health-profile/?$"), PATIENT),
+    RoutePolicy("PUT", re.compile(r"^/api/v1/me/health-profile/?$"), PATIENT),
     RoutePolicy("POST", re.compile(r"^/api/v1/auth/change-password/?$"), AUTHENTICATED),
     RoutePolicy("GET", re.compile(r"^/api/v1/tools/?$"), NURSE),
     RoutePolicy("POST", re.compile(r"^/api/v1/tools/[^/]+/call/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/patient/history/?$"), PATIENT),
+    RoutePolicy("DELETE", re.compile(r"^/api/v1/cases/[^/]+/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/summary/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/?$"), AUTHENTICATED),
     RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/review/?$"), NURSE),
+    # Gợi ý bệnh viện gần nhất - PATIENT-ONLY có chủ đích, không có vai trò NURSE (ADR-010).
+    RoutePolicy("POST", re.compile(r"^/api/v1/cases/[^/]+/hospital-suggestions/?$"), PATIENT),
+    RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/hospital-suggestions/?$"), PATIENT),
 )
 
 

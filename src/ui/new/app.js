@@ -1,9 +1,9 @@
 import { api } from "./api.js";
 import { clearSession, state } from "./state.js";
 import { renderAccess, renderAuth, renderPasswordReset, renderRoleSelect, renderVerification } from "./features/auth.js?v=design-20260824g";
-import { renderDisclaimer, renderPatientCases, renderPatientChat, renderPatientHome, renderPatientResult, renderRedFlag, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260824g";
-import { renderNurseCase, renderNurseDone, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260824g";
-import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260824g";
+import { destroyHospitalMap, renderDisclaimer, renderHospitalSuggestion, renderPatientCases, renderPatientChat, renderPatientHealth, renderPatientHome, renderPatientResult, renderRedFlag, resetPatientTheme, startPatientCase, stopCasePolling } from "./features/patient.js?v=design-20260827o";
+import { renderNurseCase, renderNurseDone, renderNurseMessages, renderNurseQueue, renderNurseShift, stopNurseChatPolling, stopQueuePolling } from "./features/nurse.js?v=design-20260827zi";
+import { renderNurseDashboard, stopDashboardPolling } from "./features/dashboard.js?v=design-20260827zi";
 
 const app = document.querySelector("#app");
 
@@ -31,10 +31,12 @@ export function navigate(view, options = {}) {
 
 function render(view, options = {}) {
   if (!publicViews.has(view) && !state.accessToken) view = "access";
+  if (view === "access") resetPatientTheme();
   stopQueuePolling();
   stopDashboardPolling();
   stopNurseChatPolling();
   stopCasePolling();
+  destroyHospitalMap();
   state.view = view;
   if (view === "access") renderAccess(app, { navigate, logout });
   // `onAuthenticated` vì màn chọn vai trò có khối "dùng thử" tạo tài khoản tạm rồi vào thẳng luồng -
@@ -50,11 +52,14 @@ function render(view, options = {}) {
   // view riêng chứ không phải một nhánh markup của `patient-chat`.
   if (view === "red-flag") renderRedFlag(app, { navigate, logout });
   if (view === "patient-cases") renderPatientCases(app, { navigate, logout });
+  if (view === "patient-health") renderPatientHealth(app, { navigate, logout });
   if (view === "patient-result") renderPatientResult(app, { navigate, logout });
+  if (view === "patient-hospital") renderHospitalSuggestion(app, { navigate, logout });
   if (view === "nurse-queue") renderNurseQueue(app, { navigate, logout });
   if (view === "nurse-done") renderNurseDone(app, { navigate, logout });
   if (view === "nurse-dashboard") renderNurseDashboard(app, { navigate, logout });
   if (view === "nurse-shift") renderNurseShift(app, { navigate, logout });
+  if (view === "nurse-messages") renderNurseMessages(app, { navigate, logout });
   if (view === "nurse-case") renderNurseCase(app, { navigate, logout });
   app.focus();
 }
@@ -80,6 +85,7 @@ async function onAuthenticated(session) {
 }
 
 function logout() {
+  resetPatientTheme();
   clearSession();
   navigate("access");
 }

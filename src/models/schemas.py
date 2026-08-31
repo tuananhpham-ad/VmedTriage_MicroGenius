@@ -76,6 +76,12 @@ class TriagePriority(str, Enum):
 class ConversationMessage(BaseModel):
     role: ActorRole
     content: str = Field(..., min_length=1)
+    author_name: str | None = Field(default=None, max_length=120)
+    """Tên người gửi khi tin nhắn do nhân viên y tế viết trực tiếp.
+
+    Agent và bệnh nhân không cần lặp tên ở từng message; với nhân viên y tế thì đây là thông tin
+    nguồn cần hiển thị để bệnh nhân không nhầm câu hỏi trực tiếp với phản hồi của VMedTriage.
+    """
 
 
 # Dữ liệu triệu chứng đã được semantic mapper trích xuất có cấu trúc từ tin nhắn tự do.
@@ -265,6 +271,11 @@ class TriageCase(BaseModel):
     reviewed_by_name: str | None = None
     reviewed_at: datetime | None = None
     patient_id: int | None = Field(default=None, description="Chủ sở hữu case (id bệnh nhân đã đăng nhập)")
+    patient_hidden_at: datetime | None = None
+    """Mốc người bệnh xóa ca khỏi lịch sử của chính họ.
+
+    Đây là ẩn mềm, không phải xóa hồ sơ hay audit: điều dưỡng vẫn cần nhìn thấy ca để không làm mất
+    dấu vết HITL, đặc biệt với ca đã từng có tín hiệu khẩn."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     field_ask_counts: dict[str, int] = Field(default_factory=dict)
@@ -297,6 +308,12 @@ class TriageCase(BaseModel):
         default=ConversationQualityFlag.NORMAL,
         description="Nhãn chất lượng hội thoại. HIỆN KHÔNG AI GÁN - `quality_guard` đã bị gỡ cùng luồng Gen 2 (2026-08-16). Giữ trường để dữ liệu cũ đọc lại được và để cơ chế suppress hàng đợi nối lại được mà không phải migrate.",
     )
+
+
+class NurseCaseView(TriageCase):
+    """Bản case cho nhân viên y tế, có tên người bệnh để nhận diện cuộc hội thoại."""
+
+    patient_display_name: str | None = Field(default=None, max_length=120)
 
 
 # Request body của endpoint chat gốc: tin nhắn bệnh nhân + case_id nếu tiếp tục hội thoại đã có.

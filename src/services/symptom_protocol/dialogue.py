@@ -88,7 +88,17 @@ class ActPolicy:
 # BẢNG. Phải phủ ĐỦ mọi `DialogueAct` - có test duyệt toàn bảng canh việc đó.
 DIALOGUE_POLICY: dict[DialogueAct, ActPolicy] = {
     DialogueAct.ANSWER: ActPolicy(
-        acknowledge_instruction="",
+        # Đây là lượt PHỔ BIẾN NHẤT của mọi phiên, và trước 2026-08-26 nó là hàng DUY NHẤT có
+        # `acknowledge_instruction` rỗng - tức người bệnh trả lời đúng thì hệ thống không công nhận
+        # gì cả, chỉ hỏi câu kế. Đó chính xác là hành vi của một cái form, và nó là lý do lớn nhất
+        # khiến hội thoại bị mô tả là "nhắn với máy". Rẻ để sửa vì nó không đụng quyết định lâm sàng
+        # nào: dữ kiện được nhắc lại nằm trong `ResponsePlan.acknowledge`, tức chính thứ vừa trích
+        # được từ lời người bệnh - renderer không có gì để bịa.
+        acknowledge_instruction=(
+            "Nhắc lại NGẮN đúng một dữ kiện người bệnh vừa cho biết để họ thấy mình đã nghe, rồi hỏi "
+            "tiếp. Một mệnh đề thôi, không tóm tắt lại cả hồ sơ, không đánh giá dữ kiện đó là tốt hay "
+            "xấu."
+        ),
         simplify=False,
     ),
     DialogueAct.PARTIAL_ANSWER: ActPolicy(
@@ -222,7 +232,13 @@ def build_response_plan(
         return None
 
     policy = DIALOGUE_POLICY[act]
-    missing = tuple(key for key in cluster.fields if not stage_machine.is_filled(answers.get(key)))
+    # `field_is_settled`, KHÔNG phải `is_filled`: field con của một field cha đã bị phủ định là câu
+    # hỏi VÔ NGHĨA, không phải câu hỏi còn thiếu. `cluster_needs_answer` - thứ quyết định cụm này có
+    # được hỏi hay không - đã dùng định nghĩa đó từ trước; để hai định nghĩa lệch nhau thì `missing`
+    # kéo vào prompt đúng những field mà stage machine đã coi là xong.
+    missing = tuple(
+        key for key in cluster.fields if not stage_machine.field_is_settled(protocol, key, answers)
+    )
     return ResponsePlan(
         act=act,
         cluster_id=cluster.id,

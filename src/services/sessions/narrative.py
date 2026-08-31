@@ -9,9 +9,8 @@ dưỡng đọc bảng ISBAR có cấu trúc, còn DB/memory cần một đoạn
    chỗ khác - hàm này nhận `FieldSummary` đã render sẵn, không nhận `answers` thô.
 2. **Bản render theo field là BẢN ĐỐI CHỨNG.** Văn xuôi nói một điều mà không field nào đỡ thì nó
    đang bịa; `narrative_is_grounded` bắt ca đó và guard chặn (`VIOLATION_UNGROUNDED`).
-3. **Model chết ⇒ rơi về bản tất định**, không rơi về chuỗi rỗng. Phiếu vẫn phải đọc được khi
-   provider hỏng - đó cũng là lý do `FieldSummary.as_text()` là fallback chứ không phải một thông
-   báo lỗi.
+3. **Model chết ⇒ rơi về bản tất định**, không bịa thêm dữ kiện. Fallback chỉ chứa các field dương
+   tính từ `FieldSummary.as_narrative_text()`; các field phủ nhận vẫn nằm ở khối riêng của phiếu.
 
 Hàm này KHÔNG bao giờ ném ra ngoài: một lỗi ở tầng tóm tắt không được làm hỏng việc bàn giao ca.
 """
@@ -36,9 +35,9 @@ _SYSTEM_PROMPT = """Bạn viết lại lời khai của người bệnh thành M
 QUY TẮC BẮT BUỘC:
 - CHỈ dùng dữ kiện có trong danh sách bên dưới. TUYỆT ĐỐI không thêm chi tiết y khoa nào khác.
 - KHÔNG nêu tên bệnh, KHÔNG chẩn đoán, KHÔNG khuyên xử trí, KHÔNG nhắc tới thuốc hay việc đi khám.
-- Chỉ viết hai nhóm dữ kiện đã xác định, và TUYỆT ĐỐI KHÔNG trộn chúng vào nhau:
-  * mục "Triệu chứng ghi nhận" -> viết là người bệnh CÓ;
-  * mục "Người bệnh phủ nhận" -> viết là người bệnh nói KHÔNG CÓ;
+- Chỉ viết các dữ kiện dương tính trong mục "Triệu chứng ghi nhận" và "Thông tin đã ghi nhận".
+- Phải dùng HẾT các dòng đó, không bỏ dòng nào: tuổi, giới, bệnh nền, tính chất/hướng lan/thời lượng cơn đau đều là dữ kiện quyết định phân loại.
+- Không viết lời phủ nhận trong đoạn văn; các câu trả lời `false` được hiển thị ở một khối riêng trên phiếu.
 - Không viết về field chưa xác định/chưa hỏi tới. Không dùng chữ "unknown" trong đoạn tóm tắt.
 - Viết ở ngôi thứ ba ("Người bệnh..."), 3-5 câu, không gạch đầu dòng, không markdown.
 - Nếu cùng một thông tin bị đính chính nhiều lần, chỉ dùng giá trị MỚI NHẤT."""
@@ -60,7 +59,7 @@ def build_narrative(
     `source` là `"llm"` hoặc một mã lý do đã rơi về bản tất định (`"provider_unavailable"`, hoặc mã
     vi phạm guard). Trả ra thay vì chỉ log: phiếu cần nói được nó đang hiển thị bản nào, và
     `narrative_fallback_rate` là một chỉ số §8 thật chứ không phải chuyện gỡ lỗi."""
-    deterministic = summary.as_text()
+    deterministic = summary.as_narrative_text()
 
     def _record(source: str) -> None:
         """Ghi MỘT dòng log cho mỗi lần sinh văn xuôi, để `narrative_fallback_rate` đếm được.

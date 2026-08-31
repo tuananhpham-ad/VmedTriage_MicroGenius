@@ -47,7 +47,7 @@ def test_search_pubmed_builds_urls_from_pmids(monkeypatch, pubmed_settings):
     assert captured["url"] == search._ESEARCH_URL
     assert captured["params"] == {
         "db": "pubmed",
-        "term": "acute abdominal pain",
+        "term": f"(acute abdominal pain) AND {search._PUBMED_PUBLICATION_TYPE_FILTER}",
         "retmax": str(search.MAX_RESULTS),
         "retmode": "json",
         "sort": "relevance",
@@ -157,8 +157,12 @@ def test_search_pubmed_sends_the_trimmed_term(monkeypatch, pubmed_settings):
     claim = "Acute appendicitis in patients with fever requires clinical evaluation"
     search._search_pubmed(claim, PUBMED_ALLOWLIST)
 
-    assert captured["params"]["term"] == search._pubmed_query(claim)
+    expected_term = search._pubmed_query(claim, max_terms=search._PUBMED_MAX_TERMS_FILTERED)
+    assert captured["params"]["term"] == f"({expected_term}) AND {search._PUBMED_PUBLICATION_TYPE_FILTER}"
     assert captured["params"]["term"] != claim
+    # Ghép filter KHÔNG được nới trần từ khoá về `_PUBMED_MAX_TERMS` (10) - dùng đúng trần thấp hơn
+    # dành riêng cho truy vấn có lọc, nếu không sẽ tái lập bug "0 kết quả" đã đo 2026-08-26.
+    assert len(expected_term.split()) <= search._PUBMED_MAX_TERMS_FILTERED
 
 
 # ---------- auto (chain gemini -> tavily -> pubmed) ----------
@@ -209,6 +213,75 @@ def test_chain_returns_empty_when_everything_fails(monkeypatch, auto_settings):
     monkeypatch.setattr(search, "_search_pubmed", lambda *a, **k: [])
 
     assert search._search_chain("query", PUBMED_ALLOWLIST) == []
+
+
+# ---------- parallel (tavily + pubmed cùng lúc) ----------
+
+
+@pytest.fixture
+def parallel_settings(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "source_support_search_provider", "parallel")
+    return settings
+
+
+def test_parallel_merges_urls_from_both_backends(monkeypatch, parallel_settings):
+    monkeypatch.setattr(search, "_search_tavily", lambda *a, **k: ["https://aafp.org/x", "https://who.int/y"])
+    monkeypatch.setattr(search, "_search_pubmed", lambda *a, **k: ["https://pubmed.ncbi.nlm.nih.gov/1/"])
+
+    assert search._search_parallel("query", PUBMED_ALLOWLIST) == [
+        "https://aafp.org/x",
+        "https://who.int/y",
+        "https://pubmed.ncbi.nlm.nih.gov/1/",
+    ]
+
+
+def test_parallel_dedupes_urls_present_in_both_backends(monkeypatch, parallel_settings):
+    monkeypatch.setattr(search, "_search_tavily", lambda *a, **k: ["https://who.int/x"])
+    monkeypatch.setattr(search, "_search_pubmed", lambda *a, **k: ["https://who.int/x"])
+
+    assert search._search_parallel("query", PUBMED_ALLOWLIST) == ["https://who.int/x"]
+
+
+def test_parallel_keeps_tavily_results_when_pubmed_raises(monkeypatch, parallel_settings):
+    monkeypatch.setattr(search, "_search_tavily", lambda *a, **k: ["https://who.int/x"])
+    monkeypatch.setattr(
+        search, "_search_pubmed", lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPError("NCBI unavailable"))
+    )
+
+    assert search._search_parallel("query", PUBMED_ALLOWLIST) == ["https://who.int/x"]
+
+
+def test_parallel_keeps_pubmed_results_when_tavily_raises(monkeypatch, parallel_settings):
+    monkeypatch.setattr(
+        search, "_search_tavily", lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPError("no tavily key"))
+    )
+    monkeypatch.setattr(search, "_search_pubmed", lambda *a, **k: ["https://pubmed.ncbi.nlm.nih.gov/1/"])
+
+    assert search._search_parallel("query", PUBMED_ALLOWLIST) == ["https://pubmed.ncbi.nlm.nih.gov/1/"]
+
+
+def test_parallel_never_calls_gemini(monkeypatch, parallel_settings):
+    monkeypatch.setattr(
+        search, "_search_gemini", lambda *a, **k: (_ for _ in ()).throw(AssertionError("unreachable"))
+    )
+    monkeypatch.setattr(search, "_search_tavily", lambda *a, **k: [])
+    monkeypatch.setattr(search, "_search_pubmed", lambda *a, **k: [])
+
+    assert search.search_web("query", PUBMED_ALLOWLIST) == []
+
+
+def test_search_web_dispatches_to_parallel(monkeypatch, parallel_settings):
+    captured: dict = {}
+
+    def fake_parallel(query, allowlist, *, meter=None):
+        captured.update(query=query, allowlist=allowlist, meter=meter)
+        return ["https://who.int/x"]
+
+    monkeypatch.setattr(search, "_search_parallel", fake_parallel)
+
+    assert search.search_web("query", PUBMED_ALLOWLIST) == ["https://who.int/x"]
+    assert captured == {"query": "query", "allowlist": PUBMED_ALLOWLIST, "meter": None}
 
 
 def test_search_web_dispatches_to_auto(monkeypatch, auto_settings):

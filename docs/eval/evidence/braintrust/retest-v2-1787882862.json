@@ -1,0 +1,146 @@
+[
+  {
+    "name": "root",
+    "input": "Nữ 45 tuổi, không bệnh nền. Đau ngực âm ỉ từng cơn trong 3 ngày qua, các cơn gần đây tăng dần cả mức độ lẫn tần suất so với tuần trước, mỗi cơn vài phút, không lan, không kèm triệu chứng khác.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 17
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787882880.5897346,
+      "end": 1787883028.8655555,
+      "duration": 148.27582097053528,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EV-01",
+      "judge_text": null,
+      "latency_ms": 148273.09560400317,
+      "manual_run_note": "- Cả rule + model dự đoán đúng\n- Đang bị hỏi sang checklist nhóm sốt nên bị quá nhiều câu hỏi, còn hỏi sang cả đau bụng  (theo protocol tầm 5-7 câu thôi), câu cuối hỏi lệch; \n",
+      "protocol_reference": "đau từng cơn tăng dần mức độ/tần suất",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787883028864,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 62 tuổi, tiền sử tăng huyết áp. Đau ngực như bị đè ép/bóp nghẹt, lan ra cánh tay trái, đã kéo dài 20 phút, không đỡ khi nghỉ.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 3
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787882862.2370565,
+      "end": 1787882880.5897346,
+      "duration": 18.352678060531616,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EMG-02",
+      "judge_text": null,
+      "latency_ms": 18350.00742500415,
+      "manual_run_note": "- Rule + model dự đoán đúng; \n- khai báo đau ngực nhưng câu hỏi lại thứ 2 có bị đau ngực không + xưng hô câu trước là \"mình\"  câu sau là \"em\"; các câu hỏi phía sau đúng rồi",
+      "protocol_reference": "đau >5 phút + tuổi >50 + risk factor (THA) ở câu 4 + tính chất đè ép ngực",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787882880588,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 58 tuổi. Đột ngột đau ngực dữ dội, hiện khó thở nặng đến mức không nói được hết câu, người nhà thấy kém tỉnh táo.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787882862.1694171,
+      "end": 1787882862.2370565,
+      "duration": 0.06763935089111328,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EMG-01",
+      "judge_text": null,
+      "latency_ms": 65.8190559988725,
+      "manual_run_note": "- Rule + model dự đoán đúng; \n- tuy nhiên câu hỏi đầu tiên bot hỏi lại câu hỏi của nhóm triệu chứng sốt",
+      "protocol_reference": "red-flag: khó thở nặng không nói hết câu",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787882862235,
+    "__bt_assignments": null
+  }
+]

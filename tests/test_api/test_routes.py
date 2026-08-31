@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy import select
 
 from src.api import routes
+from src.config import get_settings
 from src.database import session_scope
 from src.models.case_record import ConversationRow
-from src.config import get_settings
 from src.models.schemas import CaseStatus, TriageCase, TriagePriority, TriageProposal
 from src.services.infra import provider_router
 from src.services.stores.approval_store import approval_store
@@ -96,7 +96,9 @@ async def test_safety_gate_allows_c6_for_escalated_case(monkeypatch):
     case = TriageCase(status=CaseStatus.ESCALATED, summary_ready=True)
     await routes._attach_graph_decision(case, previous=None)
 
-    graph_decide.assert_called_once_with(case)
+    # Hai kwarg báo tiến trình luôn được truyền, kể cả khi rỗng - `/chat` thường không có ai
+    # nghe. Điều bài test này khẳng định là ca nào được đưa vào, không phải hình dạng lời gọi.
+    graph_decide.assert_called_once_with(case, on_progress=None, on_token=None)
     assert case.graph_decision == {"triage_label": "cap_cuu", "safety_gate": {}}
 
 
@@ -246,9 +248,10 @@ async def test_chat_non_fever_case_is_not_labelled_as_fever(client, patient_head
 
     assert case.status_code == 200
     structured = case.json()["structured_data"]
-    assert structured["symptom_group"] == "general"
-    assert "temp_c" not in structured["fields"]  # field của protocol sốt không được lẫn vào
-    assert structured["fields"]["chief_complaint"] == "đau bụng"
+    assert structured["symptom_group"] == "abdominal"
+    # F09 dùng nhiệt độ trong mapping đau bụng, nhưng các field điều trị sốt vẫn không được lẫn vào.
+    assert "temp_c" in structured["fields"]
+    assert "antipyretic_taken" not in structured["fields"]
 
 
 @pytest.mark.asyncio
@@ -301,6 +304,34 @@ async def test_nurse_can_approve_case(client, patient_headers, nurse_headers):
     assert data["patient_visible_response"] == "Phản hồi đã được điều dưỡng duyệt."
 
 
+@pytest.mark.asyncio
+async def test_patient_can_hide_own_case_from_history_without_deleting_audit_record(
+    client, patient_headers, scripted_llm,
+):
+    """Xóa ở giao diện người bệnh chỉ là ẩn mềm: không được phá trace HITL."""
+    scripted_llm({})
+    chat_response = await client.post(
+        "/api/v1/chat",
+        json={"message": "Tôi bị đau đầu từ sáng."},
+        headers=patient_headers,
+    )
+    assert chat_response.status_code == 200
+    case_id = chat_response.json()["case_id"]
+
+    hidden = await client.delete(f"/api/v1/cases/{case_id}", headers=patient_headers)
+    assert hidden.status_code == 200
+    assert hidden.json()["message"] == "Đã xóa ca khỏi lịch sử của bạn."
+
+    history = await client.get("/api/v1/patient/history", headers=patient_headers)
+    assert history.status_code == 200
+    assert case_id not in {item["case_id"] for item in history.json()}
+
+    patient_view = await client.get(f"/api/v1/cases/{case_id}", headers=patient_headers)
+    assert patient_view.status_code == 404
+    assert case_store.get(case_id) is not None
+    assert approval_store.audit_for_case(case_id)[-1].action == "hidden_from_patient_history"
+
+
 # --- streaming (SSE) ---------------------------------------------------------------------------
 
 
@@ -344,10 +375,16 @@ async def test_chat_stream_emits_status_tokens_then_the_same_body_as_chat(
     assert names[-1] == "done"
 
     tokens = "".join(data for name, data in events if name == "token")
-    assert tokens == "Dạ cho em hỏi thêm ạ?"
+    # KHÔNG khẳng định chữ nào do model viết. Lượt đầu của mọi ca giờ là câu quét cấp cứu phổ quát
+    # (stage `E`, `screening.probe_question`) - văn bản TĨNH, cố ý không qua LLM. Bài này viết từ
+    # trước khi stage đó tồn tại nên nó chờ đúng chuỗi mà `fake_stream` phát ra, và chờ mãi.
+    #
+    # Bất biến thật sự đáng canh ở đây không phải "ai viết câu đó", mà là HAI KÊNH KHỚP NHAU: những
+    # gì người bệnh đọc dần qua `token` phải đúng bằng câu nằm trong `done`. Lệch nhau nghĩa là màn
+    # hình hiện một đằng còn bản ghi lưu một nẻo - và đó mới là thứ làm vỡ frontend.
     body = next(data for name, data in events if name == "done")
     assert set(body) >= {"case_id", "response", "status", "requires_human_approval"}
-    assert body["response"] == tokens
+    assert tokens == body["response"]
 
 
 @pytest.mark.asyncio

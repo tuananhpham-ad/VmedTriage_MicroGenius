@@ -1,0 +1,482 @@
+[
+  {
+    "name": "root",
+    "input": "Nữ 22 tuổi. Đau bụng âm ỉ từng cơn khoảng 30 phút sau khi ăn đồ lạ, không sốt, không nôn máu, không lơ mơ.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 17
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854790.0417707,
+      "end": 1787855389.5690753,
+      "duration": 599.527304649353,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "AB-SC-01",
+      "judge_text": null,
+      "latency_ms": 599526.0640359994,
+      "manual_run_note": "- rule và model bị đoán nhầm thành \"khám sớm\"",
+      "protocol_reference": "đau nhẹ-vừa từng cơn, không có dấu hiệu nguy hiểm",
+      "source": "protocol",
+      "symptom_group": "Đau bụng"
+    },
+    "comments": null,
+    "created": 1787855389568,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 25 tuổi, khỏe mạnh. Thỉnh thoảng nhói ngực trái vài giây khi hít sâu, tự hết, không lan, không kèm triệu chứng gì khác, không yếu tố nguy cơ (không bệnh nền).",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 16
+    },
+    "expected": "Tự chăm sóc",
+    "tags": [],
+    "scores": {
+      "match": 0
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854238.7894826,
+      "end": 1787854382.0277927,
+      "duration": 143.23831009864807,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-SC-01",
+      "judge_text": null,
+      "latency_ms": 143237.3816190011,
+      "manual_run_note": "- rule và model bị đoán nhầm thành \"khám sớm\"",
+      "protocol_reference": "đau nhẹ từng cơn vài giây, không risk factor, không triệu chứng kèm",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787854382027,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 28 tuổi. Đau bụng quanh rốn, sốt 39.6°C, không xuất huyết, không lơ mơ.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 14
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854661.7185805,
+      "end": 1787854790.0417707,
+      "duration": 128.32319021224976,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "AB-EV-02",
+      "judge_text": null,
+      "latency_ms": 128320.19635799952,
+      "manual_run_note": "- rule đoán đúng, model đoán thành \"cấp cứu\"",
+      "protocol_reference": "căn cứ: sốt cao theo ngưỡng protocol kèm đau bụng",
+      "source": "protocol",
+      "symptom_group": "Đau bụng"
+    },
+    "comments": null,
+    "created": 1787854790040,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 65 tuổi. Đau bụng vùng hạ sườn phải, liên tục hơn 1 giờ, không lơ mơ, không nôn máu.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 18
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854482.8049254,
+      "end": 1787854661.7185805,
+      "duration": 178.91365504264832,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "AB-EV-01",
+      "judge_text": null,
+      "latency_ms": 178912.26900800393,
+      "manual_run_note": "pass",
+      "protocol_reference": "đau nặng >1h, đặc biệt nếu >60 tuổi",
+      "source": "protocol",
+      "symptom_group": "Đau bụng"
+    },
+    "comments": null,
+    "created": 1787854661717,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 50 tuổi. Đau thượng vị, sáng nay nôn ra máu đỏ tươi.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854482.7422297,
+      "end": 1787854482.8049254,
+      "duration": 0.06269574165344238,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "AB-EMG-02",
+      "judge_text": null,
+      "latency_ms": 61.30526900233235,
+      "manual_run_note": "pass",
+      "protocol_reference": "red-flag: nôn ra máu — xuất huyết tiêu hoá",
+      "source": "protocol",
+      "symptom_group": "Đau bụng"
+    },
+    "comments": null,
+    "created": 1787854482803,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 40 tuổi. Đau bụng dữ dội, cảm thấy lơ mơ khó tỉnh táo, da lạnh và vã mồ hôi.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854382.0277927,
+      "end": 1787854482.7422297,
+      "duration": 100.71443700790405,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "AB-EMG-01",
+      "judge_text": null,
+      "latency_ms": 58.104112998989876,
+      "manual_run_note": null,
+      "protocol_reference": "red-flag: dấu hiệu sốc: lơ mơ + da lạnh vã mồ hôi",
+      "source": "protocol",
+      "symptom_group": "Đau bụng"
+    },
+    "comments": null,
+    "created": 1787854482741,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 30 tuổi. Sốt 38.5°C, đau ngực nhói khi ho/hít sâu 1 ngày nay, không khó thở, không tiền sử tim mạch.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 17
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787854072.990585,
+      "end": 1787854238.7894826,
+      "duration": 165.79889750480652,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EV-02",
+      "judge_text": null,
+      "latency_ms": 165795.58497900143,
+      "manual_run_note": "- báo là \"bạn tôi\" bị đau nhưng nó detect thành user bị đau (báo nó sửa lại mà nó vẫn nhầm); cũng bị hỏi  \n- rule đoán đúng, model đoán nhầm thành \"cấp cứu\"",
+      "protocol_reference": "sốt >38.1°C kèm đau ngực",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787854238788,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nữ 45 tuổi, không bệnh nền. Đau ngực âm ỉ từng cơn trong 3 ngày qua, các cơn gần đây tăng dần cả mức độ lẫn tần suất so với tuần trước, mỗi cơn vài phút, không lan, không kèm triệu chứng khác.",
+    "output": {
+      "actual_priority": "Urgent",
+      "status": "needs_nurse_review",
+      "turns": 18
+    },
+    "expected": "Cần khám sớm",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787853896.3298213,
+      "end": 1787854072.990585,
+      "duration": 176.66076374053955,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EV-01",
+      "judge_text": null,
+      "latency_ms": 176659.04730700277,
+      "manual_run_note": "- Cả rule + model dự đoán đúng\n- Đang bị hỏi sang checklist nhóm sốt nên bị quá nhiều câu hỏi, còn hỏi sang cả đau bụng  (theo protocol tầm 5-7 câu thôi), câu cuối hỏi lệch; \n",
+      "protocol_reference": "đau từng cơn tăng dần mức độ/tần suất",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787854072989,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 62 tuổi, tiền sử tăng huyết áp. Đau ngực như bị đè ép/bóp nghẹt, lan ra cánh tay trái, đã kéo dài 20 phút, không đỡ khi nghỉ.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 18
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787853748.801926,
+      "end": 1787853896.3298213,
+      "duration": 147.52789545059204,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EMG-02",
+      "judge_text": null,
+      "latency_ms": 147526.4839829979,
+      "manual_run_note": "- Rule + model dự đoán đúng; \n- khai báo đau ngực nhưng câu hỏi lại thứ 2 có bị đau ngực không + xưng hô câu trước là \"mình\"  câu sau là \"em\"; các câu hỏi phía sau đúng rồi",
+      "protocol_reference": "đau >5 phút + tuổi >50 + risk factor (THA) ở câu 4 + tính chất đè ép ngực",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787853896328,
+    "__bt_assignments": null
+  },
+  {
+    "name": "root",
+    "input": "Nam 58 tuổi. Đột ngột đau ngực dữ dội, hiện khó thở nặng đến mức không nói được hết câu, người nhà thấy kém tỉnh táo.",
+    "output": {
+      "actual_priority": "Emergency",
+      "status": "escalated",
+      "turns": 1
+    },
+    "expected": "Cấp cứu",
+    "tags": [],
+    "scores": {
+      "match": 1
+    },
+    "metrics": {
+      "cached": null,
+      "start": 1787853748.746213,
+      "end": 1787853748.801926,
+      "duration": 0.05571293830871582,
+      "llm_duration": null,
+      "time_to_first_token": null,
+      "llm_calls": 0,
+      "tool_calls": 0,
+      "errors": 0,
+      "llm_errors": 0,
+      "tool_errors": 0,
+      "prompt_tokens": 0,
+      "prompt_cached_tokens": 0,
+      "prompt_cache_creation_tokens": 0,
+      "prompt_cache_creation_5m_tokens": 0,
+      "prompt_cache_creation_1h_tokens": 0,
+      "completion_tokens": 0,
+      "completion_reasoning_tokens": 0,
+      "total_tokens": 0,
+      "estimated_cost": null
+    },
+    "metadata": {
+      "case_id": "CN-EMG-01",
+      "judge_text": null,
+      "latency_ms": 53.60409300192259,
+      "manual_run_note": "- Rule + model dự đoán đúng; \n- tuy nhiên câu hỏi đầu tiên bot hỏi lại câu hỏi của nhóm triệu chứng sốt",
+      "protocol_reference": "red-flag: khó thở nặng không nói hết câu",
+      "source": "protocol",
+      "symptom_group": "Đau ngực"
+    },
+    "comments": null,
+    "created": 1787853748800,
+    "__bt_assignments": null
+  }
+]

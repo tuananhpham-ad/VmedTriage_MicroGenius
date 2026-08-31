@@ -9,6 +9,8 @@ chunk, không chấm - những việc đó nằm ở `retrieval` và `fetching`,
     pubmed             - NCBI ESearch, không cần key, trả URL PubMed dựng từ PMID
     auto               - thử gemini -> tavily -> pubmed theo thứ tự, dừng ở backend đầu tiên có URL;
                           rỗng hoặc lỗi ở một backend đều rớt sang backend kế tiếp (xem `_search_chain`)
+    parallel           - tavily + pubmed CÙNG LÚC (2 thread), gộp URL, KHÔNG có gemini (đo thật
+                          2026-08-26: gemini 0/41 ca lọt allowlist, xem `_search_parallel`)
     none               - tắt hẳn, tương đương SOURCE_SUPPORT_INDEX_ONLY
 
 VÌ SAO MẶC ĐỊNH GEMINI: dự án đã có key Gemini và chưa có key Tavily. Đánh đổi thật nằm ở chỗ khác
@@ -63,6 +65,8 @@ def search_web(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[st
             return _search_pubmed(query, allowlist, meter=meter)
         if provider == "auto":
             return _search_chain(query, allowlist, meter=meter)
+        if provider == "parallel":
+            return _search_parallel(query, allowlist, meter=meter)
         return _search_gemini(query, allowlist, meter=meter)
     except Exception as error:
         logger.warning("source_support.search_failed provider=%s reason=%s", provider, type(error).__name__)
@@ -230,35 +234,66 @@ _PUBMED_MAX_TERMS = 10
 2026-08-23, cùng một mệnh đề COPD: câu đầy đủ (14 từ) -> 1 kết quả, `best_score` 0.532, verdict
 `unsupported`; bản rút còn 7 từ khoá -> 5 kết quả, `best_score` 0.644, verdict `supports`."""
 
+_PUBMED_PUBLICATION_TYPE_FILTER = '("guideline"[pt] OR "practice guideline"[pt] OR "review"[pt])'
+"""Ép ESearch chỉ trả bài THUỘC THỂ LOẠI hướng dẫn/tổng quan, không phải case report/nghiên cứu gốc.
 
-def _pubmed_query(claim: str) -> str:
+Đo thật 2026-08-26 (`eval/scripts/eval_part2_part3_web_search.py`, 45 ca Semigran, index rỗng): không
+lọc publication type, PubMed tìm được ứng viên cho 14/49 claim (29%) - GẦN BẰNG tỉ lệ của Tavily
+(25/69, 36%) - nhưng verdict chỉ công nhận 4/14 (29%) là supports/partial, so với 16/25 (64%) của
+Tavily. Nguyên nhân: PubMed trả trang ABSTRACT của bài nghiên cứu gốc (case report, kết quả thử
+nghiệm...) - đúng thể loại mô tả nghiên cứu chứ không phát biểu kiểu "nếu có X thì cần Y" như hướng
+dẫn lâm sàng, nên bộ chấm blind (đúng thiết kế, không được nương tay - xem `verdict.py`) đa số gạt
+`unsupported` dù chủ đề khớp. Bài publication-type "Guideline"/"Practice Guideline"/"Review" là đúng
+thể loại VĂN BẢN HƯỚNG DẪN mà claim (viết ở "mức khái quát của sách hướng dẫn" - xem `claims.py` quy
+tắc 3b) cần đối chiếu.
+
+ĐÁNH ĐỔI CÓ CHỦ Ý: bộ lọc này thu hẹp tập bài rất nhiều (đa số PubMed là nghiên cứu gốc), nên một số
+claim hẹp có thể ra 0 kết quả thay vì có candidate-nhưng-bị-gạt như trước. Chấp nhận được vì mục tiêu
+là độ CHÍNH XÁC của trích dẫn cho điều dưỡng, không phải số lượng candidate đưa vào bước chấm."""
+
+_PUBMED_MAX_TERMS_FILTERED = 5
+"""Trần từ khoá RIÊNG khi có `_PUBMED_PUBLICATION_TYPE_FILTER` đi kèm - thấp hơn hẳn `_PUBMED_MAX_TERMS`
+(10) dùng khi không lọc. Đo thật 2026-08-26, 2 claim mẫu (COPD/gan cấp): ghép nguyên `_PUBMED_MAX_TERMS`
+(7-9 từ) với bộ lọc pt ra ĐÚNG 0 kết quả cho cả hai; giữ 5 từ đầu (thứ tự ưu tiên vốn có của
+`_pubmed_query`) thì ra 11 và 2 kết quả. Bộ lọc pt đã tự nó là một phép AND rất chặt (thu hẹp còn
+~4 triệu/37 triệu bản ghi PubMed), nên phần từ khoá phải nới ra để bù lại - ghép hai tầng AND chặt
+lên nhau collapse về 0 nhanh hơn nhiều so với dùng riêng lẻ."""
+
+
+def _pubmed_query(claim: str, *, max_terms: int = _PUBMED_MAX_TERMS) -> str:
     """Câu mệnh đề tiếng Anh -> chuỗi từ khoá cho ESearch. Hàm THUẦN: không mạng, không LLM.
 
     Phải deterministic. Nhánh `documented_rule` của C6 đã có một tầng LLM trích fact không tái lập
     được (chạy 3 lần ra 2 kết quả khác nhau); thêm một tầng LLM nữa ở chỗ dựng câu truy vấn thì
     không còn cách nào truy ngược vì sao một ca trích được nguồn còn ca kia thì không.
 
+    `max_terms` cho `_search_pubmed` nới xuống `_PUBMED_MAX_TERMS_FILTERED` khi ghép thêm bộ lọc
+    publication-type - xem docstring hằng số đó. Mặc định vẫn `_PUBMED_MAX_TERMS` cho mọi lời gọi
+    khác (kể cả test gọi trực tiếp hàm này) để không đổi hành vi ngoài phạm vi bộ lọc mới.
+
     Rỗng sau khi lọc thì TRẢ LẠI câu gốc: chuỗi rỗng khiến ESearch khớp toàn bộ PubMed."""
     cleaned = _PUBMED_OPERATOR_CHARS.sub(" ", claim)
     terms = [word for word in cleaned.split() if word.lower().strip(",.;") not in _PUBMED_STOPWORDS]
-    return " ".join(terms[:_PUBMED_MAX_TERMS]) if terms else claim
+    return " ".join(terms[:max_terms]) if terms else claim
 
 
 def _search_pubmed(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[str]:
     """Gọi NCBI ESearch và dựng URL PubMed trực tiếp từ PMID.
 
     Không tốn LLM call và không cần key. URL PubMed vẫn phải đi qua allowlist trước khi fetch.
-    `query` là câu mệnh đề đầy đủ; ESearch cần từ khoá nên đi qua `_pubmed_query` trước.
+    `query` là câu mệnh đề đầy đủ; ESearch cần từ khoá nên đi qua `_pubmed_query` trước, ghép thêm
+    `_PUBMED_PUBLICATION_TYPE_FILTER` để ưu tiên bài hướng dẫn/tổng quan thay vì nghiên cứu gốc.
     """
     import httpx
 
     settings = get_settings()
-    term = _pubmed_query(query)
+    term = _pubmed_query(query, max_terms=_PUBMED_MAX_TERMS_FILTERED)
     if term != query:
         logger.info("source_support.pubmed_query_trimmed term=%r", term[:120])
+    final_term = f"({term}) AND {_PUBMED_PUBLICATION_TYPE_FILTER}"
     params = {
         "db": "pubmed",
-        "term": term,
+        "term": final_term,
         "retmax": str(MAX_RESULTS),
         "retmode": "json",
         # BẮT BUỘC truyền `sort`. Mặc định của ESearch là trả bài MỚI NHẤT, không phải bài LIÊN QUAN
@@ -276,6 +311,68 @@ def _search_pubmed(query: str, allowlist: tuple[str, ...], *, meter=None) -> lis
     urls = [f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" for pmid in pmids]
     logger.info("source_support.search provider=pubmed raw_urls=%s", len(urls))
     return [url for url in urls if domain_allowed(url, allowlist)]
+
+
+# ---------- Parallel (tavily + pubmed cùng lúc, không đợi tuần tự) ----------
+
+
+def _search_parallel(query: str, allowlist: tuple[str, ...], *, meter=None) -> list[str]:
+    """Gọi Tavily và PubMed CÙNG LÚC bằng 2 thread, GỘP url thay vì dừng ở backend đầu tiên như `auto`.
+
+    KHÔNG GỒM GEMINI. Đo thật 2026-08-26 (`eval/scripts/eval_part2_part3_web_search.py`, 45 ca
+    Semigran, index rỗng): Gemini 0/41 ca tìm được nguồn lọt allowlist
+    (`result_model/part2_c6_part3_gemini_full45.txt`), trong khi Tavily 24/41 và PubMed 15/41. Xếp
+    Gemini vào chain chỉ tốn thêm một lượt `generate_content` (đôi khi 429 riêng của quota grounding -
+    xem docstring `source_support_search_provider` ở `config.py`) mà không đổi kết quả cuối, nên bỏ
+    hẳn thay vì giữ làm bước đầu vô ích.
+
+    SONG SONG THAY VÌ CHAIN TUẦN TỰ. `_search_chain` (`auto`) dừng ở backend đầu tiên có URL - đúng
+    khi Gemini đứng đầu (muốn thử cái rẻ trước khi trả tiền/tốn quota). Nhưng Tavily và PubMed có chi
+    phí ngang nhau (không đụng quota LLM), nên đợi tuần tự chỉ cộng dồn độ trễ mạng của cả hai mà
+    không tiết kiệm được gì. Chạy đồng thời bằng `ThreadPoolExecutor` kéo độ trễ THỰC TẾ của một lần
+    index-miss về gần bằng lần LÂU NHẤT trong hai, thay vì TỔNG của cả hai.
+
+    GỘP KẾT QUẢ, KHÔNG CHỌN MỘT. Hai backend có tập nguồn khác nhau (Tavily nghiêng hướng dẫn lâm
+    sàng/AAFP, PubMed nghiêng bài tổng quan) - giữ cả hai cho `_search_and_ingest` tăng số ứng viên
+    thay vì vứt bớt. Tavily đứng trước trong danh sách gộp vì đo thật cho hit-rate cao hơn (24/41 so
+    với 15/41), nên khi cắt về `MAX_RESULTS` phần giữ lại nghiêng về backend đáng tin hơn.
+
+    ĐÁNH ĐỔI CHI PHÍ: khác `auto` (rớt xuống backend kế tiếp CHỈ KHI backend trước rỗng/lỗi), nhánh
+    này LUÔN gọi cả hai - đúng 2 lời gọi mạng mỗi lần miss, không hơn không kém. Đổi lấy độ trễ thấp
+    hơn, không đổi lấy tiền rẻ hơn.
+
+    LỖI Ở MỘT NHÁNH KHÔNG LÀM HỎNG NHÁNH KIA. Mỗi future tự bắt exception của mình qua
+    `_search_backend_safe` - không dựa vào catch chung của `search_web()`, vì catch đó bọc quanh TOÀN
+    BỘ dispatch và sẽ làm Tavily lỗi kéo theo mất luôn kết quả PubMed đã có ở future kia."""
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        tavily_future = pool.submit(_search_backend_safe, "tavily", _search_tavily, query, allowlist, meter)
+        pubmed_future = pool.submit(_search_backend_safe, "pubmed", _search_pubmed, query, allowlist, meter)
+        tavily_urls = tavily_future.result()
+        pubmed_urls = pubmed_future.result()
+
+    merged: list[str] = []
+    for url in (*tavily_urls, *pubmed_urls):
+        if url not in merged:
+            merged.append(url)
+    logger.info(
+        "source_support.search_parallel_merged tavily=%s pubmed=%s merged=%s",
+        len(tavily_urls), len(pubmed_urls), len(merged),
+    )
+    return merged[:MAX_RESULTS]
+
+
+def _search_backend_safe(name: str, backend, query: str, allowlist: tuple[str, ...], meter) -> list[str]:
+    """Chạy một backend trong thread riêng của `_search_parallel`, tự nuốt lỗi của chính nó.
+
+    Không dùng lại vòng try/except của `_search_chain` vì đó nằm trong vòng lặp tuần tự; ở đây mỗi
+    nhánh chạy trong future độc lập nên phải tự đứng một mình."""
+    try:
+        return backend(query, allowlist, meter=meter)
+    except Exception as error:
+        logger.warning("source_support.search_parallel_step_failed provider=%s reason=%s", name, type(error).__name__)
+        return []
 
 
 # ---------- Auto (chain gemini -> tavily -> pubmed) ----------

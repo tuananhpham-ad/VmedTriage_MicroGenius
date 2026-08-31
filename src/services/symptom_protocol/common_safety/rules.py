@@ -17,8 +17,6 @@ nào khác khớp chưa. Protocol nào ghép catalog riêng phải giữ rule ph
 
 from __future__ import annotations
 
-import unicodedata
-
 from src.services.symptom_protocol.common_safety.predicates import (
     age_in_months,
     array_has_any,
@@ -28,6 +26,7 @@ from src.services.symptom_protocol.common_safety.predicates import (
     is_true,
 )
 from src.services.symptom_protocol.models import RuleMatch
+from src.services.text_norm import fold_diacritics
 
 CHRONIC_SEVERE = frozenset({"cardiac", "pulmonary", "renal", "hepatic", "hematologic_thalassemia", "malignancy"})
 CHEST_PAIN_TEXT_MARKERS = frozenset({"dau nguc", "tuc nguc", "nang nguc", "that nguc", "nguc"})
@@ -106,6 +105,28 @@ REASON_CODE_LABELS: dict[str, str] = {
     "RF-43": "Ổ nhiễm khuẩn khu trú",
     "RF-44": "Người nhà rất lo lắng / trông rất mệt",
     "RF-45": "Đau ngực nặng lên kèm khó thở và giảm tỉnh táo",
+    "RF-50": "Đau ngực kiểu đè ép kéo dài kèm yếu tố nguy cơ tim mạch",
+    "RF-51": "Đau ngực kèm khó thở / rối loạn nhịp",
+    "RF-52": "Đau ngực kéo dài trên 5 phút",
+    "RF-53": "Yếu tố nguy cơ thuyên tắc huyết khối tĩnh mạch",
+    "RF-54": "Đau ngực tăng dần mức độ / tần suất",
+    "RF-55": "Sốt kèm đau ngực",
+    "RF-56": "Đau ngực lan ra lưng",
+    "RF-60": "Đau bụng dữ dội kéo dài trên 1 giờ",
+    "RF-61": "Đau bụng mức vừa liên tục trên 2 giờ",
+    "RF-62": "Bí tiểu trên 4 giờ",
+    "RF-63": "Sốt cao kèm đau bụng",
+    "RF-64": "Bụng chướng hoặc vàng da mới",
+    "RF-70": "Khó thở ngay cả khi nghỉ",
+    "RF-71": "Khó thở đột ngột kèm đau ngực hoặc ho ra máu",
+    "RF-72": "Khó thở ảnh hưởng rõ hoạt động thường ngày",
+    "RF-73": "Khó thở kèm sưng chân",
+    "RF-74": "Sốt kèm khó thở",
+    "RF-80": "Đau đầu đột ngột dữ dội kiểu thunderclap",
+    "RF-81": "Đau đầu mới, khác thường hoặc tăng dần",
+    "RF-82": "Đau đầu thay đổi theo tư thế hoặc kèm rối loạn thị giác",
+    "RF-83": "Đau đầu trong bối cảnh nguy cơ cao",
+    "RF-84": "Đau đầu sau chấn thương đầu gần đây",
 }
 
 
@@ -239,9 +260,7 @@ def r_e_21(a: dict[str, object], matches: tuple[RuleMatch, ...]) -> RuleMatch | 
 
 
 def _fold_text(value: object) -> str:
-    text = str(value or "").casefold().replace("đ", "d")
-    stripped = unicodedata.normalize("NFD", text)
-    return "".join(char for char in stripped if unicodedata.category(char) != "Mn")
+    return fold_diacritics(str(value or ""))
 
 
 def _has_chest_pain_complaint(a: dict[str, object]) -> bool:

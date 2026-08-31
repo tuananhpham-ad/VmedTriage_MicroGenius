@@ -121,7 +121,18 @@ def test_a_disease_name_negation_asks_before_erasing_anything(fake_llm) -> None:
     assert session.answers["fever_reported"] == "true"
     assert session.answers["temp_c"] == "39"
     assert session.last_question != _RENDERED_QUESTION
-    assert "xác nhận" in session.last_question.casefold()
+    # Kiểm HAI NGHĨA VỤ của câu hỏi, không kiểm nó có chứa chữ "xác nhận".
+    #
+    # Bản trước tìm đúng chữ đó, và nó chỉ là vật thế chân cho ý "đây là câu hỏi lại". Câu xác nhận
+    # đính chính giờ có mười bản diễn đạt (`session.RETRACTION_TEMPLATES`), trong đó có những bản
+    # hỏi lại rất rõ mà không dùng chính từ ấy ("Cho mình hỏi lại cho rõ:..."). Bám vào một từ khoá
+    # thì bài test đỏ theo seed của phiên chứ không theo hành vi.
+    #
+    # Hai thứ dưới đây mới là điều bắt buộc, và cũng là điều `test_static_phrasing_variants` canh
+    # trên cả mười bản: câu hỏi phải nêu ĐÚNG field sắp bị xoá, và phải đòi một câu trả lời có/không.
+    asked = session.last_question
+    assert f'"{FEVER_PROTOCOL.fields_by_key["fever_reported"].label}"' in asked, asked
+    assert '"đúng"' in asked and '"không"' in asked, asked
 
 
 def test_the_cluster_does_not_advance_while_the_confirmation_is_pending(fake_llm) -> None:

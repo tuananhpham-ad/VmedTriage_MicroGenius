@@ -66,22 +66,22 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-_guidance/*
+# _guidance/*
 /notebooks/
 /runs/
 .eval_run/
-eval/
-!eval/
-eval/*
-!eval/scripts/
-eval/scripts/*
-!eval/scripts/run_graph_triage_eval.py
-!eval/scripts/run_graph_triage_infer.py
-/eval_result.txt
-/eval_result_probabilities.txt
+# eval/
+# !eval/
+# eval/*
+# !eval/scripts/
+# eval/scripts/*
+# !eval/scripts/run_graph_triage_eval.py
+# !eval/scripts/run_graph_triage_infer.py
+# /eval_result.txt
+# /eval_result_probabilities.txt
 /result_model
 docs/eval/
-tests/eval/
+# tests/eval/
 # Added by Braintrust Wizard
 .env.braintrust
 .braintrust.json
@@ -90,3 +90,8 @@ deploy/azure/env*
 !deploy/azure/env.example
 
 render.yaml
+.firecrawl/
+
+docs/planning/test_plan.md
+CLAUDE.md
+.gitignore

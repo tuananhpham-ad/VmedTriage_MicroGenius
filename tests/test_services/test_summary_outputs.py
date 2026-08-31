@@ -47,7 +47,19 @@ def test_only_safety_fields_show_up_as_unknown():
     safety = {FEVER_PROTOCOL.fields_by_key[key].label for key in FEVER_PROTOCOL.safety_signal_fields}
 
     assert set(result.unknown_safety).issubset(safety)
-    assert result.as_text() == ""
+    # Không còn block triệu chứng nào - `unknown` không được render. Nhân khẩu (M0, đã khai) vẫn ra
+    # ở block `details`: bỏ nó đi chính là bug đã làm văn xuôi của ca đau ngực mất tuổi và giới.
+    #
+    # `reporter_type` là tier H nên nó lên phiếu qua `_ALWAYS_DETAIL_KEYS` (F10 Fix F): điều dưỡng
+    # phải đọc được AI đang có triệu chứng, nếu không thì một ca kể hộ trông y hệt ca tự khai và
+    # không ai phát hiện được hệ thống đã ghi nhầm người bệnh.
+    assert "Triệu chứng ghi nhận" not in result.as_text()
+    assert "Người bệnh phủ nhận" not in result.as_text()
+    assert "unknown" not in result.as_text().casefold()
+    assert result.details == [
+        "Người khai là ai: người bệnh tự khai",
+        "Tuổi (số): 30", "Đơn vị tuổi: tuổi", "Giới tính sinh học: nam",
+    ]
 
 
 def test_an_empty_block_is_not_rendered():
@@ -56,6 +68,59 @@ def test_an_empty_block_is_not_rendered():
 
     assert "Triệu chứng ghi nhận" in text
     assert "Người bệnh phủ nhận" not in text
+
+
+def test_narrative_input_excludes_false_unknown_none_and_blank_values():
+    answers = dict(
+        ADULT,
+        lives_alone="true",
+        fever_reported=False,
+        neck_stiffness="unknown",
+        fever_status="none",
+        current_medications="",
+    )
+
+    result = summary_render.field_summary(FEVER_PROTOCOL, answers)
+    text = result.as_narrative_text()
+
+    assert "Sống một mình" in text
+    assert "Sốt" not in text
+    assert "Cứng gáy" not in text
+    assert "none" not in text.casefold()
+    assert "Người bệnh phủ nhận" not in text
+    assert "Sốt" in result.denied
+
+
+def test_denied_labels_are_natural_under_the_denial_heading():
+    result = summary_render.field_summary(
+        FEVER_PROTOCOL,
+        dict(ADULT, fever_reported="false", non_weight_bearing="false", nsaid_use="false"),
+    )
+
+    assert "Sốt" in result.denied
+    assert "Người dùng khai có sốt" not in result.denied
+    assert "Tình trạng không chịu đi/không dùng chi" in result.denied
+    assert "Việc sử dụng NSAID/aspirin" in result.denied
+
+
+def test_narrative_provider_never_receives_denied_values(monkeypatch):
+    complete = Mock(
+        return_value=provider_router.CompletionResult(
+            text="Người bệnh cho biết hiện đang sống một mình.", provider="f", model="f",
+        ),
+    )
+    monkeypatch.setattr(provider_router, "complete", complete)
+    summary = summary_render.field_summary(
+        FEVER_PROTOCOL,
+        dict(ADULT, lives_alone=True, fever_reported=False, neck_stiffness="unknown"),
+    )
+
+    narrative.build_narrative(summary)
+
+    prompt = complete.call_args.args[0][1]["content"]
+    assert "Sống một mình" in prompt
+    assert "Sốt" not in prompt
+    assert "Cứng gáy" not in prompt
 
 
 # --- chế độ (b) là BẢN ĐỐI CHỨNG của chế độ (a) --------------------------------------------------
@@ -102,7 +167,7 @@ def test_a_dead_model_falls_back_to_the_deterministic_text(monkeypatch):
     text, source = narrative.build_narrative(summary)
 
     assert source == "provider_unavailable"
-    assert text == summary.as_text(), "phiếu vẫn phải đọc được khi provider hỏng"
+    assert text == summary.as_narrative_text(), "fallback chỉ được chứa dữ kiện dương tính"
 
 
 def test_a_fabricated_narrative_is_replaced_by_the_deterministic_text(monkeypatch):
@@ -117,7 +182,7 @@ def test_a_fabricated_narrative_is_replaced_by_the_deterministic_text(monkeypatc
     text, source = narrative.build_narrative(summary)
 
     assert output_guard.VIOLATION_UNGROUNDED in source
-    assert text == summary.as_text()
+    assert text == summary.as_narrative_text()
 
 
 def test_an_empty_record_produces_no_narrative_at_all():
@@ -284,3 +349,106 @@ def test_a_narrative_with_no_denial_at_all_is_left_alone():
     summary = summary_render.FieldSummary(reported=["Sốt"], unknown_safety=["Cứng gáy"])
 
     assert summary_render.narrative_invents_denials("Người bệnh có sốt cao từ sáng.", summary) == []
+
+
+# --- Hồi quy: ca 2 (nam 62t, THA, đau ngực đè ép lan tay trái 20 phút) ---------------------------
+
+
+def test_chest_pain_discriminators_reach_the_summary_and_the_narrative_prompt():
+    """Bug 2026-08-28: `FieldSummary` chỉ nhặt tri-state, nên MỌI field enum/số/tự do bị bỏ im lặng.
+
+    Ca 2 cho ra đúng một dòng (`chest_pain=true`) và văn xuôi tổng hợp được từ đó chỉ nói nổi
+    "người bệnh ghi nhận tình trạng đau ngực" - mất tuổi, giới, bệnh nền, và cả ba discriminator
+    (`chest_pain_character`, `chest_pain_radiation`, `chest_pain_duration_min`) mà `r_cp_01` dùng để
+    chốt EMERGENCY. Phiếu đọc như một ca đau ngực chung chung."""
+    from src.services.engines.chest_pain_protocol import CHEST_PAIN_PROTOCOL
+
+    answers: dict[str, object] = {
+        "age_value": "62", "age_unit": "year", "sex": "male", "reporter_type": "self",
+        "chronic_conditions": "tăng huyết áp",
+        "chest_pain": "true",
+        "chest_pain_character": "pressure",
+        "chest_pain_radiation": "arm",
+        "chest_pain_duration_min": "20",
+        "chest_pain_pattern": "continuous",
+    }
+
+    result = summary_render.field_summary(CHEST_PAIN_PROTOCOL, answers)
+    prompt_input = result.as_narrative_text()
+
+    assert "Đau ngực" in result.reported
+    for expected in (
+        "Tuổi (số): 62",
+        "Giới tính sinh học: nam",
+        "Bệnh mạn tính: tăng huyết áp",
+        "Tính chất cơn đau ngực: đè ép",
+        "Hướng lan của cơn đau: lan ra cánh tay",
+        "Thời gian mỗi cơn đau (phút): 20",
+        "Kiểu đau: liên tục",
+    ):
+        assert expected in result.details, f"thiếu dữ kiện quyết định: {expected}"
+        assert expected in prompt_input, "agent tổng hợp phải NHÌN THẤY dữ kiện, không phải đoán"
+    assert "unknown" not in prompt_input.casefold()
+
+
+def test_opening_turn_schema_has_a_slot_for_every_chest_pain_discriminator():
+    """Bug 2026-08-28 (tầng trích xuất): lượt mở CHỈ có cờ `chest_pain` trong schema.
+
+    Người bệnh kể trọn ca ngay tin nhắn đầu thì tính chất/hướng lan/thời lượng không có ô nào để
+    ghi - dữ kiện rơi trước cả khi tới `FieldSummary`. Bốn nhóm còn lại đã có chi tiết trong schema
+    lượt mở từ đầu; chỉ đau ngực bị bỏ sót."""
+    from src.services.symptom_protocol import registry
+
+    for key in (
+        "chest_pain_character", "chest_pain_radiation", "chest_pain_duration_min",
+        "chest_pain_pattern", "chest_pain_severity", "chest_pain_onset_at", "cardiac_risk_factors",
+    ):
+        assert key in registry.OPENING_HARVEST_FIELDS, key
+        assert key in registry.OPENING_PROTOCOL.fields_by_key, f"{key} không có FieldSpec"
+
+
+def test_every_mandatory_field_of_every_protocol_has_a_slot_in_the_opening_schema():
+    """Bất biến chống bắt trượt - thứ đáng lẽ đã chặn bug đau ngực 2026-08-28 ngay khi nó sinh ra.
+
+    Bản cũ chép tay ~50 key, nên thêm field M0/M1 mới vào checklist KHÔNG tự đưa nó vào schema lượt
+    mở: người bệnh kể chi tiết đó ngay tin nhắn đầu thì không có ô nào để ghi. Giờ danh sách được
+    SUY RA từ tier, và test này là chốt chặn nếu ai đó đổi lại thành chép tay."""
+    from src.services.symptom_protocol import registry
+    from src.services.symptom_protocol.stage_machine import MANDATORY_TIERS
+
+    harvested = set(registry.OPENING_HARVEST_FIELDS)
+    for protocol in registry.PROTOCOL_REGISTRY.values():
+        missing = [
+            key for key, spec in protocol.fields_by_key.items()
+            if spec.tier in MANDATORY_TIERS and key not in harvested
+        ]
+        assert not missing, f"{protocol.name}: field bắt buộc không có ô ở lượt mở: {missing}"
+
+
+def test_the_catch_all_field_is_in_the_opening_schema():
+    """Lượt mở là lượt sinh ra nhiều dữ kiện ngoài schema nhất - người bệnh kể tự do, chưa ai định
+    hướng. Lưới hứng vắng mặt đúng ở đó thì nó gần như vô dụng."""
+    from src.services.symptom_protocol import registry
+
+    assert "other_conditions" in registry.OPENING_HARVEST_FIELDS
+    for protocol in registry.PROTOCOL_REGISTRY.values():
+        assert "other_conditions" in protocol.fields_by_key, protocol.name
+
+
+def test_a_new_field_reaches_the_summary_without_changing_its_tier():
+    """Cơ chế chống bắt trượt: `_ALWAYS_DETAIL_KEYS` là cửa đưa field lên phiếu mà KHÔNG nâng tier.
+
+    Nâng tier để field lên được phiếu là đổi luôn điều kiện dừng của phiên
+    (`stage_machine.MANDATORY_TIERS`) - `other_conditions` ở M1 làm `mandatory_fields_covered` không
+    bao giờ xanh vì không cụm nào hỏi nó, tức mọi ca lành tính bị ép đi hết bộ câu hỏi."""
+    from src.services.symptom_protocol.stage_machine import MANDATORY_TIERS
+
+    spec = FEVER_PROTOCOL.fields_by_key["other_conditions"]
+    assert spec.tier not in MANDATORY_TIERS, "lưới hứng không được nằm trong điều kiện dừng phiên"
+
+    result = summary_render.field_summary(
+        FEVER_PROTOCOL, dict(ADULT, other_conditions="viêm gan B, hay chóng mặt"),
+    )
+
+    assert "Bệnh/triệu chứng khác người bệnh tự kể: viêm gan B, hay chóng mặt" in result.details
+    assert "viêm gan B" in result.as_narrative_text()

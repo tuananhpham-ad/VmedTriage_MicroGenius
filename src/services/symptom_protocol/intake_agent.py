@@ -16,12 +16,12 @@ from __future__ import annotations
 import logging
 import re
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+from src.config import get_settings
 from src.services.engines.semantic_mapper import _contains_any
 from src.services.infra import fever_stage_log as stage_log
 from src.services.infra import provider_router
@@ -34,15 +34,18 @@ from src.services.symptom_protocol import (
     dialogue,
     flags,
     output_guard,
+    phrasing,
     ranking,
     reducer,
     rule_engine,
     screening,
     stage_machine,
 )
+from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety import text_safety_signals
 from src.services.symptom_protocol.models import QuestionCluster, ScreeningGroup
 from src.services.symptom_protocol.protocol import SymptomProtocol
+from src.services.text_norm import fold_diacritics
 
 logger = logging.getLogger("vmedtriage.symptom_intake")
 
@@ -127,17 +130,36 @@ def _known_facts(protocol: SymptomProtocol, answers: dict[str, TriState]) -> str
     return "\n".join(lines) if lines else "(chưa biết gì - đây là lượt đầu)"
 
 
-def _missing_in_cluster(
-    protocol: SymptomProtocol, cluster: QuestionCluster, answers: dict[str, TriState],
-) -> tuple[str, ...]:
-    """Field của cụm còn thiếu. Cụm điền dở phải hỏi tiếp ĐÚNG phần thiếu, không hỏi lại cả cụm."""
-    return tuple(key for key in cluster.fields if not stage_machine.is_filled(answers.get(key)))
-
-
 def _field_specs(protocol: SymptomProtocol, field_keys: tuple[str, ...]) -> str:
+    """Mô tả field cho prompt trích xuất. Field protocol không biết bị BỎ QUA kèm log, không raise.
+
+    VÌ SAO KHÔNG `raise`, DÙ ĐÓ LÀ TRIỆU CHỨNG CỦA MỘT LỖI THẬT. Hàm này chạy lúc dựng prompt, tức
+    NGOÀI khối `try` bọc lời gọi model trong `extract_turn` - nên một `KeyError` ở đây bay thẳng qua
+    `run_turn`, qua `session._turn`, ra tới route, và người bệnh nhận đúng một dòng "Không xử lý được
+    tin nhắn." giữa lúc đang khai bệnh. `extract_turn` hứa trong docstring của nó là KHÔNG BAO GIỜ
+    ném; chỗ này từng là lỗ thủng của lời hứa đó.
+
+    KHÓA THẬT NẰM Ở `key not in protocol.fields_by_key`: cụm đang hỏi thuộc protocol KHÁC với
+    protocol đang chạy. Nó xảy ra được vì lượt phát hiện đổi protocol chọn cụm kế tiếp bằng protocol
+    CŨ rồi mới đổi tên protocol (`session._turn`), nên lượt sau ghép cụm cũ với protocol mới. Ví dụ
+    đã tái hiện: cụm `AB-02` (bụng) mang `complaint_onset_at`, mà `fever`/`chest_pain`/`headache`
+    không khai field đó.
+
+    Bỏ qua ở đây là NGẮT MÁU, không phải chữa: field bị bỏ sẽ không được trích trong lượt đó. Nhưng
+    lượt vẫn chạy, `stage_machine.advance` vẫn chọn được cụm đúng của protocol mới cho lượt sau, nên
+    phiên tự về lại đường ray - khác hẳn việc chết cả lượt. Log ở mức WARNING vì nó luôn là dấu hiệu
+    của một lỗi định tuyến cần sửa, không phải trạng thái bình thường."""
+    unknown = [key for key in field_keys if key not in protocol.fields_by_key]
+    if unknown:
+        logger.warning(
+            "symptom_intake.unknown_fields protocol=%s fields=%s - cụm đang hỏi không thuộc protocol này",
+            protocol.name, ",".join(unknown),
+        )
     lines = []
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            continue
         # Ghi rõ ngoặc kép trong chính hint để giảm khả năng model trả bareword unknown (không quote)
         # - lỗi thật gặp phải với gpt-4o-mini qua OpenRouter khi chạy Checkpoint 6(b) của fever, xem
         # _repair_bareword_unknown ở dưới (vẫn giữ lớp sửa lỗi đó làm lưới an toàn, không chỉ dựa vào
@@ -341,8 +363,17 @@ QUY TẮC BẮT BUỘC:
   "negative". Im lặng không bao giờ là phủ định.
 - KHÔNG chẩn đoán bệnh, KHÔNG đề xuất mức độ khẩn cấp, KHÔNG đưa hướng xử trí.
 
-NHIỆM VỤ 2 - nếu người bệnh nói RÕ một chi tiết cụ thể, điền thêm trường tương ứng dưới đây. Mỗi
-trường điền được PHẢI kèm "evidence_span" trích nguyên văn; không trích được thì để "unknown".
+NHIỆM VỤ 2 - điền các trường cụ thể dưới đây.
+
+- Nhóm nào bạn kết luận "positive" thì BẮT BUỘC phải chỉ ra dấu hiệu nào: đặt "true" cho ĐÚNG những
+  trường ứng với dấu hiệu người bệnh xác nhận. Trả "positive" mà không đặt "true" cho trường nào là
+  câu trả lời THIẾU - hệ thống sẽ không biết người bệnh vừa xác nhận điều gì.
+- Người bệnh trả lời gọn ("có", "đúng rồi", "vâng") cho một câu chỉ đọc lên MỘT dấu hiệu thì đó là
+  xác nhận ĐÚNG dấu hiệu ấy - đặt "true" cho nó. Câu đọc lên NHIỀU dấu hiệu mà họ chỉ nói "có" thì
+  KHÔNG đoán là dấu hiệu nào: để cả nhóm "positive" và để các trường "unknown".
+- Trường đặt "true" KHÔNG cần "evidence_span" - người bệnh đang trả lời đúng câu vừa được hỏi.
+- Trường đặt "false", hoặc trường enum/số/ngày, thì PHẢI kèm "evidence_span" trích nguyên văn;
+  không trích được thì để "unknown".
 
 CÁC TRƯỜNG CÓ THỂ ĐIỀN THÊM:
 {field_specs}
@@ -534,11 +565,8 @@ def _normalize_for_evidence(text: str) -> str:
 
 
 def _fold_bare_reply(text: str) -> str:
-    folded = unicodedata.normalize("NFD", text or "")
-    folded = "".join(char for char in folded if unicodedata.category(char) != "Mn")
-    folded = folded.replace("đ", "d").replace("Đ", "D")
-    folded = _EDGE_PUNCT_RE.sub("", folded)
-    return _WHITESPACE_RE.sub(" ", folded.strip()).casefold()
+    folded = _EDGE_PUNCT_RE.sub("", fold_diacritics(text))
+    return _WHITESPACE_RE.sub(" ", folded.strip())
 
 
 _BARE_CLUSTER_NEGATIVE_REPLIES: frozenset[str] = frozenset({
@@ -659,16 +687,109 @@ def _coerce_enum(spec, raw: object) -> object | None:
     return None
 
 
+_VOMITING_FREQUENT_MARKERS = (
+    "non nhieu", "oi nhieu", "non lien tuc", "oi lien tuc", "non lap lai", "oi lap lai",
+    "non lien tiep", "oi lien tiep", "non rat nhieu", "oi rat nhieu",
+)
+_VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS = (
+    "khong giu duoc nuoc", "khong giu duoc do an", "uong vao non", "uong vao oi",
+    "an vao non", "an vao oi", "non tat ca", "oi tat ca", "non het", "oi het",
+)
+_VOMITING_NONE_MARKERS = (
+    "khong non", "khong oi", "chua non", "chua oi", "khong bi non", "khong bi oi",
+)
+def _vomiting_value_supported(value: object, evidence_span: object, message: str) -> bool:
+    """Chặn nâng ``buồn nôn`` thành một mức độ NÔN mà lời khai không hề có.
+
+    ``evidence_span`` khớp nguyên văn mới chỉ chứng minh model đã chép một đoạn có thật; nó chưa chứng minh
+    đoạn ấy *hàm ý đúng enum*. Lỗi thực tế là evidence ``buồn nôn`` có thật nhưng model vẫn trả
+    ``vomiting_severity=frequent``. Guard hẹp này kiểm tra entailment tối thiểu cho đúng field có ảnh hưởng
+    tới RF-15/RF-40, không cố thay LLM bằng một bộ NLP tổng quát.
+    """
+    if value == "unknown":
+        return True
+    if not _evidence_in_message(evidence_span, message):
+        return False
+    folded = _fold_bare_reply(str(evidence_span))
+    # "buồn nôn" là nausea. Bỏ cụm này trước khi tìm động từ nôn để chữ "nôn" bên trong không bị tính
+    # nhầm là một lần nôn thực sự.
+    actual_vomiting = folded.replace("buon non", "").replace("cam giac non", "")
+    has_vomiting_verb = bool(re.search(r"\b(non|oi)\b", actual_vomiting))
+    if value == "none":
+        return any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "occasional":
+        return has_vomiting_verb and not any(marker in folded for marker in _VOMITING_NONE_MARKERS)
+    if value == "frequent":
+        stated_frequency = bool(re.search(r"\b(non|oi)\s+(?:\w+\s+){0,2}\d+\s*(?:lan|lần)\b", actual_vomiting))
+        return any(marker in folded for marker in _VOMITING_FREQUENT_MARKERS) or stated_frequency
+    if value == "unable_to_keep_fluids":
+        return any(marker in folded for marker in _VOMITING_UNABLE_TO_KEEP_FLUIDS_MARKERS)
+    return False
+
+
+_RIGORS_MARKERS = (
+    "ret run", "run cam cap", "run ban bat", "run lap cap", "run bat ban", "lanh run",
+    "run nguoi", "run toan than", "rung minh", "co giat vi lanh",
+    "dap chan khong do", "dap chan van khong do", "mac am van khong do", "u am van khong do",
+)
+"""Cụm cho thấy RUN NGƯỜI không kiểm soát được - đúng thứ `rigors` định nghĩa."""
+
+_CHILL_ONLY_MARKERS = (
+    "on lanh", "gai ret", "gai lanh", "gai nguoi", "hoi lanh", "thay lanh", "cam giac lanh",
+    "lanh", "ret", "so lanh",
+)
+"""Cụm chỉ nói tới CẢM GIÁC LẠNH. Gần như mọi cơn sốt đều có, và bản thân nó không phải rét run."""
+
+
+def _rigors_value_supported(value: object, evidence_span: object, message: str) -> bool:
+    """Chặn nâng ``ớn lạnh``/``sốt có rét`` thành ``rigors=true``.
+
+    Cùng lỗi và cùng khuôn chữa với `_vomiting_value_supported`: evidence khớp nguyên văn chỉ chứng
+    minh model đã chép một đoạn CÓ THẬT, chưa chứng minh đoạn đó *hàm ý đúng field*. Lỗi thật đo
+    được: người bệnh nói "sốt có rét", model trả `rigors="true"` trích dẫn đúng chữ "rét" - và
+    `rigors` là M0 amber NICE gợi ý nhiễm khuẩn huyết, nên một true bịa ở đây đẩy thẳng mức ưu tiên.
+
+    Trong tiếng Việt "rét" một mình nghĩa là LẠNH, còn "rét RUN" mới là rét run; hai thứ cách nhau
+    đúng một chữ mà khác nhau cả một mức triage. Nhắc prompt là cần nhưng không đủ - cùng lý do đã
+    ghi ở `_vomiting_value_supported`.
+
+    Chỉ xét khi model CÓ trích dẫn và trích dẫn đó nói về cảm giác lạnh. Người bệnh trả lời thẳng
+    câu hỏi Q2-02 ("có ạ") thì evidence không chứa từ lạnh nào - đó là câu trả lời trực tiếp cho
+    đúng câu vừa hỏi, guard không có quyền phủ quyết nó (nếu không thì cụm không bao giờ đủ dữ kiện
+    và agent hỏi lại tới hết hạn mức - đúng cái bẫy `_collect_fields` mô tả)."""
+    if value != "true":
+        return True
+    if not _evidence_in_message(evidence_span, message):
+        return True
+    folded = _fold_bare_reply(str(evidence_span))
+    if any(marker in folded for marker in _RIGORS_MARKERS):
+        return True
+    return not any(marker in folded for marker in _CHILL_ONLY_MARKERS)
+
+
+_TRI_STATE_ENTAILMENT_GUARDS: dict[str, object] = {
+    "rigors": _rigors_value_supported,
+}
+"""Field tri-state có guard entailment riêng: `key -> (value, evidence_span, message) -> bool`.
+
+Bảng chứ không phải một chuỗi `if`: đây là chỗ đăng ký khi phát hiện một field bị model nâng cực sai
+một cách CÓ HỆ THỐNG. Giữ nó NGẮN - mỗi mục là một luật tiếng Việt viết tay, và một bảng dài là dấu
+hiệu nên sửa ở tầng khác (hint của field, hoặc tách field). Nhánh enum có bảng riêng của nó
+(`vomiting_severity`) vì hai nhánh kiểm giá trị khác nhau."""
+
+
 def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     """Giá trị này có bắt buộc phải kèm `evidence_span` khớp tin nhắn không?
 
-    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh, và chỉ ở chiều rủi ro:
+    CHỈ field người dùng CHƯA được hỏi mới phải chứng minh:
 
-    - `"false"` -> phải có bằng chứng (đúng chiều lỗi C1).
+    - Cả `"true"` lẫn `"false"` đều phải có bằng chứng. Positive thiếu căn cứ vẫn là dữ kiện bịa,
+      dù nó thường đẩy mức triage theo hướng thận trọng hơn.
     - enum/số/ngày -> phải có bằng chứng (đúng chiều lỗi C2: model tự sinh
       `fever_onset_at="2023-10-05"` trong lúc đang hỏi chuyện khác).
-    - `"true"` -> KHÔNG BAO GIỜ phải chứng minh. Bịa `"true"` chỉ đẩy ca lên mức thận trọng hơn (P0-6
-      chấp nhận), còn LOẠI NHẦM một `"true"` thật là bỏ sót cấp cứu (P0-5) - hướng hỏng tệ hơn hẳn.
+
+    Lưới keyword red-flag chạy độc lập và lấy căn cứ từ chính cụm từ khớp, nên việc siết output LLM
+    tại đây không loại bỏ lớp bắt khẩn cấp tất định.
 
     Field của cụm ĐANG hỏi (`"asked"`) không phải chứng minh gì: cả tin nhắn chính là câu trả lời cho
     đúng câu vừa hỏi, nên `"không"` ở đó là dữ kiện thật chứ không phải suy diễn. Cả 3 lần tái hiện C1
@@ -676,7 +797,10 @@ def _needs_evidence(policy: EvidencePolicy, spec, value: object) -> bool:
     hai đường đó đã có guard riêng (`_negation_evidence_ok` + `batch_negation=False` cho safety keys)."""
     if policy != "unasked":
         return False
-    return not spec.tri_state or value == "false"
+    # Lượt kể tự do/field ngoài câu đang hỏi: mọi dữ kiện xác định đều phải trỏ về lời người dùng.
+    # Positive không có evidence dù làm triage thận trọng hơn vẫn là dữ kiện bịa và không được phép
+    # lọt vào summary. Lưới keyword red-flag chạy độc lập nên các cụm khẩn cấp tất định vẫn được bắt.
+    return value != "unknown"
 
 
 def _collect_fields(
@@ -722,7 +846,13 @@ def _collect_fields(
 
     collected: dict[str, TriState] = {}
     for key in field_keys:
-        spec = protocol.fields_by_key[key]
+        spec = protocol.fields_by_key.get(key)
+        if spec is None:
+            # Field protocol đang chạy không khai - cùng nguyên nhân với `_field_specs` (cụm thuộc
+            # protocol khác) và cùng cách xử lý: bỏ qua, không raise. Không log lại ở đây vì
+            # `_field_specs` đã ghi đúng một dòng cho cùng lượt đó; log hai lần cho một sự cố làm
+            # người đọc tưởng nó xảy ra hai lần.
+            continue
         raw, evidence_span, operation = _field_payload(parsed.get(key))
 
         if operation == "unset":
@@ -744,12 +874,19 @@ def _collect_fields(
                 supported = not _needs_evidence(evidence, spec, coerced) or _evidence_in_message(
                     evidence_span, message,
                 )
+                if key == "vomiting_severity" and coerced is not None:
+                    supported = supported and _vomiting_value_supported(coerced, evidence_span, message)
                 if coerced is not None and supported:
                     collected[key] = coerced
                     _emit(events, key, coerced, evidence_span, source)
             continue
 
         value = _tri_state_value(raw)
+        guard = _TRI_STATE_ENTAILMENT_GUARDS.get(key)
+        if guard is not None and not guard(value, evidence_span, message):
+            # Trích dẫn có thật nhưng KHÔNG hàm ý field này - giữ ngỏ để còn được hỏi lại đúng cách,
+            # thay vì ghi một dữ kiện sai cực vào hồ sơ.
+            value = "unknown"
         if _needs_evidence(evidence, spec, value) and not _evidence_in_message(evidence_span, message):
             # Model khẳng định "không" nhưng không trích được câu nào trong tin nhắn -> giữ ngỏ để
             # còn được hỏi lại, thay vì đóng vĩnh viễn một field an toàn (lỗi C1).
@@ -895,9 +1032,9 @@ Hãy tự soạn MỘT tin nhắn tiếng Việt tự nhiên, ấm áp, ngắn g
 ĐIỀU CẦN BIẾT (mỗi gạch đầu dòng là MỘT thông tin phải thu được - tự chọn cách hỏi):
 {field_brief}
 
-Cách diễn đạt tham khảo của điều dưỡng (KHÔNG bắt buộc chép, PHẢI viết khác đi cho tự nhiên hơn):
-"{script_hint}"{focus}
+{script_block}{focus}
 
+{subject_note}
 ĐÃ BIẾT VỀ NGƯỜI BỆNH (TUYỆT ĐỐI không hỏi lại những điều này):
 {known_facts}
 {acknowledgement}{dialogue_note}{transition_note}
@@ -909,6 +1046,7 @@ QUY TẮC BẮT BUỘC:
 - KHÔNG khuyên dùng thuốc, KHÔNG nêu liều, KHÔNG đưa hướng xử trí.
 - {scope_rule}
 - {instruction}
+- {persona_rule}
 - Hỏi thân mật nhưng đi thẳng vào ý cần hỏi. Tránh mẫu câu lặp lại như "mình đã ghi nhận",
   "để mình nắm rõ hơn", "để mình yên tâm hơn" nếu không thật sự cần.
 - Nếu không có dữ kiện cần công nhận, bắt đầu thẳng bằng câu hỏi.
@@ -929,6 +1067,21 @@ QUY TẮC BẮT BUỘC:
 
 # Hai biến thể của cùng một prompt. Lượt gộp phải nói RÕ số ý: bỏ dòng này thì model quen tay rút về
 # một câu hỏi duy nhất, các ý còn lại không bao giờ được hỏi mà cụm tương ứng vẫn bị đánh dấu đã hỏi.
+_SCRIPT_HINT_BLOCK = """Cách diễn đạt tham khảo của điều dưỡng (KHÔNG bắt buộc chép, PHẢI viết khác đi cho tự nhiên hơn):
+"{script_hint}"
+"""
+"""Câu viết sẵn của CẢ cụm - chỉ được đưa vào prompt khi cụm còn thiếu TRỌN VẸN.
+
+Cụm điền dở mà vẫn kèm khối này thì prompt chứa ba tín hiệu chọi nhau: (i) một câu tiếng Việt viết
+sẵn hỏi CẢ cụm, (ii) dòng `CHỈ CÒN THIẾU` bảo đừng hỏi phần đã biết, (iii) `ĐÃ BIẾT VỀ NGƯỜI BỆNH`.
+Model bám vào cái CỤ THỂ nhất - câu viết sẵn - nên nó hỏi lại đúng thứ người bệnh vừa khai.
+
+Ca đo được (F10 lỗi 2): `CP-03` có `script_hint` = "Có kèm đau ngực, khó thở, ho ra máu..." mà
+`chest_pain` đã "true" từ lượt mở, vì `chest_pain` nằm trong CẢ HAI cụm `CP-01` và `CP-03`. Đường rơi
+về `script_hint` khi guard chặn hoặc `synthesis_enabled()` tắt KHÔNG bị ảnh hưởng - nó lấy
+`cluster.script_hint` trực tiếp, không đi qua prompt."""
+
+
 _SINGLE_SCOPE = ("Ý CẦN HỎI", "KHÔNG hỏi thêm ý nào ngoài Ý CẦN HỎI ở trên (tối đa 2 ý).")
 
 
@@ -961,12 +1114,51 @@ def _field_brief(protocol: SymptomProtocol, keys: tuple[str, ...]) -> str:
     return "\n".join(lines) if lines else "(không có ý nào)"
 
 
-def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
+_SUBJECT_NOTES: dict[str, str] = {
+    "self": 'Người có triệu chứng CHÍNH LÀ người bạn đang nhắn tin - hỏi thẳng "bạn".',
+    "parent_caregiver": (
+        "Người có triệu chứng là NGƯỜI NHÀ mà người nhắn đang chăm sóc, KHÔNG phải người nhắn. Hỏi "
+        'về "bé"/"người nhà của bạn", đừng hỏi như thể người nhắn đang có triệu chứng đó.'
+    ),
+    "other": (
+        "Người có triệu chứng là NGƯỜI KHÁC, không phải người đang nhắn tin. Hỏi về \"người bệnh\" "
+        '("người bệnh có thấy...", "bạn của bạn có..."), TUYỆT ĐỐI đừng hỏi "bạn có bị... không".'
+    ),
+}
+"""Chủ ngữ của câu hỏi, theo `reporter_type`.
+
+Đây là chỗ Fix E và Fix F gặp nhau: Fix E chốt agent tự xưng "mình" và gọi người NHẮN là "bạn", còn
+chỗ này chốt người nhắn có phải người BỆNH hay không. Thiếu nó thì persona nhất quán lại làm lỗi nặng
+thêm - agent hỏi "bạn có đau ngực không" một cách rất kiên định với người vừa nói rõ là đang hỏi hộ
+bạn mình."""
+
+
+def _subject_note(answers: dict[str, TriState]) -> str:
+    """Dòng chủ ngữ cho prompt, rỗng khi chưa biết ai là người bệnh.
+
+    Rỗng chứ không mặc định `"self"`: chưa hỏi thì chưa biết, và đoán "người nhắn là bệnh nhân" chính
+    là giả định ngầm sinh ra lỗi 4 của F10."""
+    note = _SUBJECT_NOTES.get(str(answers.get("reporter_type") or ""))
+    return f"\nCHỦ NGỮ CỦA CÂU HỎI: {note}\n" if note else ""
+
+
+def _format_history(conversation: list[dict[str, str]], limit: int | None = None) -> str:
     """Cửa sổ hội thoại gửi cho model: bản tóm tắt phần cũ (nếu có) + `limit` lượt thô gần nhất.
+
+    `limit` ĐỌC TỪ `context_compaction_keep_turns`, không viết cứng nữa. Hai con số này phải bằng
+    nhau, và trước đây chúng chỉ *tình cờ* bằng nhau vì cả hai cùng là 6: `maybe_compact` chừa lại
+    `keep_turns` lượt không nén, còn hàm này đọc 6 lượt cuối. Lượt nào vừa không bị nén vừa nằm
+    ngoài 6 lượt cuối thì rơi vào VÙNG CHẾT - không có trong bản tóm tắt, cũng không có trong phần
+    model đọc. Nó biến mất, và biến mất không kèm exception, không kèm log.
+
+    Đo được: hội thoại 30 lượt, đặt `keep_turns=20` (hợp lệ, `Field(ge=2, le=40)`) thì 14 lượt giữa
+    phiên bốc hơi khỏi tầm nhìn của model. Vặn núm lên với ý định cho model nhớ nhiều hơn lại làm nó
+    nhớ ít đi - đúng kiểu hỏng mà một cấu hình "an toàn" gây ra.
 
     Lượt mang vai `compaction.ROLE_SUMMARY` được tách ra xử lý RIÊNG chứ không đi qua `[-limit:]`:
     nó là bản nén của hàng chục lượt trước đó, và để nó bị đẩy khỏi cửa sổ vì mấy lượt "vâng"/"không"
     mới nhất là đánh mất đúng thứ việc nén sinh ra để giữ (§4.9 M2)."""
+    limit = get_settings().context_compaction_keep_turns if limit is None else limit
     summary = " ".join(
         str(turn.get("content", "")).strip()
         for turn in conversation
@@ -986,6 +1178,33 @@ def _format_history(conversation: list[dict[str, str]], limit: int = 6) -> str:
 # temperature cao hơn CHỈ dùng cho bước "diễn đạt lại câu hỏi" - không trích xuất field ở đây nên
 # không đánh đổi độ chính xác. temperature=0 khiến LLM trả gần như Y HỆT một câu cho cùng 1
 # script_hint mỗi lần, làm hội thoại cảm giác "học thuộc lòng" (phát hiện qua test tay với LLM thật).
+def _emit_static(on_token: TokenSink | None, text: str) -> None:
+    """Phát một câu TĨNH ra kênh streaming ngay khi nó được chọn.
+
+    Câu tĩnh không cần chờ model, nên nó là câu đến được màn hình NHANH NHẤT trong cả hệ - nhưng
+    trước đây nó lại là câu duy nhất không đi qua `on_token`, nên người bệnh phải đợi hết lượt
+    (rule engine, chốt triage, lưu case) rồi mới đọc được nó trong sự kiện `done`. Nghịch lý: câu
+    rẻ nhất lại hiện chậm nhất.
+
+    Phát nguyên một mẩu chứ không cắt nhỏ giả vờ: chữ đã có sẵn đủ, chia nhỏ ra để trông giống đang
+    gõ là làm chậm một cách cố ý."""
+    if on_token is not None and text:
+        on_token(text)
+
+
+def _visible_text(raw: str) -> str:
+    """Phần ĐẦU của output model sẽ thật sự hiện ra cho người bệnh, bỏ rác mở đầu.
+
+    Tồn tại vì streaming cần một hệ toạ độ ỔN ĐỊNH. Bản gom-trọn cũ chỉ cần `raw.strip().strip('"')`
+    một lần ở cuối, nhưng khi phát dần thì mỗi mẩu được cắt theo CHỈ SỐ, mà `strip()` ở cuối lại dịch
+    toàn bộ chỉ số nếu model mở đầu bằng khoảng trắng hoặc một dấu nháy. Lệch một ký tự ở đây nghĩa là
+    người bệnh đọc một câu mất chữ đầu hoặc lặp chữ.
+
+    Chỉ gỡ ĐẦU, không gỡ đuôi: đuôi còn đang được viết tiếp, `rstrip` giữa chừng sẽ cắt mất khoảng
+    trắng ngăn từ rồi mẩu sau dính liền vào từ trước."""
+    return raw.lstrip().lstrip('"')
+
+
 _QUESTION_TEMPERATURE = 0.7
 
 # Số lần hỏi lại tối đa cho MỘT cụm trước khi bỏ qua.
@@ -1041,8 +1260,9 @@ def _generate_question(
         return cluster.script_hint, False
 
     missing = plan.missing_fields if plan is not None else missing_keys
+    partial = bool(missing) and len(missing) < len(cluster.fields)
     focus = ""
-    if missing and len(missing) < len(cluster.fields):
+    if partial:
         labels = ", ".join(
             protocol.fields_by_key[key].label for key in missing if key in protocol.fields_by_key
         )
@@ -1051,10 +1271,15 @@ def _generate_question(
 
     wants_rephrase = rephrase or (plan.rephrase if plan is not None else False)
     instruction = (
-        "Người bệnh vừa KHÔNG trả lời được ý này. Hãy diễn đạt KHÁC HẲN lần trước và nói ngắn gọn vì "
-        "sao cần biết điều đó."
+        "Người bệnh vừa KHÔNG trả lời được ý này. Hãy đổi CẤU TRÚC CÂU và cách dẫn dắt so với lần "
+        "trước, nói ngắn gọn vì sao cần biết điều đó. Đại từ xưng hô giữ NGUYÊN."
         if wants_rephrase
-        else "Diễn đạt KHÁC đi so với các câu hỏi trước đó của trợ lý (đổi từ ngữ/cấu trúc câu)."
+        # "Viết khác đi" bị thu về đúng CẤU TRÚC CÂU: chỉ thị cũ nói trống "đổi từ ngữ", mà đại từ
+        # cũng là từ ngữ - đó là đường model hợp lý hoá việc đổi "mình" thành "em" giữa phiên.
+        else (
+            "Diễn đạt KHÁC đi so với các câu hỏi trước đó của trợ lý: đổi CẤU TRÚC CÂU và cách dẫn "
+            "dắt. KHÔNG đổi đại từ xưng hô."
+        )
     )
 
     scope_intro, scope_rule = _batch_scope(parts) if parts > 1 else _SINGLE_SCOPE
@@ -1065,7 +1290,9 @@ def _generate_question(
         field_brief=_field_brief(protocol, brief_keys),
         scope_intro=scope_intro,
         scope_rule=scope_rule,
-        script_hint=cluster.script_hint,
+        # Cụm điền dở: dựng câu từ `_field_brief` của riêng phần còn thiếu, KHÔNG kèm câu viết sẵn
+        # hỏi cả cụm - xem `_SCRIPT_HINT_BLOCK`.
+        script_block="" if partial else _SCRIPT_HINT_BLOCK.format(script_hint=cluster.script_hint),
         focus=focus,
         known_facts=_known_facts(protocol, answers),
         # Hướng dẫn và DỮ KIỆN đi riêng: gộp chúng vào một chuỗi thì model chép nguyên văn phần
@@ -1079,6 +1306,8 @@ def _generate_question(
         dialogue_note=f"\n{plan.answer_user_question}" if plan is not None and plan.answer_user_question else "",
         transition_note=f"\n{plan.transition_note}" if plan is not None and plan.transition_note else "",
         instruction=instruction,
+        persona_rule=phrasing.PERSONA_RULE,
+        subject_note=_subject_note(answers),
         history=_format_history(conversation or []),
         max_questions=plan.max_questions if plan is not None else max(parts, 1),
     )
@@ -1094,20 +1323,46 @@ def _generate_question(
             # Chỉ bước NÀY được stream, và chỉ vì nó là văn bản người bệnh đọc. Lượt trích xuất trả
             # JSON - JSON dở dang thì không parse được nên streaming ở đó không giúp gì.
             #
-            # GOM TRỌN rồi mới phát: `output_guard` phải chạy TRƯỚC khi người bệnh đọc được chữ nào
-            # (§6.5). Phát từng token rồi mới kiểm thì lúc guard bắt được một tên bệnh, câu đó đã
-            # nằm trên màn hình - và "đính chính" một câu vừa hiện ra còn tệ hơn là chờ. Cái giá đã
-            # đo được: bước diễn đạt p50 1.2s (`eval/baselines/2026-08-17-p0-summary.md`).
+            # PHÁT DẦN, NHƯNG CHỈ PHÁT PHẦN ĐÃ QUA GUARD. Bản trước gom trọn rồi mới phát một cục, vì
+            # §6.5 đòi `output_guard` chạy TRƯỚC khi người bệnh đọc được chữ nào - đúng, và ràng buộc
+            # đó vẫn được giữ nguyên ở đây. Thứ đổi là cách giữ nó: mọi vi phạm NGUY HIỂM của guard
+            # (tên bệnh, lời khuyên điều trị, hỏi lại field đã biết, markdown hỏng, thừa dấu hỏi) đều
+            # ĐƠN ĐIỆU - đã vi phạm thì viết thêm không hết - nên `check_prefix` phán được ngay trên
+            # câu viết dở. Chữ chỉ rời khỏi đây sau khi tiền tố chứa nó đã sạch.
+            #
+            # GIỮ LẠI ĐUÔI `PREFIX_SAFE_TAIL` ký tự: không giữ thì một cụm cấm bị cắt đôi giữa hai mẩu
+            # sẽ phát nửa đầu ra màn hình trước khi có đủ chữ để nhận ra nó.
             pieces: list[str] = []
+            emitted = 0
+            blocked = False
             for piece in provider_router.complete_stream(
                 messages, temperature=_QUESTION_TEMPERATURE, credential=credential,
                 role=provider_router.ROLE_SYNTHESIS,
             ):
                 pieces.append(piece)
-            question = "".join(pieces).strip().strip('"')
+                draft = _visible_text("".join(pieces))
+                if not output_guard.check_prefix(
+                    draft, plan=plan, protocol=protocol, cluster=cluster, answers=answers
+                ):
+                    # Dừng ĐỌC luôn, không chỉ dừng phát: phần còn lại của một câu đã hỏng thì không
+                    # có giá trị gì, mà vẫn tính tiền token.
+                    blocked = True
+                    break
+                if on_token is not None:
+                    safe_upto = len(draft) - output_guard.PREFIX_SAFE_TAIL
+                    if safe_upto > emitted:
+                        on_token(draft[emitted:safe_upto])
+                        emitted = safe_upto
+            question = "" if blocked else _visible_text("".join(pieces)).rstrip().rstrip('"').rstrip()
         if question and _passes_output_guard(question, protocol, cluster, plan, answers):
             if on_token is not None:
-                on_token(question)
+                # Phát nốt phần đuôi đã giữ lại - câu giờ đã hoàn chỉnh và qua guard ĐẦY ĐỦ.
+                #
+                # `emitted` đếm trên `_visible_text`, cùng một gốc với `question`, nên hai chuỗi khớp
+                # tiền tố. `min` là lưới an toàn cho trường hợp model kết thúc bằng cả một khối
+                # khoảng trắng dài hơn phần đuôi giữ lại: lúc đó `question` ngắn hơn `emitted` và cắt
+                # thẳng sẽ ném. Cắt lố chỉ làm mất phần đã hiện, không bao giờ phát trùng.
+                on_token(question[min(emitted, len(question)):])
             return question, True
     except Exception as exc:
         logger.warning("symptom_intake.question_failed reason=%s", type(exc).__name__)
@@ -1155,7 +1410,7 @@ def _recent_fields(*sources: dict[str, TriState]) -> frozenset[str]:
 
 
 def _ranking_context(
-    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None,
+    recent_fields: frozenset[str], ledger: coverage.CoverageLedger | None, recent_text: str = "",
 ) -> ranking.RankingContext | None:
     if not flags.ranking_enabled():
         # `None` là đúng đường quay lui của §8.3, không phải một nhánh mới: `select_cluster` không có
@@ -1163,9 +1418,10 @@ def _ranking_context(
         # first-fit cũ. Cả hai hành vi dùng chung một đoạn code.
         return None
     if ledger is None:
-        return ranking.RankingContext(recent_fields=recent_fields)
+        return ranking.RankingContext(recent_fields=recent_fields, recent_text=recent_text)
     return ranking.RankingContext(
-        recent_fields=recent_fields, deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
+        recent_fields=recent_fields, recent_text=recent_text,
+        deferred=dict(ledger.deferred), overdue=ledger.overdue_ids(),
     )
 
 
@@ -1197,6 +1453,7 @@ def run_turn(
     credential: provider_router.LLMCredential | None = None,
     select_protocol=None,
     protocol_for=None,
+    protocol_candidates=None,
     probe: tuple[ScreeningGroup, ...] = (),
     screened_ids: frozenset[str] = frozenset(),
     screening_history: dict[str, tuple[frozenset[str], ...]] | None = None,
@@ -1246,6 +1503,7 @@ def run_turn(
     # Giá trị âm tính của lượt sàng lọc đứng TRƯỚC field trích được: người bệnh nói rõ một chi tiết
     # ("có, bé không tiểu từ sáng") phải thắng phủ định gộp của chính nhóm đó.
     screened_negatives = outcome.negatives if outcome is not None else {}
+    screened_positives = outcome.positives if outcome is not None else {}
     recent_fields = _recent_fields(opportunistic, extraction.safety_fields, extraction.cluster_fields)
 
     # L3 REDUCER - nguồn sự thật DUY NHẤT của hồ sơ (§5). Đính chính + mâu thuẫn nằm TRONG nó và vì
@@ -1270,6 +1528,10 @@ def run_turn(
             *reducer.events_from_values(batch_defaults, source=reducer.SOURCE_BATCH_DEFAULT),
             *reducer.events_from_values(opportunistic, source=reducer.SOURCE_KEYWORD),
             *reducer.events_from_values(screened_negatives, source=reducer.SOURCE_SCREENING),
+            # Dương tính suy từ verdict đứng SAU âm tính: khi một nhóm vừa bị phủ định gộp vừa có một
+            # dấu hiệu được xác nhận, lời khẳng định thắng. Vẫn đứng TRƯỚC `extraction.events` để
+            # field model trích được nguyên văn ghi đè lên phần suy luận.
+            *reducer.events_from_values(screened_positives, source=reducer.SOURCE_SCREENING),
             *extraction.events,
         ),
         confirmed_retractions=confirmed_retractions,
@@ -1364,7 +1626,7 @@ def run_turn(
         and retry_count < MAX_RETRIES_PER_CLUSTER
         and _worth_retrying(active, cluster, merged)
     )
-    if probe or batching.is_batch(cluster):
+    if probe or batching.is_batch(cluster) or common_screening.is_routing_disambiguation(cluster):
         # Lượt sàng lọc và lượt hỏi gộp KHÔNG BAO GIỜ hỏi lại nguyên gói. Người bệnh vừa nghe nhiều ý
         # một lúc mà không trả lời được thì đọc lại đúng loạt ý đó lần nữa chỉ làm họ bỏ cuộc. Đường
         # lùi đúng là quay về hỏi từng cụm một theo script chuẩn - `advance` tự làm điều đó khi cụm
@@ -1392,11 +1654,33 @@ def run_turn(
         # cái thiếu là thứ tự chưa đi theo nó. Đổi protocol thì bỏ ledger cũ: mã cụm dùng chung giữa
         # các protocol nên nợ của protocol cũ sẽ gán nhầm cụm của protocol mới.
         ranking_context = _ranking_context(
-            recent_fields, None if protocol_switched else ledger,
+            recent_fields, None if protocol_switched else ledger, message,
         )
-        if protocol_switched:
+        route_candidates = protocol_candidates(merged) if protocol_candidates is not None else ()
+        disjoint_candidates = tuple(
+            name for name in route_candidates if name not in {"chest_pain", "breathing"}
+        )
+        needs_disambiguation = (
+            bool(probe)
+            and stage == active.critical_scan_stage
+            and len(route_candidates) >= 2
+            and not (set(route_candidates) <= {"chest_pain", "breathing"})
+            and merged.get("primary_symptom_group") in (None, "", "unknown")
+            and len(disjoint_candidates) >= 1
+        )
+        if needs_disambiguation:
+            step = stage_machine.Advance(
+                common_screening.routing_disambiguation_cluster(route_candidates), stage, None,
+            )
+        elif protocol_switched:
+            # `asked_ids` RỖNG là đúng (mã cụm dùng chung giữa các protocol), nhưng `asked_count`
+            # thì KHÔNG được rỗng theo. Bỏ trống nó khiến `advance` tính `len(asked_ids) = 0`, tức
+            # phiên được cấp lại TRỌN VẸN 13-16 cụm mỗi lần đổi protocol - đo được: một phiên trôi
+            # nhóm giữa chừng hỏi tới 26-30 cụm. Ngân sách là ngân sách KIÊN NHẪN CỦA NGƯỜI BỆNH,
+            # không phải của protocol; đổi protocol không làm họ có thêm kiên nhẫn.
             step = stage_machine.advance(
                 active, active.stage_order[0], merged, known_triage_level=rule_result.triage_level,
+                asked_count=len(closed_now - (screened_ids | screened_closed)),
                 context=ranking_context, stop_signals=stop_signals,
             )
         elif retry_this_cluster and not _stop_requested(stop_signals):
@@ -1434,7 +1718,12 @@ def run_turn(
     # qua LLM). Không gộp khi đang hỏi lại một cụm - lúc đó việc cần làm là diễn đạt lại cho rõ, thêm
     # ý mới chỉ làm người bệnh khó trả lời hơn.
     batched: tuple[QuestionCluster, ...] = ()
-    if following is not None and not next_probe and not retry_this_cluster:
+    if (
+        following is not None
+        and not next_probe
+        and not retry_this_cluster
+        and not common_screening.is_routing_disambiguation(following)
+    ):
         batched = batching.next_batch(
             active, step.stage, merged, following,
             asked_ids=frozenset() if protocol_switched else closed_now,
@@ -1478,6 +1767,7 @@ def run_turn(
     if next_probe:
         # Câu sàng lọc là văn bản TĨNH, không qua LLM - xem `screening.probe_question`.
         question, question_llm_used = following.script_hint, False
+        _emit_static(on_token, question)
     else:
         question, question_llm_used = (
             _generate_question(
@@ -1621,7 +1911,7 @@ def run_open_turn(
     # mạch cần đi theo. Chưa có ledger nào ở đây - phiên vừa bắt đầu, chưa cụm nào bị hoãn.
     recent_fields = _recent_fields(opportunistic, extraction.cluster_fields)
     step = stage_machine.advance(
-        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None),
+        protocol, protocol.stage_order[0], merged, context=_ranking_context(recent_fields, None, message),
     )
     following = step.cluster
     # Lời kể mở đầu có thể đã trả lời xong cả Stage 0/1/2 ("bé 4 tuổi, sốt 38.5 từ hôm qua, đã uống
@@ -1632,6 +1922,7 @@ def run_open_turn(
     if next_probe:
         following = screening.probe_cluster(protocol, step.stage, next_probe)
         question, question_llm_used = following.script_hint, False
+        _emit_static(on_token, question)
     else:
         # Lượt mở là chỗ gộp có giá trị nhất: người bệnh vừa kể tự do xong, hỏi dồn 2-3 ý nền (tuổi,
         # giới, triệu chứng chính) nghe tự nhiên hơn hẳn so với hỏi nhỏ giọt từng câu.
@@ -1769,4 +2060,14 @@ def scan_opportunistic_fields(protocol: SymptomProtocol, message: str) -> dict[s
     for key, keywords in protocol.opportunistic_keywords:
         if _contains_any(normalized, keywords) and not text_safety_signals.all_mentions_negated(message, keywords):
             found[key] = "true"
+    # `reporter_type` thuộc về đây chứ không phải một móc riêng ở `run_turn`: nó đúng là thứ người
+    # bệnh nói tình cờ, ở lượt mà không cụm nào hỏi tới. Quan trọng hơn, đây là hàm DUY NHẤT mà cả
+    # lượt MỞ lẫn lượt giữa phiên đều gọi - mà "bạn tôi bị đau ngực" gần như luôn là câu ĐẦU TIÊN.
+    #
+    # Không đi qua `protocol.opportunistic_keywords`: bộ đó ánh xạ từ khoá -> `"true"` cho field
+    # tri-state, còn field này là enum. Bảng cue nằm ở `text_safety_signals` để dùng CHUNG với guard
+    # `GUARD_OTHER_SUBJECT`, chứ không chép ra bản thứ hai.
+    reported_by = text_safety_signals.reporter_type_from_text(message)
+    if reported_by:
+        found["reporter_type"] = reported_by
     return found

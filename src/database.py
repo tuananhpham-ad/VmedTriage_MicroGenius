@@ -104,6 +104,10 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "emergency_contact_relationship": "VARCHAR(80)",
         "emergency_contact_phone": "VARCHAR(32)",
     },
+    "health_profiles": {
+        "conditions_note": "TEXT",
+        "recent_note": "TEXT",
+    },
     # Memory M3 (§4.9): phiếu bàn giao của phiên đã đóng, để mở hội thoại mới còn hỏi thăm được.
     "conversations": {"nurse_summary_json": "JSON"},
 }
@@ -139,7 +143,13 @@ def _apply_additive_migrations(engine: Engine) -> None:
 
 
 def create_tables() -> None:
-    from src.models import case_record, password_reset, user  # noqa: F401 - registers ORM models with Base metadata
+    from src.models import (  # noqa: F401 - registers ORM models with Base metadata
+        case_record,
+        health_profile,
+        hospital_suggestion,
+        password_reset,
+        user,
+    )
 
     engine = _engine or configure_database()
     Base.metadata.create_all(bind=engine)

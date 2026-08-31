@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers.fever_intake import router as fever_intake_router
+from src.api.routers.hospital_suggestion import router as hospital_suggestion_router
 from src.api.routers.result import router as result_router
 from src.api.routes import router
 from src.config import get_settings
@@ -97,6 +98,7 @@ app.add_middleware(
 app.include_router(router, prefix="/api/v1")
 app.include_router(result_router, prefix="/api/v1")
 app.include_router(fever_intake_router, prefix="/api/v1")
+app.include_router(hospital_suggestion_router, prefix="/api/v1")
 
 
 @app.middleware("http")
