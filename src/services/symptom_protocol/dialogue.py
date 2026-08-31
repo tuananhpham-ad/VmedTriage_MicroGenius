@@ -232,7 +232,13 @@ def build_response_plan(
         return None
 
     policy = DIALOGUE_POLICY[act]
-    missing = tuple(key for key in cluster.fields if not stage_machine.is_filled(answers.get(key)))
+    # `field_is_settled`, KHÔNG phải `is_filled`: field con của một field cha đã bị phủ định là câu
+    # hỏi VÔ NGHĨA, không phải câu hỏi còn thiếu. `cluster_needs_answer` - thứ quyết định cụm này có
+    # được hỏi hay không - đã dùng định nghĩa đó từ trước; để hai định nghĩa lệch nhau thì `missing`
+    # kéo vào prompt đúng những field mà stage machine đã coi là xong.
+    missing = tuple(
+        key for key in cluster.fields if not stage_machine.field_is_settled(protocol, key, answers)
+    )
     return ResponsePlan(
         act=act,
         cluster_id=cluster.id,

@@ -11,6 +11,7 @@ from src.services.checklists.abdominal_checklist import (
     QUESTION_CLUSTERS,
     STAGE_ORDER,
 )
+from src.services.symptom_protocol.common_safety import fields as common_fields
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
@@ -153,6 +154,7 @@ ABDOMINAL_PROTOCOL = SymptomProtocol(
         "abdominal_pain_severity", "abdominal_guarding", "gi_bleeding", "temp_c",
     ),
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS, screening_groups=SCREENING_GROUPS,
+    confirm_before_retract=common_fields.CONFIRM_BEFORE_RETRACT,
     reason_code_labels=REASON_CODE_LABELS, default_chief_complaint="Đau bụng",
     onset_field="complaint_onset_at", severity_field="abdominal_pain_severity",
 )

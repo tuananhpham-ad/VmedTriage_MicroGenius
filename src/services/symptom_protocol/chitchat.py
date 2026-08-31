@@ -33,7 +33,7 @@ import logging
 
 from src.config import get_settings
 from src.services.infra import provider_router
-from src.services.symptom_protocol import output_guard
+from src.services.symptom_protocol import output_guard, phrasing
 from src.services.symptom_protocol.non_clinical import NonClinicalLane
 
 logger = logging.getLogger("vmedtriage.chitchat")
@@ -95,7 +95,8 @@ QUY TẮC BẮT BUỘC — vi phạm bất kỳ dòng nào là câu trả lời 
 - TUYỆT ĐỐI KHÔNG trấn an ("không sao đâu", "bạn yên tâm", "không nguy hiểm"). Bạn chưa hỏi gì thì
   chưa biết gì — nói người dùng ổn là một kết luận y tế.
 - KHÔNG bịa thông tin ngoài y tế (giờ giấc, đường đi, giá cả, thời tiết). Không biết thì nói không biết.
-- Viết 1–3 câu, tiếng Việt tự nhiên, xưng "mình" gọi người dùng là "bạn". Không markdown, không gạch đầu dòng.
+- Viết 1–3 câu, tiếng Việt tự nhiên. Không markdown, không gạch đầu dòng.
+- {persona_rule}
 - Câu trả lời PHẢI kết thúc bằng một câu hỏi kéo người dùng về tình trạng sức khỏe của họ.
 
 {facts}
@@ -130,6 +131,7 @@ def compose(
 
     prompt = _SYSTEM_PROMPT.format(
         brief=brief,
+        persona_rule=phrasing.PERSONA_RULE,
         facts=_SYSTEM_FACTS if lane is NonClinicalLane.META else "",
         intent=fallback,
         history=_format_history(conversation or []),

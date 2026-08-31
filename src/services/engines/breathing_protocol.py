@@ -11,6 +11,7 @@ from src.services.checklists.breathing_checklist import (
     QUESTION_CLUSTERS,
     STAGE_ORDER,
 )
+from src.services.symptom_protocol.common_safety import fields as common_fields
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
@@ -126,6 +127,7 @@ BREATHING_PROTOCOL = SymptomProtocol(
         "breathing_difficulty", "dyspnea_at_rest", "chest_pain", "hemoptysis", "temp_c",
     ),
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS, screening_groups=SCREENING_GROUPS,
+    confirm_before_retract=common_fields.CONFIRM_BEFORE_RETRACT,
     reason_code_labels=REASON_CODE_LABELS, default_chief_complaint="Khó thở",
     onset_field="complaint_onset_at", severity_field="breathing_difficulty",
 )

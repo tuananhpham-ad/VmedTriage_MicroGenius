@@ -32,6 +32,7 @@ from src.services.checklists.chest_pain_checklist import (
     QUESTION_CLUSTERS,
     STAGE_ORDER,
 )
+from src.services.symptom_protocol.common_safety import fields as common_fields
 from src.services.symptom_protocol.common_safety import rules as common_rules
 from src.services.symptom_protocol.common_safety import screening_groups as common_screening
 from src.services.symptom_protocol.common_safety.emergency_message import SUSPECTED_RED_FLAG_MESSAGE
@@ -403,6 +404,7 @@ CHEST_PAIN_PROTOCOL = SymptomProtocol(
     opportunistic_keywords=common_rules.OPPORTUNISTIC_KEYWORDS,
     screening_groups=SCREENING_GROUPS,
     field_dependencies=FIELD_DEPENDENCIES,
+    confirm_before_retract=common_fields.CONFIRM_BEFORE_RETRACT,
     reason_code_labels=REASON_CODE_LABELS,
     default_chief_complaint="Đau ngực",
     onset_field="chest_pain_onset_at",

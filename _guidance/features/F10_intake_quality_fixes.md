@@ -4,7 +4,7 @@
 > Đọc `INVARIANTS.md` trước. Nối tiếp `F01` (số lượt) và `F09` (4 protocol mới).
 > Nguồn lâm sàng cho số câu hỏi: `_guidance/protocoltriage4nhomtrieuchung.md`.
 >
-> **Trạng thái 2026-08-28: Fix A + Fix B ĐÃ CODE, CHƯA CHẠY TEST.** Xem §7.
+> **Trạng thái 2026-08-29: A, B, D, E, F ĐÃ CODE VÀ ĐÃ TEST. Còn lại Fix C.** Xem §7.
 
 ---
 
@@ -149,7 +149,7 @@ từ gộp, không từ bỏ hỏi.
 
 Áp cùng cách cho 4 protocol còn lại.
 
-### Fix D — Không hỏi lại thứ đã khai (lỗi 2, phần nội dung) ⬜ CHƯA LÀM
+### Fix D — Không hỏi lại thứ đã khai (lỗi 2, phần nội dung) ✅ ĐÃ LÀM
 
 **Hai lớp cùng thủng:**
 
@@ -173,7 +173,7 @@ từ gộp, không từ bỏ hỏi.
 - `dialogue.py:235` tính `missing` bằng `is_filled`, còn `cluster_needs_answer` dùng `field_is_settled`
   — hai định nghĩa lệch nhau, thống nhất về `field_is_settled`.
 
-### Fix E — Xưng hô nhất quán (lỗi 2, phần giọng) ⬜ CHƯA LÀM
+### Fix E — Xưng hô nhất quán (lỗi 2, phần giọng) ✅ ĐÃ LÀM
 
 **Nguyên nhân: không tồn tại một hằng số persona nào trong toàn hệ.** Prompt sinh câu hỏi
 (`_QUESTION_ONLY_SYSTEM`, `intake_agent.py:1034-1067`) không quy định đại từ, chạy ở
@@ -195,7 +195,7 @@ người dùng là "bạn"*; `registry.OPENING_QUESTIONS`, `text_safety_signals.
 - Thu hẹp chỉ thị "viết khác đi" về **cấu trúc câu**; nói rõ đại từ **không** được đổi.
 - Test: mọi template tĩnh chỉ dùng đúng cặp đại từ đã chốt.
 
-### Fix F — "bạn tôi bị đau" (lỗi 4) ⬜ CHƯA LÀM
+### Fix F — "bạn tôi bị đau" (lỗi 4) ✅ ĐÃ LÀM
 
 **Bốn lớp:**
 
@@ -235,14 +235,20 @@ nhân**, nên `chest_pain="true"` là dữ liệu ĐÚNG. Lỗi là **ghi sai ai
 | File | Fix |
 | --- | --- |
 | `src/services/symptom_protocol/registry.py` | A ✅ |
-| `src/services/engines/chest_pain_protocol.py` (+4 protocol) | A ✅ / C, F ⬜ |
-| `src/services/symptom_protocol/intake_agent.py` | B ✅ / D, E, F ⬜ |
+| `src/services/engines/chest_pain_protocol.py` (+4 protocol) | A ✅ / F ✅ / C ⬜ |
+| `src/services/symptom_protocol/intake_agent.py` | B, D, E, F ✅ |
+| `src/services/symptom_protocol/dialogue.py` | D ✅ |
 | `src/services/symptom_protocol/batching.py`, `screening.py` | C ⬜ |
-| `src/services/checklists/*_checklist.py` | C, F ⬜ |
-| `src/services/symptom_protocol/output_guard.py` | D ⬜ |
-| `src/services/symptom_protocol/phrasing.py`, `chitchat.py`, `non_clinical.py` | E ⬜ |
-| `common_safety/fields.py`, `clusters.py`, `text_safety_signals.py` | F ⬜ |
-| `src/services/sessions/summary_render.py` | F ⬜ |
+| `src/services/checklists/*_checklist.py` | C ⬜ |
+| `src/services/symptom_protocol/output_guard.py` | D ✅ |
+| `src/services/symptom_protocol/phrasing.py`, `chitchat.py` | E ✅ |
+| `src/services/sessions/followup_writer.py` | E ✅ |
+| `common_safety/fields.py`, `clusters.py`, `text_safety_signals.py` | F ✅ |
+| `src/services/sessions/summary_render.py` | F ✅ |
+
+`non_clinical.py` KHÔNG có trong bảng nữa: khảo sát lại thì mọi câu của nó là văn bản TĨNH và đã dùng
+đúng cặp `mình`/`bạn`. Fix E chỉ đụng ba prompt sinh văn bản (`_QUESTION_ONLY_SYSTEM`, `chitchat`,
+`followup_writer`).
 
 ## 4. Ràng buộc không được vi phạm
 
@@ -295,41 +301,64 @@ Cần model thật (gate mềm, chạy tay trước Demo):
 
 ---
 
-## 7. Trạng thái & việc tiếp theo (2026-08-28)
+## 7. Trạng thái & việc tiếp theo (2026-08-29)
 
-### Đã code, **CHƯA CHẠY TEST**
+### Đã code VÀ đã chạy test: A, B, D, E, F
 
-| Fix | File | Nội dung |
+| Fix | Nội dung | Test khoá lại |
 | --- | --- | --- |
-| A | `registry.py` | `primary_symptom_group` vào schema lượt mở; `_stated_group`; `_mentions` ghép vị trí × cảm giác; `hint` viết lại |
-| A | `chest_pain_protocol.py` | `FIELD_DEPENDENCIES["chest_pain"]` += `chest_pain_duration_min` |
-| B | `intake_agent.py` | nhánh `protocol_switched` truyền `asked_count` |
+| A | `primary_symptom_group` vào schema lượt mở; `_stated_group`; `_mentions` ghép vị trí × cảm giác; `FIELD_DEPENDENCIES["chest_pain"]` += `chest_pain_duration_min` | `test_f10_routing_and_budget.py` |
+| B | nhánh `protocol_switched` truyền `asked_count` | `test_f10_routing_and_budget.py` |
+| D | cụm điền dở KHÔNG kèm `script_hint` cả cụm (`_SCRIPT_HINT_BLOCK`); `_DISTINCTIVE_LABEL_WORDS` 3→2 + `_GENERIC_LABEL_WORDS`; `dialogue.missing` dùng `field_is_settled`; xoá code chết `_missing_in_cluster` | `test_f10_no_repeat_question.py` |
+| E | `phrasing.PERSONA_RULE` - một hằng số cho cả 3 prompt sinh văn bản; "viết khác đi" thu về CẤU TRÚC CÂU | `test_f10_persona.py` |
+| F | `reporter_type_from_text` (tất định, trong `scan_opportunistic_fields`); `confirm_before_retract` có `reporter_type` ở CẢ 5 protocol; `hint` + `Q0-01` script; `_subject_note` đổi chủ ngữ prompt; lên phiếu qua `_ALWAYS_DETAIL_KEYS` | `test_f10_reporter_type.py` |
 
-Kiểm tay đã qua: 16/16 ca `select_protocol`; `OPENING_HARVEST_FIELDS` 88 field, mọi key resolve được;
-`ruff check src/services/` sạch.
+**Kết quả đo:**
 
-### ⚠️ VIỆC ĐẦU TIÊN KHI QUAY LẠI
+- `pytest tests/` (bỏ 2 file `test_graph_triage` thiếu `torch`): **9 fail, 1423 pass** - đúng 9 test
+  fail sẵn ở §5 mục 1, không tăng thêm cái nào. Baseline đầu phiên: 9 fail, 1300 pass.
+- `ruff check src/services/ tests/` sạch. 5 lỗi có sẵn ở `src/graph_triage/` không đụng tới.
+- +123 test mới, trong đó test Fix B và 4/9 test Fix D đã được kiểm là **fail đúng khi gỡ fix ra** -
+  chúng bắt được hồi quy thật, không phải test luôn xanh.
 
-```bash
-python -m pytest tests/ -q \
-  --ignore=tests/test_graph_triage/test_escalation_policy.py \
-  --ignore=tests/test_graph_triage/test_llm_decision_model_compat.py
-```
+**Một test cũ được sửa kỳ vọng:** `test_summary_outputs.test_only_safety_fields_show_up_as_unknown`
+so `details` bằng danh sách chính xác, và Fix F cố ý thêm `reporter_type` vào phiếu. Đây là đổi kỳ
+vọng theo một thay đổi có chủ đích, không phải nới lỏng test.
 
-Đối chiếu với **9 test fail sẵn** ở §5 mục 1. Fix A đổi hành vi `select_protocol` nên rủi ro cao nhất
-nằm ở `test_generic_protocol_and_switching.py` và `test_fever_flow.py`. Chưa chạy được lần nào.
+### Ba quyết định lệch khỏi bản kế hoạch, kèm lý do
 
-Sau đó viết test số 4 và 5 của §5 (script kiểm tay đang ở scratchpad, **chưa vào repo**).
+1. **`_DISTINCTIVE_LABEL_WORDS` không hạ trần rồi thôi.** Docstring cũ ghi rõ ngưỡng 2 ĐÃ THỬ VÀ BỎ vì
+   "Loại sốt" chặn nhầm - một số đo thật, không phải phỏng đoán. Hạ mù sẽ dựng lại đúng lỗi đó. Nên:
+   hạ về 2 **kèm** `_GENERIC_LABEL_WORDS` (`loại`/`mức`/`kiểu`/`tình`/`thông`/`diễn`) - nhãn hai từ mở
+   đầu bằng một trong số đó mô tả THUỘC TÍNH nên vẫn bị bỏ qua, còn "Đau ngực"/"Khó thở" gọi tên
+   chính triệu chứng thì được dò.
+2. **`_OTHER_SUBJECT_CUES` bị tách đôi, không dùng nguyên khối.** Bảng cũ trộn "bạn tôi" với "nghe
+   nói"/"trong phim". Cả hai đều đúng cho việc hạ một tín hiệu đỏ, nhưng chỉ nhóm đầu trả lời được
+   "ai là bệnh nhân". `_OTHER_PERSON_CUES` + `_HEARSAY_CUES` ghép lại thành đúng
+   `_OTHER_SUBJECT_CUES` cũ, nên guard không hẹp đi (có test khẳng định).
+3. **Móc `reporter_type` nằm trong `scan_opportunistic_fields`, không phải `run_turn`.** Lượt MỞ
+   không đi qua `run_turn`, mà "bạn tôi bị đau ngực" gần như luôn là câu ĐẦU TIÊN. Hàm quét từ khoá
+   là chỗ duy nhất cả hai nhánh cùng gọi.
 
-### Thứ tự làm tiếp — rủi ro tăng dần
+### ⚠️ VIỆC TIẾP THEO — Fix C, phần lớn nhất
 
-1. ~~Fix A + Fix B~~ → **chạy test, viết test hồi quy**
-2. **Fix D + Fix E** — tầng sinh câu hỏi, không đụng logic lâm sàng
-3. **Fix F** — nhiều điểm chạm nhưng mỗi điểm nông
-4. **Fix C** — lớn nhất, đụng nội dung cụm; làm cuối để 3 bước trên ổn định trước khi đổi hình dạng
-   hội thoại. Bước C2 **phải đo lại** trước khi chốt.
+Fix C (§2) chưa động tới. Nó là thứ duy nhất còn chặn ngưỡng `median_turns ≤ 7`: **A/B/D/E/F không
+rút ngắn hội thoại**, chúng sửa việc hỏi SAI chứ không sửa việc hỏi NHIỀU. Mô phỏng 18 lượt ở §2 vẫn
+còn nguyên giá trị.
 
-### Việc đã làm xong trước đó (cùng ngày, đã test)
+Thứ tự làm:
+
+1. **Viết test đếm lượt TRƯỚC** (§5 mục 3) - mô phỏng ca lành tính cả 5 protocol qua `advance` +
+   `next_probe` + `next_batch`. Không có nó thì mọi thay đổi ở bước sau là sửa mù.
+2. **Đo lại bước C2 trước khi chốt.** Docstring `batching.py:116-124` ghi gộp SAU gate làm hội thoại
+   DÀI THÊM một lượt mỗi gói. Số đo xấu → đi đường C3 (`ScreeningGroup`), an toàn hơn vì văn bản tĩnh.
+3. Hạ `budget_floor_stage` `"3"` → `"2"`.
+4. **Property test hoán vị** (§5 mục 2) phải xanh sau mỗi bước: `mandatory_unasked` rỗng. Đây là thứ
+   duy nhất chặn được việc rút ngắn bằng cách bỏ hỏi - bất biến 8.
+
+Gate mềm cần model thật (§5 mục 10-11) chưa chạy lần nào.
+
+### Việc đã làm xong trước đó (2026-08-28, đã test)
 
 Hai bug summary/detector, xem `git diff` các file `summary_render.py`, `narrative.py`,
 `common_safety/fields.py`, `fever_checklist.py`:

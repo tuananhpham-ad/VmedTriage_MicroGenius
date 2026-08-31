@@ -49,10 +49,17 @@ def test_only_safety_fields_show_up_as_unknown():
     assert set(result.unknown_safety).issubset(safety)
     # Không còn block triệu chứng nào - `unknown` không được render. Nhân khẩu (M0, đã khai) vẫn ra
     # ở block `details`: bỏ nó đi chính là bug đã làm văn xuôi của ca đau ngực mất tuổi và giới.
+    #
+    # `reporter_type` là tier H nên nó lên phiếu qua `_ALWAYS_DETAIL_KEYS` (F10 Fix F): điều dưỡng
+    # phải đọc được AI đang có triệu chứng, nếu không thì một ca kể hộ trông y hệt ca tự khai và
+    # không ai phát hiện được hệ thống đã ghi nhầm người bệnh.
     assert "Triệu chứng ghi nhận" not in result.as_text()
     assert "Người bệnh phủ nhận" not in result.as_text()
     assert "unknown" not in result.as_text().casefold()
-    assert result.details == ["Tuổi (số): 30", "Đơn vị tuổi: tuổi", "Giới tính sinh học: nam"]
+    assert result.details == [
+        "Người khai là ai: người bệnh tự khai",
+        "Tuổi (số): 30", "Đơn vị tuổi: tuổi", "Giới tính sinh học: nam",
+    ]
 
 
 def test_an_empty_block_is_not_rendered():

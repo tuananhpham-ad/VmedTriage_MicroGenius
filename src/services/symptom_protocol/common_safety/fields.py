@@ -18,11 +18,25 @@ from src.services.symptom_protocol.models import FieldSpec
 
 # --- Nhân khẩu (KM §3.2) ------------------------------------------------------------------------
 DEMOGRAPHIC_FIELDS: tuple[FieldSpec, ...] = (
-    FieldSpec("reporter_type", "Người khai là ai", "H", "self/parent_caregiver/other - độ tin cậy thông tin", tri_state=False, allowed_values=("self", "parent_caregiver", "other",)),
+    # `hint` cũ đóng khung field này là "độ tin cậy thông tin", nên extractor không thấy nó liên quan
+    # gì tới câu "bạn tôi bị đau ngực" - và người bệnh của phiên bị ghi nhầm thành chính người nhắn.
+    # Ai ĐANG CÓ triệu chứng mới là thứ field này trả lời; độ tin cậy chỉ là hệ quả.
+    FieldSpec("reporter_type", "Người khai là ai", "H", "AI LÀ NGƯỜI ĐANG CÓ TRIỆU CHỨNG so với người nhắn tin: self = chính người nhắn; parent_caregiver = con/người thân được người nhắn chăm sóc; other = một người khác (\"bạn tôi\", \"đồng nghiệp\"). Người được kể hộ VẪN là bệnh nhân của phiên", tri_state=False, allowed_values=("self", "parent_caregiver", "other",)),
     FieldSpec("age_value", "Tuổi (số)", "M0", "Biến phân tầng nguy cơ chính, quyết định toàn bộ ngưỡng/nhánh hỏi", tri_state=False),
     FieldSpec("age_unit", "Đơn vị tuổi", "M0", "day/month/year - đi kèm age_value", tri_state=False, allowed_values=("day", "month", "year",)),
     FieldSpec("sex", "Giới tính sinh học", "M0", "male/female/unknown - điều hướng nhánh sản khoa/tiết niệu", tri_state=False, allowed_values=("male", "female", "unknown",)),
 )
+
+CONFIRM_BEFORE_RETRACT: frozenset[str] = frozenset({"reporter_type"})
+"""Tập nền `confirm_before_retract` dùng chung cho MỌI protocol (`protocol.py` giải thích cơ chế).
+
+`reporter_type` vào đây vì `_safety_extra_keys` loại khỏi schema trích xuất mọi field ĐÃ điền trừ
+tập này. Điền nhầm một lần rồi thì người bệnh nói "không, là bạn tôi chứ không phải tôi" cũng không
+còn ô nào để ghi - đó chính là "bảo sửa mà vẫn nhầm" ở F10 lỗi 4. Và nó khớp đúng định nghĩa của tập
+này: xoá/ghi nhầm ai là bệnh nhân thì cả phiếu gửi điều dưỡng nói về nhầm người.
+
+Trước 2026-08-29 chỉ `fever` khai tập này; 5 protocol còn lại để rỗng, nên cơ chế đính chính chỉ tồn
+tại ở đúng một nhóm triệu chứng."""
 
 # --- An toàn tại nhà / safety-netting (KM §3.2) --------------------------------------------------
 SAFETY_NETTING_FIELDS: tuple[FieldSpec, ...] = (

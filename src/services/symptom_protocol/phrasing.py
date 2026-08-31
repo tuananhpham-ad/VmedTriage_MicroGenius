@@ -44,4 +44,28 @@ def turn_seed(session_id: str, turn: int) -> str:
     return f"{session_id}:{turn}"
 
 
-__all__ = ["pick", "turn_seed"]
+AGENT_PRONOUN = "mình"
+PATIENT_PRONOUN = "bạn"
+
+PERSONA_RULE = (
+    f'Xưng hô: tự xưng "{AGENT_PRONOUN}", gọi người bệnh là "{PATIENT_PRONOUN}". Cặp đại từ này CỐ '
+    'ĐỊNH suốt cả phiên - không đổi sang "em"/"anh"/"chị"/"quý khách" ở bất kỳ lượt nào, kể cả khi '
+    'được yêu cầu diễn đạt khác đi.'
+)
+"""Dòng chốt ngôi xưng, nhét nguyên văn vào MỌI prompt sinh văn bản gửi người bệnh.
+
+Trước F10 Fix E không tồn tại một hằng số persona nào trong toàn hệ. `chitchat` và `followup_writer`
+mỗi chỗ tự viết một dòng "xưng mình gọi bạn"; `_QUESTION_ONLY_SYSTEM` - prompt sinh ra ĐA SỐ câu
+người bệnh đọc - thì không quy định gì cả, chạy ở temperature 0.7, lại còn bị ép "PHẢI viết khác đi
+cho tự nhiên hơn" và được đọc lại lịch sử hội thoại. Ngôi xưng vì thế là SẢN PHẨM PHỤ NGẪU NHIÊN:
+lượt này "mình", lượt sau "em".
+
+Đặt ở `phrasing.py` vì module này đã lo phần giọng nói của các câu tĩnh. Một hằng số thay vì ba dòng
+chép tay: ba bản sao sẽ trôi khỏi nhau đúng lúc không ai để ý, và cái trôi ở đây người bệnh đọc thấy.
+
+Cặp `mình`/`bạn` theo `chitchat.py` - nơi ĐẦU TIÊN ghi rõ ràng cặp này - và mọi template tĩnh hiện có
+(`registry.OPENING_QUESTIONS`, `screening.PROBE_INTRO`, `session.CATCH_ALL_QUESTION`,
+`non_clinical.LIFESTYLE_REPLIES`) đã dùng đúng nó."""
+
+
+__all__ = ["AGENT_PRONOUN", "PATIENT_PRONOUN", "PERSONA_RULE", "pick", "turn_seed"]
