@@ -416,6 +416,15 @@ class Settings(BaseSettings):
 
     osm_nominatim_base_url: str = os.getenv("OSM_NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
     osm_overpass_base_url: str = os.getenv("OSM_OVERPASS_BASE_URL", "https://overpass-api.de/api/interpreter")
+    """DANH SÁCH endpoint ngăn cách bằng dấu phẩy - thử lần lượt tới khi có cái trả 200. Server
+    Overpass công cộng chết/quá tải cả cụm là chuyện thường (đo thực tế overpass-api.de hỏng 3/3
+    lượt), một endpoint duy nhất nghĩa là tính năng tắt theo nó. Thêm mirror bằng biến môi trường,
+    KHÔNG cần sửa code."""
+
+    osm_photon_base_url: str = os.getenv("OSM_PHOTON_BASE_URL", "https://photon.komoot.io")
+    """Geocoder dự phòng cho bước Nominatim (cũng chạy trên dữ liệu OSM, không cần key). Dùng khi
+    Nominatim KHÔNG GỌI ĐƯỢC - nhiều mạng ở VN phân giải nominatim.openstreetmap.org về 127.0.0.1/::1
+    nên request chết ngay ở tầng kết nối. Đặt rỗng để tắt fallback, chỉ dùng Nominatim."""
     osm_contact_email: str = os.getenv("OSM_CONTACT_EMAIL", "")
     """Nominatim Usage Policy bắt buộc User-Agent định danh thật cho server công cộng - rỗng thì
     provider osm tự tắt giống thiếu API key, tôn trọng ToS thay vì gửi request nặc danh. Server công

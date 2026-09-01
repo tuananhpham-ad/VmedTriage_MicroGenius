@@ -1250,7 +1250,7 @@ const graphLabelPriority = { theo_doi_tai_nha: "Self-care", kham_som: "Urgent", 
  *  phiên thành RedFlagFinding, kể cả mã mức hổ phách như RF-28 "Rét run dữ dội" (rule engine chốt
  *  EARLY_VISIT chứ không phải EMERGENCY). Coi mọi red flag là cấp cứu làm chữ "Cấp cứu" mất nghĩa.
  *  Dấu hiệu nguy hiểm vẫn hiện, nhưng bằng thẻ "Red flag" riêng bên cạnh mức. */
-function displayLevel(item) {
+export function displayLevel(item) {
   const fromPart2 = graphLabelPriority[item.graph_decision?.triage_label];
   if (fromPart2) return fromPart2;
   return item.status === "escalated" ? "Emergency" : priority(item);
