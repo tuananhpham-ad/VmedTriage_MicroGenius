@@ -1043,12 +1043,24 @@ button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:v
 /* `justify-content:space-between` + `min-height`: ghi chú dài ngắn khác nhau giữa các ô, mà nếu ô
    nào cũng chỉ cao bằng nội dung thì con số của ô ghi chú hai dòng bị đẩy lệch so với ô bên cạnh.
    Ghim đáy và cho ghi chú tự chiếm chỗ dư -> mọi con số trong hàng nằm trên cùng một baseline. */
-.kpi-tile { display:flex; flex-direction:column; justify-content:space-between; gap:6px; min-height:112px; border:1px solid var(--line); border-radius:var(--r-card); padding:15px 16px; background:var(--surface); box-shadow:var(--shadow-lift); }
+.kpi-tile { position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; gap:6px; min-height:112px; border:1px solid var(--line); border-radius:var(--r-card); padding:15px 16px 15px 19px; background:var(--surface); box-shadow:var(--shadow-lift); transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+/* Vạch màu mép trái áp cho MỌI ô, không chỉ ô cảnh báo. Trước đây chỉ `is-overdue` có vạch, nên
+   một hàng năm ô đọc ra "bốn ô trắng và một ô hỏng"; cho cả hàng cùng một ngữ pháp thì vạch đỏ trở
+   lại đúng vai một BIẾN THỂ của ô bình thường chứ không phải một loại ô khác. Ô trung tính để mờ
+   .4 nên vẫn lùi hẳn sau ô có màu. */
+.kpi-tile::before { content:""; position:absolute; inset:0 auto 0 0; width:3px; background:var(--blue); opacity:.4; }
+.kpi-tile:hover { transform:translateY(-2px); border-color:var(--line-2); box-shadow:0 8px 20px rgb(22 32 43 / .09); }
+/* Ô cần theo dõi nhưng KHÔNG khẩn - hội thoại chất lượng thấp là việc cần xem lại checklist, không
+   phải ca sắp quá hạn. Dùng hổ phách, cùng thang cảnh báo với `.missing-tag` và `.sla-badge`. */
+.kpi-tile.is-watch { border-color:var(--amber-line); background:var(--amber-soft); }
+.kpi-tile.is-watch::before { background:var(--amber); opacity:1; }
+.kpi-tile.is-watch .kpi-label, .kpi-tile.is-watch .kpi-value { color:var(--amber-deep); }
+.kpi-tile.is-watch .kpi-note { color:var(--amber-deep-2); }
 /* Nền phẳng thay cho gradient chéo, cộng một vạch màu ở mép trái. Gradient làm ô trông như bị bôi
    bẩn ở góc chứ không đọc thành "ô này khác các ô kia"; vạch màu thì đọc được ngay cả khi in đen
    trắng, và nó nằm ở mép nên không ăn vào chỗ của con số. */
-.kpi-tile.is-overdue { position:relative; border-color:var(--red-line); background:var(--red-soft); }
-.kpi-tile.is-overdue::before { content:""; position:absolute; inset:0 auto 0 0; width:3px; border-radius:var(--r-card) 0 0 var(--r-card); background:var(--red); }
+.kpi-tile.is-overdue { border-color:var(--red-line); background:var(--red-soft); }
+.kpi-tile.is-overdue::before { background:var(--red); opacity:1; }
 .kpi-tile.is-overdue .kpi-label, .kpi-tile.is-overdue .kpi-value { color:var(--red-deep); }
 .kpi-tile.is-overdue .kpi-note { color:var(--red-mid); }
 .kpi-label { color:var(--muted); font-size:12.5px; font-weight:500; line-height:1.3; }
@@ -1056,13 +1068,17 @@ button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:v
    tiêu đề thẻ (15px) nên cả màn hình đọc ra một mặt phẳng chữ đều đều. */
 .kpi-value { margin-top:auto; color:var(--ink); font-size:30px; font-weight:600; line-height:1.1; letter-spacing:-.025em; font-variant-numeric:tabular-nums; }
 .kpi-note { color:var(--faint); font-size:12px; line-height:1.4; }
+/* Nằm GIỮA con số và ghi chú, cao cố định 26px: đặt nó dưới ghi chú thì ô có sparkline cao hơn các
+   ô còn lại và cả hàng lệch baseline (xem `justify-content:space-between` ở `.kpi-tile`). */
+.kpi-spark { display:block; width:100%; height:26px; margin:4px 0 -2px; }
 
 /* Dùng đúng 5 cột và gap của hàng KPI: biểu đồ trái chiếm 3 cột, biểu đồ phải chiếm 2 cột.
    Nhờ thế khe giữa hai biểu đồ thẳng tuyệt đối với khe giữa KPI thứ 3 và thứ 4. */
 .chart-row { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:12px; margin-bottom:16px; }
 .chart-row > .chart-card:first-child { grid-column:span 3; }
 .chart-row > .chart-card:nth-child(2) { grid-column:span 2; }
-.chart-card { border:1px solid var(--line); border-radius:var(--r-card); padding:16px 18px 18px; background:var(--surface); box-shadow:var(--shadow-lift); }
+.chart-card { border:1px solid var(--line); border-radius:var(--r-card); padding:16px 18px 18px; background:var(--surface); box-shadow:var(--shadow-lift); transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.chart-card:hover { transform:translateY(-2px); border-color:var(--line-2); box-shadow:0 8px 22px rgb(22 32 43 / .08); }
 .chart-card > .chart-plot, .chart-card > .bar-list { flex:1; }
 /* `min-height` trên đầu thẻ: tiêu đề có thẻ phụ dài xuống hai dòng, thẻ bên cạnh thì không, và
    không ghim chiều cao thì vùng vẽ của hai thẻ cạnh nhau bắt đầu ở hai độ cao khác nhau. */
@@ -1138,7 +1154,9 @@ button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:v
 /* Cột nhãn co giãn theo bề rộng thẻ (`0.38fr`) thay vì ghim cứng: cùng một danh sách nằm trong thẻ
    1/3 và thẻ 2/5 màn hình, ghim 126px thì nhãn dài bị cắt ở thẻ hẹp mà lại thừa chỗ ở thẻ rộng. */
 .bar-row { display:grid; grid-template-columns:minmax(104px, 0.38fr) minmax(0, 1fr) 34px; gap:12px; align-items:center; border-radius:8px; color:var(--muted); font-size:13px; }
+.bar-row { transition:background .16s ease; }
 .bar-row.is-hover { background:var(--surface-soft); }
+.bar-row.is-hover .bar-fill { background:var(--bar-on); }
 .bar-row:focus-visible { outline:2px solid var(--blue-line); outline-offset:3px; }
 .bar-track { height:18px; border-radius:4px; background:var(--surface-mute); }
 /* Cột cao ≤24px, bo 4px ở ĐẦU DỮ LIỆU và vuông ở gốc - mọi cột mọc từ cùng một đường gốc.
@@ -1209,6 +1227,56 @@ button.nurse-ticker-item:hover, button.nurse-ticker-item:focus-visible { color:v
 /* Nửa AI ĐÁNH GIÁ NHẸ HƠN mức điều dưỡng chốt - nửa duy nhất đáng báo động. Nửa còn lại (AI thận
    trọng quá) cố ý giữ nền trung tính. */
 .matrix-cell.is-under { background:var(--red-soft); color:var(--red-deep); box-shadow:inset 0 0 0 1px var(--red-line); }
+
+/* ── W-08: hoạt ảnh KHI VÀO MÀN ────────────────────────────────────────────────────────────────
+   MỘT class duy nhất (`#dash-body.is-intro`) bật toàn bộ khối này, và JS chỉ gắn nó ở đúng lần vẽ
+   đầu tiên sau khi điều dưỡng mở màn (xem `introMotion` trong dashboard.js). Không gắn theo polling:
+   `paintDashboard` chạy lại mỗi 15 giây, nên nếu hiệu ứng chạy ở mọi lần vẽ thì cứ 15 giây cả màn
+   hình lại động đậy một lượt trong khi người ta đang đọc số - đó là màn hình trực, không phải trang
+   giới thiệu.
+
+   Mọi thứ trong đây nằm sau `prefers-reduced-motion: no-preference`, tức là mặc định của khối là
+   KHÔNG chuyển động: trạng thái cuối đã đúng sẵn trong markup, hoạt ảnh chỉ thêm đường đi tới đó.
+   Nhờ vậy người tắt hiệu ứng ở cấp hệ điều hành thấy ngay số liệu đầy đủ, không phải một màn trống. */
+@keyframes dash-rise { from { opacity:0; transform:translateY(12px); } }
+@keyframes dash-bar-grow { from { transform:scaleX(0); } }
+@keyframes dash-col-grow { from { transform:scaleY(0); } }
+@keyframes dash-line-draw { from { stroke-dashoffset:1; } }
+@keyframes dash-fade-in { from { opacity:0; } }
+
+@media (prefers-reduced-motion:no-preference) {
+  /* Thẻ trồi lên theo BẬC chứ không cùng lúc: cùng lúc thì mắt không biết nhìn đâu, còn lệch nhau
+     ~60ms thì thứ tự xuất hiện đọc thành thứ tự đọc (trái sang phải, trên xuống dưới). Độ trễ tính
+     theo vị trí TRONG HÀNG, không cộng dồn toàn trang - dashboard có ~14 thẻ, cộng dồn thì thẻ cuối
+     phải đợi gần một giây mới hiện. */
+  #dash-body.is-intro .kpi-tile,
+  #dash-body.is-intro .chart-card { animation:dash-rise .5s cubic-bezier(.16, 1, .3, 1) backwards; }
+  #dash-body.is-intro .kpi-tile:nth-child(2), #dash-body.is-intro .chart-card:nth-child(2) { animation-delay:.06s; }
+  #dash-body.is-intro .kpi-tile:nth-child(3), #dash-body.is-intro .chart-card:nth-child(3) { animation-delay:.12s; }
+  #dash-body.is-intro .kpi-tile:nth-child(4) { animation-delay:.18s; }
+  #dash-body.is-intro .kpi-tile:nth-child(5) { animation-delay:.24s; }
+  #dash-body.is-intro .kpi-tile:nth-child(6) { animation-delay:.3s; }
+
+  /* Cột mọc từ GỐC ra: `transform-origin:left` với cột ngang, `bottom` với cột dọc. Dùng transform
+     chứ không animate `width` - `.bar-fill` đã có `transition:width` cho lần cập nhật do polling,
+     và animate cùng một thuộc tính ở hai nơi thì hai hiệu ứng giành nhau. */
+  #dash-body.is-intro .bar-fill { transform-origin:left center; animation:dash-bar-grow .55s cubic-bezier(.16, 1, .3, 1) backwards .12s; }
+  /* `transform-box:fill-box` là bắt buộc với phần tử SVG: mặc định gốc toạ độ của transform là gốc
+     của cả viewBox, nên không có nó thì 24 cột đổ về góc trái trên thay vì lún xuống đường gốc. */
+  #dash-body.is-intro .hour-bar { transform-box:fill-box; transform-origin:bottom center; animation:dash-col-grow .5s cubic-bezier(.16, 1, .3, 1) backwards .1s; }
+
+  /* Đường tự vẽ từ trái sang. `pathLength="1"` đặt sẵn trên thẻ `path` khiến dash tính theo thang
+     0-1, nên một mã CSS đúng cho mọi khoảng thời gian mà không phải đo độ dài đường bằng JS. */
+  #dash-body.is-intro .line-series { stroke-dasharray:1; animation:dash-line-draw .9s cubic-bezier(.4, 0, .2, 1) backwards; }
+  #dash-body.is-intro .line-series.is-second { animation-delay:.14s; }
+  #dash-body.is-intro .kpi-spark .kpi-spark-line { stroke-dasharray:1; animation:dash-line-draw .9s cubic-bezier(.4, 0, .2, 1) backwards .2s; }
+  #dash-body.is-intro .kpi-spark { animation:dash-fade-in .6s ease backwards .2s; }
+}
+
+
+@media (prefers-reduced-motion:reduce) {
+  .kpi-tile:hover, .chart-card:hover { transform:none; }
+}
 
 /* ── W-07 duyệt ca ─────────────────────────────────────────────────────────────────────────── */
 .review-grid { display:grid; grid-template-columns:minmax(0, 1.5fr) minmax(360px, 1fr); gap:clamp(16px, 1.6vw, 26px); align-items:start; }

@@ -1,8 +1,8 @@
 import { api } from "../api.js";
 import { bindAccountMenu } from "./account.js?v=design-20260827d";
-import { bindSideNav, displayLevel, nurseShell, paintOverview } from "./nurse.js?v=design-20260901b";
+import { bindSideNav, displayLevel, nurseShell, paintOverview } from "./nurse.js?v=design-20260901c";
 import { completedStatuses, state } from "../state.js";
-import { escapeHtml, icon, priorityLabels, shortCaseId, showToast, symptomGroupLabels } from "../shared.js";
+import { escapeHtml, icon, priorityLabels, shortCaseId, showToast, statusLabels, symptomGroupLabels } from "../shared.js";
 
 /**
  * W-08 — bảng điều khiển của điều dưỡng.
@@ -61,6 +61,31 @@ const WAIT_BUCKETS = [
   { label: "> 15 phút", max: Infinity },
 ];
 
+/** Bốn hành động của `HITLAction` (`src/models/schemas.py`). Dùng làm CẢ danh sách nhãn LẪN bộ lọc:
+ *  `audit_log` còn chứa những action do hệ thống ghi (`raise_priority_from_c6`, `edit_field:*`,
+ *  `completed_after_approval`), và chúng KHÔNG phải quyết định của điều dưỡng - đếm chúng vào đây
+ *  sẽ biến một ca được C6 nâng mức thành một "lượt duyệt" không ai thực hiện. */
+const NURSE_ACTION_TEXT = {
+  approve: "Duyệt nguyên đề xuất",
+  edit: "Sửa mức rồi duyệt",
+  ask_more: "Hỏi thêm bệnh nhân",
+  reject: "Từ chối ca",
+};
+
+/** Trạng thái theo thứ tự CÒN VIỆC → ĐÃ XONG, không theo bảng chữ cái: thẻ này để đọc lướt xem
+ *  khối lượng đang đọng ở khâu nào, nên thứ tự phải là thứ tự của luồng làm việc. Trạng thái không
+ *  có ca nào bị ẩn khỏi danh sách - một hàng 0 dài dằng dặc chỉ làm loãng ba hàng có số thật. */
+const STATUS_ORDER = [
+  "collecting_information",
+  "needs_more_info",
+  "needs_nurse_review",
+  "awaiting_approval",
+  "escalated",
+  "approved",
+  "rejected",
+  "withdrawn",
+];
+
 const view = { group: "all", days: 7 };
 
 /** Bản ghi `/nurse/review-log`, một dòng một ca. Giữ ở module chứ không nhét vào `state`: chỉ màn
@@ -73,10 +98,13 @@ let reviewLog = [];
  *  hover được nối. */
 let linePoints = [];
 
-/** Bật đúng MỘT lần cho lần vẽ đầu tiên sau khi vào màn. `paintDashboard` còn chạy lại mỗi 15 giây
- *  do polling và mỗi lần đổi bộ lọc - để hoạt ảnh chạy ở những lần đó thì vòng tròn cứ 15 giây lại
- *  vẽ lại một lần, gây rối chứ không giúp gì. */
-let drawDonut = false;
+/** Bật đúng MỘT lần cho lần vẽ đầu tiên sau khi vào màn, và điều khiển TOÀN BỘ hoạt ảnh vào màn
+ *  (vòng tròn tự vẽ, cột mọc lên, số đếm tăng dần, thẻ trồi lên theo bậc).
+ *
+ *  `paintDashboard` còn chạy lại mỗi 15 giây do polling và mỗi lần đổi bộ lọc - để hoạt ảnh chạy ở
+ *  những lần đó thì cứ 15 giây cả màn hình lại nhảy múa một lần trong khi điều dưỡng đang đọc số,
+ *  và số đang đếm dở thì không đọc được. Vì vậy nó chỉ đúng một nhịp: lúc màn hình vừa hiện ra. */
+let introMotion = false;
 
 let polling = null;
 
@@ -134,7 +162,7 @@ export function renderNurseDashboard(root, { navigate, logout }) {
 
   view.group = "all";
   view.days = 7;
-  drawDonut = true;
+  introMotion = true;
   loadDashboard(root);
   polling = window.setInterval(() => loadDashboard(root), 15000);
 }
@@ -194,6 +222,32 @@ function priorityOf(item) {
 function timeToOpen(item) {
   if (!item.queued_at || !item.first_opened_at) return null;
   return (new Date(item.first_opened_at) - new Date(item.queued_at)) / 60000;
+}
+
+/** Số phút từ lúc điều dưỡng mở hồ sơ tới lúc ca được chốt - "công xử lý" của một ca.
+ *
+ *  Đây là NỬA CÒN LẠI của thời gian chờ mà `timeToOpen` đo. Tách đôi vì hai nửa hỏng vì hai lý do
+ *  khác hẳn nhau và cần hai cách sửa khác hẳn nhau: nửa đầu dài nghĩa là THIẾU NGƯỜI TRỰC, nửa sau
+ *  dài nghĩa là hồ sơ khó đọc hoặc thiếu thông tin để quyết. Gộp lại thành một con số "tổng thời
+ *  gian chờ" thì không phân biệt được hai tình huống đó nữa.
+ *
+ *  Trả `null` khi thiếu một trong hai mốc, hoặc khi hiệu âm - `first_opened_at` được ghi lần đầu có
+ *  người mở, còn một ca đã chốt vẫn mở lại được, nên thứ tự hai mốc không được coi là đảm bảo. */
+function handleMinutes(item) {
+  if (!item.first_opened_at || !item.reviewed_at) return null;
+  const minutes = (new Date(item.reviewed_at) - new Date(item.first_opened_at)) / 60000;
+  return minutes >= 0 ? minutes : null;
+}
+
+/** Tỉ lệ trường ĐÃ ĐIỀN trên phiếu bàn giao của từng ca, chỉ tính ca đã dựng được phiếu.
+ *
+ *  Ca chưa có `summary_fields` bị loại khỏi mẫu chứ không tính là 0%: phiếu chưa dựng và phiếu dựng
+ *  xong nhưng rỗng là hai chuyện khác nhau, và trộn chúng lại sẽ kéo trung vị xuống đúng lúc hàng
+ *  đợi đang có nhiều ca mới - tức là chỉ số báo xấu vì lý do không liên quan đến chất lượng hỏi. */
+function summaryFillRatios(cases) {
+  return cases
+    .filter((item) => (item.summary_fields || []).length)
+    .map((item) => item.summary_fields.filter((field) => !field.is_missing).length / item.summary_fields.length);
 }
 
 /** Tuổi của một ca đang chờ, tính tới BÂY GIỜ. */
@@ -316,11 +370,13 @@ function paintDashboard(root) {
   const pending = cases.filter((item) => !completedStatuses.has(item.status));
   const longestWait = pending.length ? Math.max(...pending.map((item) => ageMinutes(item) ?? 0)) : null;
 
-  root.querySelector("#dash-body").innerHTML = `
+  const days = dailySeries(cases);
+  const body = root.querySelector("#dash-body");
+  body.innerHTML = `
     ${sectionHead("Bảng trực", "Cần xử lý ngay. Số liệu sống, tự làm mới mỗi 15 giây.")}
 
     <div class="kpi-row">
-      ${statTile("Tổng số ca", cases.length, `Trong phạm vi: ${escapeHtml(scopeName)}`)}
+      ${statTile("Tổng số ca", cases.length, `Trong phạm vi: ${escapeHtml(scopeName)}`, "", sparkline(days))}
       ${statTile("Có dấu hiệu nguy hiểm", redFlags, cases.length ? `${Math.round((redFlags / cases.length) * 100)}% tổng số ca` : "Chưa có dữ liệu")}
       ${statTile("Đang chờ được xác nhận", cases.length - settled, pendingNote(pending, longestWait))}
       ${statTile("Ca quá hạn", overdue, overdueNote(pending, overdue), overdue ? "is-overdue" : "")}
@@ -328,13 +384,18 @@ function paintDashboard(root) {
     </div>
 
     <div class="chart-row">
-      ${lineChartCard(dailySeries(cases))}
+      ${lineChartCard(days)}
       ${donutCard(cases)}
     </div>
 
     <div class="chart-row">
       ${timeToOpenCard(cases)}
       ${backlogCard()}
+    </div>
+
+    <div class="chart-row">
+      ${handleTimeCard(cases)}
+      ${statusMixCard(cases)}
     </div>
 
     ${sectionHead("Bảng chất lượng", "Hệ thống đang chạy tốt tới đâu. Đọc để đánh giá, không để xử lý ca.")}
@@ -351,11 +412,44 @@ function paintDashboard(root) {
       ${barCard("Thông tin hay bị thiếu nhất", topCounts(cases, missingFieldLabels), "Chưa ca nào chốt phiếu bàn giao", { stacked: true })}
       ${hourChartCard(cases)}
     </div>
+
+    <div class="chart-row">
+      ${actionMixCard(cases)}
+      ${nurseWorkloadCard(cases)}
+    </div>
   `;
+  // Hoạt ảnh vào màn nằm sau MỘT class duy nhất trên thân màn: gắn/gỡ ở đây thay vì rắc `is-…` lên
+  // từng thẻ để chỉ có đúng một chỗ quyết định "lần vẽ này có chạy hiệu ứng không".
+  body.classList.toggle("is-intro", introMotion);
   bindLineHover(root);
   bindBarHover(root);
+  if (introMotion) runCountUp(body);
   paintNewCaseTicker(root);
-  drawDonut = false;
+  introMotion = false;
+}
+
+/** Đếm số từ 0 lên giá trị thật cho các ô KPI, chỉ ở lần vẽ đầu tiên.
+ *
+ *  Đọc `data-count` do `statTile` gắn sẵn chứ không parse `textContent`: nội dung ô có thể là "—",
+ *  "2,4 phút" hay "100%", và một hàm đoán số từ chuỗi hiển thị sẽ vừa đếm nhầm "2,4 phút" thành 24
+ *  vừa im lặng khi ai đó đổi cách định dạng.
+ *
+ *  Người đã tắt hiệu ứng ở cấp hệ điều hành thấy ngay số cuối - hàm thoát trước khi chạm vào DOM,
+ *  nên giá trị do `statTile` dựng vẫn còn nguyên. */
+function runCountUp(body) {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  for (const node of body.querySelectorAll("[data-count]")) {
+    const target = Number(node.dataset.count);
+    if (!Number.isFinite(target) || target <= 0) continue;
+    const suffix = node.dataset.countSuffix || "";
+    const start = performance.now();
+    const step = (now) => {
+      const progress = Math.min(1, (now - start) / 620);
+      node.textContent = `${Math.round(target * (1 - (1 - progress) ** 3))}${suffix}`;
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
 }
 
 function sectionHead(title, note) {
@@ -448,12 +542,50 @@ async function openDashboardCase(caseId, { navigate }) {
   }
 }
 
-function statTile(label, value, note, tone = "") {
+function statTile(label, value, note, tone = "", spark = "") {
   return `<div class="kpi-tile ${tone}">
     <span class="kpi-label">${escapeHtml(label)}</span>
-    <b class="kpi-value">${escapeHtml(String(value))}</b>
+    <b class="kpi-value"${countAttrs(value)}>${escapeHtml(String(value))}</b>
+    ${spark}
     <span class="kpi-note">${escapeHtml(note)}</span>
   </div>`;
+}
+
+/** Thuộc tính cho hiệu ứng đếm số, CHỈ khi giá trị là một số nguyên (kèm `%` nếu có).
+ *
+ *  Đếm được thì đếm, không thì thôi - "—", "2,4 phút" hay "1 ngày 4 giờ" đều đi qua đây và không
+ *  nhận thuộc tính nào, nên `runCountUp` bỏ qua chúng và ô hiện thẳng giá trị thật. Không cố xử lý
+ *  các dạng đó: đếm tăng dần một khoảng thời gian thì con số ở giữa đường là một khoảng thời gian
+ *  SAI đang được trưng ra, còn đếm một dấu gạch ngang thì vô nghĩa. */
+function countAttrs(value) {
+  const match = /^(\d+)(%?)$/.exec(String(value));
+  return match ? ` data-count="${match[1]}" data-count-suffix="${match[2]}"` : "";
+}
+
+// Cao 30px và không có trục: đây là một dấu hiệu HÌNH DẠNG đặt cạnh con số, không phải biểu đồ thứ
+// hai. Biểu đồ đường đầy đủ ngay bên dưới mới là chỗ đọc giá trị từng ngày.
+const SPARK = { width: 132, height: 30 };
+
+/** Đường xu hướng tí hon trong ô "Tổng số ca": số ca vào theo từng ngày của khoảng đang chọn.
+ *
+ *  Có nó vì một ô chỉ hiện "5" không nói được 5 ca đó dồn vào một hôm hay rải đều cả tuần - mà đó
+ *  đúng là điều đầu tiên người đọc muốn biết khi liếc vào con số tổng. Vẫn KHÔNG có ô "+15%": so
+ *  sánh hai kỳ cần một chuỗi thời gian được lưu lại, còn đây chỉ vẽ đúng dữ liệu đang có trong
+ *  phạm vi lọc, không suy ra con số nào không đo được. */
+function sparkline(days) {
+  if (days.length < 2 || !days.some((day) => day.arrived)) return "";
+  const peak = Math.max(1, ...days.map((day) => day.arrived));
+  const stepX = SPARK.width / (days.length - 1);
+  const yAt = (value) => SPARK.height - 3 - ((SPARK.height - 9) * value) / peak;
+  const line = days
+    .map((day, index) => `${index ? "L" : "M"}${(index * stepX).toFixed(1)},${yAt(day.arrived).toFixed(1)}`)
+    .join(" ");
+  const last = days[days.length - 1];
+  return `<svg class="kpi-spark" viewBox="0 0 ${SPARK.width} ${SPARK.height}" role="img" aria-label="Xu hướng số ca vào theo ngày trong khoảng đang chọn">
+    <path d="${line} L${SPARK.width},${SPARK.height} L0,${SPARK.height} Z" fill="${SERIES_IN}" fill-opacity=".12" />
+    <path class="kpi-spark-line" pathLength="1" d="${line}" fill="none" stroke="${SERIES_IN}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" />
+    <circle cx="${SPARK.width}" cy="${yAt(last.arrived).toFixed(1)}" r="2.4" fill="${SERIES_IN}" />
+  </svg>`;
 }
 
 // ── Thời gian tới lượt mở + backlog ──────────────────────────────────────────────────────────────
@@ -468,18 +600,49 @@ function statTile(label, value, note, tone = "") {
 function timeToOpenCard(cases) {
   const opened = cases.map(timeToOpen).filter((minutes) => minutes !== null);
   const unopened = cases.filter((item) => item.queued_at && !item.first_opened_at).length;
-  const rows = bucketize(opened);
+  return durationCard({
+    title: "Thời gian tới lượt mở",
+    sub: unopened ? `${unopened} ca chưa ai mở, không tính vào đây` : "Tính trên ca đã được mở",
+    values: opened,
+  });
+}
+
+/** Nửa sau của thời gian chờ: từ lúc điều dưỡng MỞ hồ sơ tới lúc ca được chốt.
+ *
+ *  Đặt cạnh "thời gian tới lượt mở" và dùng CHUNG mốc chia (`WAIT_BUCKETS`) có chủ đích - hai thẻ
+ *  cùng thang thì đọc được ngay nửa nào đang ăn hết thời gian chờ của người bệnh, mà mỗi nửa lại
+ *  cần một cách sửa khác nhau (xem `handleMinutes`).
+ *
+ *  Ca đã mở nhưng CHƯA chốt bị loại khỏi mẫu và được đếm riêng ở dòng phụ, đúng cách `timeToOpen`
+ *  loại ca chưa mở: chúng là dữ liệu bị cắt phải, mà một ca điều dưỡng còn đang cân nhắc thì tính
+ *  vào trung vị sẽ kéo con số xuống đúng lúc có ca khó. */
+function handleTimeCard(cases) {
+  const handled = cases.map(handleMinutes).filter((minutes) => minutes !== null);
+  const openPending = cases.filter((item) => item.first_opened_at && !item.reviewed_at).length;
+  return durationCard({
+    title: "Thời gian mở tới lúc chốt",
+    sub: openPending ? `${openPending} ca đã mở nhưng chưa chốt, không tính vào đây` : "Tính trên ca đã chốt",
+    values: handled,
+    foot: "Cùng mốc chia với thẻ “Thời gian tới lượt mở”: hai thẻ cộng lại là toàn bộ thời gian người bệnh chờ.",
+  });
+}
+
+/** Khung chung của hai thẻ đo thời lượng: ba số dẫn (trung vị / P90 / cỡ mẫu) rồi tới phân bố theo
+ *  `WAIT_BUCKETS`. Tách ra vì hai thẻ phải trông GIỐNG HỆT nhau mới so sánh bằng mắt được, và hai
+ *  bản sao markup thì chỉ cần một lần sửa lệch là mất đúng điều đó. */
+function durationCard({ title, sub, values, foot = "" }) {
+  const rows = bucketize(values);
   const peak = Math.max(1, ...rows.map((row) => row.value));
 
   return `<section class="chart-card">
     <div class="chart-head">
-      <h2>Thời gian tới lượt mở</h2>
-      <span class="chart-sub">${unopened ? `${unopened} ca chưa ai mở, không tính vào đây` : "Tính trên ca đã được mở"}</span>
+      <h2>${escapeHtml(title)}</h2>
+      <span class="chart-sub">${escapeHtml(sub)}</span>
     </div>
     <div class="stat-pair">
-      <div><span class="kpi-label">Trung vị</span><b class="kpi-value">${escapeHtml(formatMinutes(median(opened)))}</b></div>
-      <div><span class="kpi-label">P90</span><b class="kpi-value">${escapeHtml(formatMinutes(quantile(opened, 0.9)))}</b></div>
-      <div><span class="kpi-label">Số ca đo được</span><b class="kpi-value">${opened.length}</b></div>
+      <div><span class="kpi-label">Trung vị</span><b class="kpi-value">${escapeHtml(formatMinutes(median(values)))}</b></div>
+      <div><span class="kpi-label">P90</span><b class="kpi-value">${escapeHtml(formatMinutes(quantile(values, 0.9)))}</b></div>
+      <div><span class="kpi-label">Số ca đo được</span><b class="kpi-value">${values.length}</b></div>
     </div>
     <ul class="bar-list">
       ${rows
@@ -492,6 +655,7 @@ function timeToOpenCard(cases) {
         )
         .join("")}
     </ul>
+    ${foot ? `<p class="chart-foot">${escapeHtml(foot)}</p>` : ""}
   </section>`;
 }
 
@@ -513,7 +677,7 @@ function backlogCard() {
   return `<section class="chart-card">
     <div class="chart-head">
       <h2>Ca đang chờ, theo tuổi</h2>
-      <span class="chart-sub">Không theo khoảng thời gian</span>
+      <span class="chart-sub">${pending.length} ca chưa chốt · mọi thời điểm</span>
     </div>
     <ul class="bar-list">
       ${rows
@@ -526,7 +690,7 @@ function backlogCard() {
         )
         .join("")}
     </ul>
-    <p class="chart-foot">${pending.length ? "Bấm một hàng để mở hàng đợi." : "Hàng đợi đang trống."}</p>
+    <p class="chart-foot">${pending.length ? "Không áp bộ lọc khoảng thời gian, nên tổng ở đây cao hơn ô “Đang chờ được xác nhận” khi có ca tồn từ trước. Bấm một hàng để mở hàng đợi." : "Hàng đợi đang trống."}</p>
   </section>`;
 }
 
@@ -589,8 +753,8 @@ function lineChartCard(days) {
         </defs>
         ${grid}${xLabels}
         <path d="${areaPath}" fill="url(#line-area)" stroke="none" />
-        <path d="${path((day) => day.arrived)}" fill="none" stroke="${SERIES_IN}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-        <path d="${path((day) => day.settled)}" fill="none" stroke="${SERIES_DONE}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        <path class="line-series" pathLength="1" d="${path((day) => day.arrived)}" fill="none" stroke="${SERIES_IN}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        <path class="line-series is-second" pathLength="1" d="${path((day) => day.settled)}" fill="none" stroke="${SERIES_DONE}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
         <circle cx="${xAt(days.length - 1)}" cy="${yAt(last.arrived)}" r="4.5" fill="${SERIES_IN}" stroke="#fff" stroke-width="2" />
         <circle cx="${xAt(days.length - 1)}" cy="${yAt(last.settled)}" r="4.5" fill="${SERIES_DONE}" stroke="#fff" stroke-width="2" />
         <text x="${xAt(days.length - 1) + 10}" y="${yAt(last.arrived) + 4}" class="end-label">${last.arrived}</text>
@@ -694,7 +858,7 @@ function donutCard(cases) {
   return `<section class="chart-card">
     <div class="chart-head"><h2>Phân bố mức ưu tiên</h2></div>
     <div class="donut-wrap">
-      <svg viewBox="0 0 140 140" class="donut${drawDonut ? " is-drawing" : ""}" role="img" aria-label="Tỉ lệ ca theo ba mức ưu tiên">
+      <svg viewBox="0 0 140 140" class="donut${introMotion ? " is-drawing" : ""}" role="img" aria-label="Tỉ lệ ca theo ba mức ưu tiên">
         ${total ? arcs : `<circle cx="70" cy="70" r="${radius}" fill="none" stroke="#f1f4f8" stroke-width="20" />`}
         <text x="70" y="66" text-anchor="middle" class="donut-total">${total}</text>
         <text x="70" y="84" text-anchor="middle" class="donut-caption">ca</text>
@@ -749,6 +913,8 @@ function agreementRow(cases) {
   const confidences = cases
     .map((item) => item.structured_data?.confidence)
     .filter((value) => typeof value === "number" && value > 0);
+  const fillRatios = summaryFillRatios(cases);
+  const lowQuality = cases.filter((item) => item.quality_flag === "low_quality").length;
 
   return `<div class="kpi-row">
     ${statTile(
@@ -767,6 +933,17 @@ function agreementRow(cases) {
       "Độ tin cậy trích xuất trung vị",
       confidences.length ? `${Math.round(median(confidences) * 100)}%` : "—",
       "Do bước trích xuất tự chấm",
+    )}
+    ${statTile(
+      "Phiếu bàn giao đã điền",
+      fillRatios.length ? `${Math.round(median(fillRatios) * 100)}%` : "—",
+      fillRatios.length ? `Trung vị trên ${fillRatios.length} phiếu đã dựng` : "Chưa ca nào dựng được phiếu",
+    )}
+    ${statTile(
+      "Hội thoại chất lượng thấp",
+      lowQuality,
+      cases.length ? `${Math.round((lowQuality / cases.length) * 100)}% tổng số ca` : "Chưa có dữ liệu",
+      lowQuality ? "is-watch" : "",
     )}
   </div>`;
 }
@@ -843,7 +1020,7 @@ function topCounts(cases, pick, limit = 6) {
 
 /** Danh sách cột ngang dùng chung. Tách ra từ `groupBarCard` để ba thẻ đếm nhãn không phải chép lại
  *  cùng một khối markup ba lần. */
-function barCard(title, rows, emptyNote, { sub = "", activeKey = null, stacked = false } = {}) {
+function barCard(title, rows, emptyNote, { sub = "", activeKey = null, stacked = false, foot = "" } = {}) {
   const peak = Math.max(1, ...rows.map((row) => row.value));
   return `<section class="chart-card">
     <div class="chart-head">
@@ -865,7 +1042,86 @@ function barCard(title, rows, emptyNote, { sub = "", activeKey = null, stacked =
           </ul>`
         : `<p class="chart-empty">${escapeHtml(emptyNote)}</p>`
     }
+    ${rows.length && foot ? `<p class="chart-foot">${escapeHtml(foot)}</p>` : ""}
   </section>`;
+}
+
+// ── Ca theo trạng thái · điều dưỡng đã làm gì · khối lượng theo người ────────────────────────────
+
+/** Khối lượng đang ĐỌNG Ở KHÂU NÀO của luồng.
+ *
+ *  Ô KPI phía trên chỉ chia đôi "đang chờ / đã chốt", mà hai nửa đó gộp chung những tình huống cần
+ *  hành động khác hẳn nhau: một ca `needs_more_info` đang chờ BỆNH NHÂN trả lời, còn một ca
+ *  `needs_nurse_review` đang chờ ĐIỀU DƯỠNG - không thẻ nào trên màn phân biệt được hai thứ đó
+ *  trước khi có thẻ này. Trạng thái 0 ca bị bỏ khỏi danh sách (xem `STATUS_ORDER`). */
+function statusMixCard(cases) {
+  const rows = STATUS_ORDER
+    .map((key) => ({ key, label: statusLabels[key] || key, value: cases.filter((item) => item.status === key).length }))
+    .filter((row) => row.value);
+  return barCard("Ca theo trạng thái", rows, "Chưa có ca nào trong phạm vi này", {
+    sub: `${cases.length} ca trong phạm vi`,
+    stacked: true,
+  });
+}
+
+/** Điều dưỡng đã CHỌN gì ở màn duyệt, theo lần duyệt gần nhất của mỗi ca.
+ *
+ *  Ma trận AI/điều dưỡng ngay phía trên chỉ nói mức có bị đổi hay không - nó không thấy được hai
+ *  hành động KHÔNG đổi mức nhưng tốn công nhất: `ask_more` (hồ sơ thiếu tới mức phải hỏi lại bệnh
+ *  nhân) và `reject`. Một hệ thống mà `ask_more` chiếm phần lớn là hệ thống hỏi checklist chưa đủ,
+ *  dù tỉ lệ "giữ nguyên mức AI" vẫn đẹp.
+ *
+ *  Một dòng một CA, không phải một lượt bấm: `/nurse/review-log` đã gộp mỗi ca về bản ghi cuối. */
+function actionMixCard(cases) {
+  const inScope = new Set(cases.map((item) => item.case_id));
+  const decided = reviewLog.filter((row) => inScope.has(row.case_id) && NURSE_ACTION_TEXT[row.action]);
+  const rows = decided.length
+    ? Object.entries(NURSE_ACTION_TEXT).map(([key, label]) => ({
+        key,
+        label,
+        value: decided.filter((row) => row.action === key).length,
+      }))
+    : [];
+  const rejected = decided.filter((row) => row.action === "reject");
+  const aiFault = rejected.filter((row) => row.reject_reason === "ai_incorrect").length;
+
+  return barCard("Điều dưỡng đã làm gì", rows, "Chưa ca nào qua tay nhân viên y tế", {
+    sub: decided.length ? `${decided.length} ca đã có quyết định` : "",
+    stacked: true,
+    foot: rejected.length
+      ? `${aiFault}/${rejected.length} ca từ chối là do đề xuất của AI không chính xác; số còn lại vì lý do ngoài chuyên môn.`
+      : "Chỉ tính bốn hành động của nhân viên y tế, không tính thao tác do hệ thống ghi.",
+  });
+}
+
+/** Ai đã chốt bao nhiêu ca, kèm trung vị thời gian xử lý của cả kíp.
+ *
+ *  Đây là số liệu PHÂN CÔNG, không phải bảng xếp hạng năng suất: một người chốt nhiều ca có thể vì
+ *  trực ca đông chứ không vì làm nhanh hơn, nên thẻ cố ý không xếp hạng theo tốc độ và không tách
+ *  thời gian xử lý theo từng người - cỡ mẫu mỗi người quá nhỏ để con số đó nói được điều gì.
+ *
+ *  Ca thiếu `reviewed_by_name` vẫn được đếm dưới nhãn riêng thay vì bỏ đi: giấu chúng làm tổng của
+ *  thẻ không khớp với ô "Đã chốt" mà không có chỗ nào giải thích vì sao. */
+function nurseWorkloadCard(cases) {
+  const tally = new Map();
+  for (const item of cases) {
+    if (!item.reviewed_at) continue;
+    const name = item.reviewed_by_name || "Không rõ người duyệt";
+    tally.set(name, (tally.get(name) || 0) + 1);
+  }
+  const rows = [...tally.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "vi"))
+    .slice(0, 6)
+    .map(([label, value]) => ({ label, value }));
+  const handled = cases.map(handleMinutes).filter((minutes) => minutes !== null);
+
+  return barCard("Ca đã chốt, theo nhân viên y tế", rows, "Chưa ca nào được chốt trong phạm vi này", {
+    sub: tally.size ? `${tally.size} người đã tham gia` : "",
+    stacked: true,
+    foot: handled.length
+      ? `Trung vị thời gian xử lý một ca của cả kíp: ${formatMinutes(median(handled))}.`
+      : "",
+  });
 }
 
 // ── Giờ trong ngày ───────────────────────────────────────────────────────────────────────────────
@@ -895,7 +1151,7 @@ function hourChartCard(cases) {
       // một màu hai nghĩa khác nhau trên cùng một màn hình. Nhấn mạnh trong một biểu đồ đơn series
       // là việc của đậm/nhạt CÙNG một hue. Biến CSS cũng khiến biểu đồ đúng màu ở giao diện tối,
       // điều mà mã hex nội tuyến không làm được.
-      return `<rect x="${(hour * slot + slot * 0.11).toFixed(1)}" y="${(HOURS.top + plotHeight - height).toFixed(1)}"
+      return `<rect class="hour-bar" x="${(hour * slot + slot * 0.11).toFixed(1)}" y="${(HOURS.top + plotHeight - height).toFixed(1)}"
         width="${(slot * 0.78).toFixed(1)}" height="${Math.max(value ? 1.5 : 0, height).toFixed(1)}" rx="1.5"
         fill="${hour === busiest && counts[busiest] ? "var(--bar-on)" : "var(--bar)"}" opacity="${value ? 1 : 0.15}" />`;
     })
