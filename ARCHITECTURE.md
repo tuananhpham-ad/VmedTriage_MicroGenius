@@ -55,6 +55,8 @@ thể chạy nền trong cùng tiến trình; hiện không có message broker h
 
 ## 3. Kiến trúc tổng thể
 
+![Framework tổng thể VMedTriage](figures/framework.png)
+
 ```mermaid
 flowchart LR
     Patient[Bệnh nhân] --> UI[SPA]

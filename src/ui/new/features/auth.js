@@ -111,7 +111,7 @@ export function renderAccess(root, { navigate }) {
       ${guideDialog()}
     </section>`;
 
-  root.querySelectorAll("[data-login]").forEach((button) => button.addEventListener("click", () => navigate("auth")));
+  root.querySelectorAll("[data-login]").forEach((button) => button.addEventListener("click", () => navigate("role-select")));
   root.querySelectorAll("[data-start]").forEach((button) => button.addEventListener("click", () => navigate("role-select")));
   bindGuideDialog(root);
   // "Cách hoạt động" cuộn tới khối tương ứng trên trang; "Về chúng tôi" cũng vậy.
