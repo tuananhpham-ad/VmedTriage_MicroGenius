@@ -2,6 +2,8 @@
 
 Day la phan code chinh cua ung dung VMedTriage. Khi chay server bang `uvicorn src.main:app`, Python se vao `main.py`, mount UI tinh, gan router API, sau do cac request triage se di qua agent, services va tool catalog.
 
+![Framework tong the VMedTriage](../figures/framework.png)
+
 Nen doc theo thu tu:
 
 1. `main.py`

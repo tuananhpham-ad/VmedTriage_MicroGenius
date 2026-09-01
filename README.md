@@ -3,6 +3,11 @@
 AI Agent hỗ trợ điều dưỡng phân loại mức độ ưu tiên ban đầu cho bệnh nhân tư vấn online: thu thập triệu chứng theo checklist chuẩn, phát hiện red-flag, và đề xuất mức ưu tiên (Cấp cứu / Khám sớm / Tự theo dõi) — **cần điều dưỡng xác nhận (HITL) trước khi gửi cho bệnh nhân**, trừ escalate red-flag tức thời.
 
 > Team MicroGenius 
+
+![Framework tổng thể VMedTriage](figures/framework.png)
+
+> Chi tiết kiến trúc: [ARCHITECTURE.md](ARCHITECTURE.md)
+
 ## Yêu cầu
 
 - Python 3.11+
