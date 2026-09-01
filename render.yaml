@@ -116,6 +116,26 @@ services:
       - key: TAVILY_API_KEY
         sync: false
 
+      # ---- Gợi ý bệnh viện gần nhất (patient-only, ADR-010) ----
+      # osm = OpenStreetMap, KHÔNG cần API key - chỉ cần email liên hệ thật để dựng User-Agent theo
+      # Nominatim Usage Policy. Để trống email thì tính năng tự tắt (503), không crash luồng triage.
+      - key: HOSPITAL_LOOKUP_PROVIDER
+        value: osm
+      # Email định danh cho User-Agent. Bị chặn IP thì đây là chỗ Nominatim/Overpass liên hệ.
+      - key: OSM_CONTACT_EMAIL
+        sync: false
+      # Geocoder dự phòng khi Nominatim không gọi được (không cần key). Để trống = tắt fallback.
+      - key: OSM_PHOTON_BASE_URL
+        value: https://photon.komoot.io
+      # Nhiều endpoint ngăn cách bằng dấu phẩy - thử lần lượt tới khi có cái trả 200. Server công
+      # cộng quá tải cả cụm là chuyện thường; một endpoint duy nhất = tính năng tắt theo nó.
+      - key: OSM_OVERPASS_BASE_URL
+        value: https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter
+      - key: HOSPITAL_LOOKUP_RADIUS_KM
+        value: "5"
+      - key: HOSPITAL_LOOKUP_MAX_RESULTS
+        value: "5"
+
       # ---- Memory (F04) ----
       # M3 (ky uc xuyen phien) TAT tren production cho toi khi PM tra loi consent + retention bang
       # van ban - xem _guidance/features/F04_memory.md muc 3 dieu kien 3. Bat = doi thanh "true".
