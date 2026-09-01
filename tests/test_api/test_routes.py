@@ -449,3 +449,95 @@ async def test_a_closed_chat_turn_writes_the_nurse_summary_to_the_conversation_r
             select(ConversationRow).where(ConversationRow.conversation_id == case_id)
         ).one()
         assert row.nurse_summary_json is not None
+
+
+# --- /nurse/review-log: mức AI so với mức điều dưỡng chốt ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_review_log_keeps_the_ai_priority_after_a_second_review(client, nurse_headers):
+    """Duyệt hai lần thì `ai_priority` vẫn phải là mức AI ĐỀ XUẤT BAN ĐẦU.
+
+    Đây là chỗ duy nhất bài test này tồn tại để giữ. `hitl_review._current_priority` đọc
+    `approval_store` trước, nên `old_value` của lần duyệt thứ hai là mức điều dưỡng đặt ở lần đầu.
+    Lấy bản ghi audit cuối cùng làm mức AI sẽ biến "điều dưỡng đổi ý giữa hai lần duyệt" thành
+    "AI đề xuất đúng" - tức là chỉ số đo độ chính xác tự chấm điểm cho chính nó.
+    """
+    case = TriageCase(
+        case_id="review-log-two-reviews",
+        status=CaseStatus.NEEDS_NURSE_REVIEW,
+        triage_proposal=TriageProposal(priority=TriagePriority.SELF_CARE, reason="rule baseline"),
+    )
+    case_store.save(case)
+
+    for priority in ("Urgent", "Emergency"):
+        review = await client.post(
+            f"/api/v1/cases/{case.case_id}/review",
+            json={
+                "action": "edit",
+                "edited_priority": priority,
+                "approved_response": "Điều dưỡng đã chỉnh mức ưu tiên.",
+            },
+            headers=nurse_headers,
+        )
+        assert review.status_code == 200, review.text
+
+    response = await client.get("/api/v1/nurse/review-log", headers=nurse_headers)
+    assert response.status_code == 200, response.text
+    row = next(item for item in response.json() if item["case_id"] == case.case_id)
+
+    assert row["ai_priority"] == "Self-care"
+    assert row["final_priority"] == "Emergency"
+    assert row["action"] == "edit"
+    assert row["reject_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_review_log_reports_agreement_and_reject_reason(client, nurse_headers):
+    """Ca duyệt giữ nguyên mức, và ca từ chối kèm mã lý do.
+
+    `reject_reason` phải đi ra ngoài NGUYÊN VẸN: chỉ `ai_incorrect` được tính vào thống kê độ chính
+    xác, nên phía đọc cần phân biệt được nó với `already_handled_offline`. Endpoint không tự lọc -
+    lọc ở đây thì màn hình mất khả năng nói đã loại bao nhiêu ca và vì sao.
+    """
+    kept = TriageCase(
+        case_id="review-log-kept",
+        status=CaseStatus.NEEDS_NURSE_REVIEW,
+        triage_proposal=TriageProposal(priority=TriagePriority.URGENT, reason="rule baseline"),
+    )
+    rejected = TriageCase(
+        case_id="review-log-rejected",
+        status=CaseStatus.NEEDS_NURSE_REVIEW,
+        triage_proposal=TriageProposal(priority=TriagePriority.EMERGENCY, reason="rule baseline"),
+    )
+    case_store.save(kept)
+    case_store.save(rejected)
+
+    approve = await client.post(
+        f"/api/v1/cases/{kept.case_id}/review",
+        json={"action": "approve", "approved_response": "Đã duyệt."},
+        headers=nurse_headers,
+    )
+    assert approve.status_code == 200, approve.text
+    reject = await client.post(
+        f"/api/v1/cases/{rejected.case_id}/review",
+        json={"action": "reject", "reject_reason_code": "ai_incorrect"},
+        headers=nurse_headers,
+    )
+    assert reject.status_code == 200, reject.text
+
+    rows = {item["case_id"]: item for item in (await client.get("/api/v1/nurse/review-log", headers=nurse_headers)).json()}
+
+    assert rows[kept.case_id]["ai_priority"] == rows[kept.case_id]["final_priority"] == "Urgent"
+    assert rows[rejected.case_id]["ai_priority"] == "Emergency"
+    assert rows[rejected.case_id]["action"] == "reject"
+    assert rows[rejected.case_id]["reject_reason"] == "ai_incorrect"
+
+
+@pytest.mark.asyncio
+async def test_review_log_requires_a_nurse_token(client, patient_headers):
+    """Middleware auth là "mặc định CHO QUA": đường dẫn thiếu `RoutePolicy` đi thẳng qua không cần
+    token. Bài này giữ đúng dòng chính sách đó cho endpoint này - mất nó là lộ mức ưu tiên lâm sàng
+    của mọi ca cho bất kỳ ai gọi được URL."""
+    assert (await client.get("/api/v1/nurse/review-log")).status_code == 401
+    assert (await client.get("/api/v1/nurse/review-log", headers=patient_headers)).status_code == 403

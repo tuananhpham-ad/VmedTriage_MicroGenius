@@ -1,0 +1,31 @@
+{
+  "cases": 15,
+  "turns": 30,
+  "wall_seconds": 96.1,
+  "turn_latency_ms": {
+    "p50": 3984.0,
+    "p95": 5719.0
+  },
+  "llm_calls_total": 37,
+  "llm_calls_per_turn": 1.23,
+  "role_usage": {
+    "fact_extractor": {
+      "calls": 21,
+      "failures": 0,
+      "p50_ms": 3827,
+      "p95_ms": 4093,
+      "by_provider": {
+        "deepseek": 21
+      }
+    },
+    "synthesis": {
+      "calls": 16,
+      "failures": 0,
+      "p50_ms": 1234,
+      "p95_ms": 1656,
+      "by_provider": {
+        "deepseek": 16
+      }
+    }
+  }
+}

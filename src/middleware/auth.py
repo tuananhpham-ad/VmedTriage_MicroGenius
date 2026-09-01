@@ -36,6 +36,7 @@ ROUTE_POLICIES = (
     RoutePolicy("GET", re.compile(r"^/api/v1/tools/?$"), NURSE),
     RoutePolicy("POST", re.compile(r"^/api/v1/tools/[^/]+/call/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/nurse/queue/?$"), NURSE),
+    RoutePolicy("GET", re.compile(r"^/api/v1/nurse/review-log/?$"), NURSE),
     RoutePolicy("GET", re.compile(r"^/api/v1/patient/history/?$"), PATIENT),
     RoutePolicy("DELETE", re.compile(r"^/api/v1/cases/[^/]+/?$"), PATIENT),
     RoutePolicy("GET", re.compile(r"^/api/v1/cases/[^/]+/result/?$"), PATIENT),

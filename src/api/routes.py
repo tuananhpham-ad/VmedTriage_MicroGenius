@@ -43,6 +43,7 @@ from src.models.schemas import (
     NurseReviewRequest,
     NurseReviewResponse,
     PipelineTraceStage,
+    ReviewLogEntry,
     TriageCase,
     TriagePriority,
 )
@@ -890,6 +891,44 @@ async def nurse_queue(db: Session = Depends(get_db_session)) -> list[NurseCaseVi
         payload["patient_display_name"] = patients.get(item.patient_id)
         views.append(NurseCaseView.model_validate(payload))
     return views
+
+
+@router.get("/nurse/review-log", response_model=list[ReviewLogEntry])
+async def nurse_review_log() -> list[ReviewLogEntry]:
+    """Mức AI đề xuất so với mức điều dưỡng chốt, một dòng một ca.
+
+    NGUỒN LÀ `audit_log`, KHÔNG PHẢI CASE. `hitl_review._apply` ghi đè `triage_proposal.priority`
+    bằng mức điều dưỡng sửa, nên đọc case chỉ thấy mức SAU khi sửa - không có cách nào biết AI đã
+    đề xuất gì. `old_value` của bản ghi audit là chỗ duy nhất còn giữ mức gốc.
+
+    HAI CHI TIẾT LÀM SAI THÌ SỐ LIỆU ĐẢO NGHĨA:
+
+    1. `ai_priority` lấy `old_value` của bản ghi ĐẦU TIÊN. `hitl_review._current_priority` đọc
+       `approval_store` trước, nên từ lần duyệt thứ hai trở đi `old_value` là mức điều dưỡng đặt ở
+       lần trước - lấy bản ghi cuối sẽ biến "điều dưỡng đổi ý" thành "AI đề xuất đúng".
+    2. `final_priority` lấy `new_value` của bản ghi CUỐI CÙNG.
+
+    `all_audit_entries()` trả theo `id` tăng dần, tức đúng thứ tự ghi, nên không cần sắp lại theo
+    `timestamp` (hai bản ghi cùng một giây vẫn giữ đúng thứ tự).
+
+    KHÔNG lọc `ai_incorrect` ở đây: endpoint trả dữ liệu thô kèm `reject_reason` để phía đọc tự loại
+    khỏi mẫu số. Lọc ở server thì màn hình mất khả năng nói "đã loại bao nhiêu ca và vì sao".
+    """
+    by_case: dict[str, list[AuditLogEntry]] = {}
+    for entry in approval_store.all_audit_entries():
+        by_case.setdefault(entry.case_id, []).append(entry)
+
+    return [
+        ReviewLogEntry(
+            case_id=case_id,
+            decided_at=entries[-1].timestamp,
+            ai_priority=entries[0].old_value,
+            final_priority=entries[-1].new_value,
+            action=entries[-1].action,
+            reject_reason=entries[-1].reason if entries[-1].action == "reject" else None,
+        )
+        for case_id, entries in by_case.items()
+    ]
 
 
 @router.get("/patient/history", response_model=list[TriageCase])

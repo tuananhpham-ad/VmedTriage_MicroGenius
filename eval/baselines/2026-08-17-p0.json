@@ -1,0 +1,37 @@
+{
+  "recorded_at": "2026-08-17T04:21:20.201996+00:00",
+  "serving": {
+    "describe_selection": "deepseek · deepseek-chat",
+    "available_providers": [
+      "deepseek"
+    ]
+  },
+  "settings": {
+    "app_env": "development",
+    "llm_provider": "deepseek",
+    "llm_provider_order": "openrouter,gemini,deepseek,openai,anthropic",
+    "llm_temperature": 0.0,
+    "llm_max_total_attempts": 6,
+    "llm_total_budget_seconds": 45.0,
+    "openrouter_max_model_attempts": 4,
+    "deepseek_model_name": "deepseek-chat",
+    "gemini_model_name": "gemini-3.1-flash-lite",
+    "openai_model_name": "gpt-4o-mini",
+    "anthropic_model_name": "claude-haiku-4-5-20251001",
+    "openrouter_model_name": "",
+    "role_order_fact_extractor": "",
+    "role_order_synthesis": "",
+    "role_order_symptom_group_router": ""
+  },
+  "prompt_hashes": {
+    "batch_negation_rule": "ed7605b0c5b829d4",
+    "extraction_system": "73568f5e60f6b0af",
+    "question_only_system": "ed2f92e3424d5c67",
+    "screening_system": "b1f722aa2b4ed8a8"
+  },
+  "safety_layer": {
+    "text_rule_count": 100,
+    "short_circuit_code_count": 33,
+    "short_circuit_codes_hash": "b6b2e7156b7a8815"
+  }
+}

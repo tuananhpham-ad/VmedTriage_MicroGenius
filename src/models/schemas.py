@@ -365,3 +365,27 @@ class NurseReviewResponse(BaseModel):
     case_id: str
     status: CaseStatus
     patient_visible_response: str | None = None
+
+
+class ReviewLogEntry(BaseModel):
+    """Một ca đã qua tay điều dưỡng, rút gọn từ `audit_log` cho thống kê AI-vs-điều dưỡng.
+
+    VÌ SAO PHẢI ĐỌC AUDIT CHỨ KHÔNG ĐỌC CASE. `hitl_review._apply` ghi ĐÈ
+    `TriageCase.triage_proposal.priority` bằng mức điều dưỡng sửa, nên mức AI đề xuất ban đầu không
+    còn tồn tại trong payload của case. `audit_log.old_value` là bản ghi duy nhất còn giữ nó.
+
+    KHÔNG tổng hợp sẵn ở server: client cần join với `/nurse/queue` để áp bộ lọc nhóm triệu chứng và
+    khoảng thời gian, và hai bộ lọc đó đã sống ở client rồi.
+    """
+
+    case_id: str
+    decided_at: datetime
+    ai_priority: str | None = None
+    """Mức rule engine đề xuất TRƯỚC lần duyệt đầu tiên. `None` khi ca chưa từng có đề xuất."""
+    final_priority: str | None = None
+    """Mức sau lần duyệt gần nhất."""
+    action: str
+    """Hành động của lần duyệt gần nhất (`approve` | `edit` | `reject` | `ask_more`)."""
+    reject_reason: str | None = None
+    """`RejectReasonCode` khi `action == "reject"`. Chỉ `ai_incorrect` được tính vào thống kê độ
+    chính xác - hai mã còn lại phải bị loại khỏi mẫu số ở phía đọc."""
